@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 //TESTED_COMPONENT=src/multimedia
 
@@ -46,6 +21,10 @@
 #include <qmediarecorder.h>
 #include <qmediaplayer.h>
 #include <qaudiooutput.h>
+
+#ifdef Q_OS_DARWIN
+#include <QtCore/private/qcore_mac_p.h>
+#endif
 
 QT_USE_NAMESPACE
 
@@ -82,6 +61,8 @@ private slots:
     void testVideoRecording();
 
     void testNativeMetadata();
+
+    void multipleCameraSet();
 
 private:
     bool noCamera = false;
@@ -266,8 +247,8 @@ void tst_QCameraBackend::testCameraStartParallel()
     QCOMPARE(camera2.isActive(), true);
     QCOMPARE(camera2.error(), QCamera::NoError);
 
-    QCOMPARE(errorSpy1.count(), 0);
-    QCOMPARE(errorSpy2.count(), 0);
+    QCOMPARE(errorSpy1.size(), 0);
+    QCOMPARE(errorSpy2.size(), 0);
 }
 
 void tst_QCameraBackend::testCameraFormat()
@@ -275,16 +256,18 @@ void tst_QCameraBackend::testCameraFormat()
     QCamera camera;
     QCameraDevice device = camera.cameraDevice();
     auto videoFormats = device.videoFormats();
+    if (videoFormats.isEmpty())
+        QSKIP("No Camera available, skipping test.");
     QCameraFormat cameraFormat = videoFormats.first();
     QSignalSpy spy(&camera, SIGNAL(cameraFormatChanged()));
-    QVERIFY(spy.count() == 0);
+    QVERIFY(spy.size() == 0);
 
     QMediaCaptureSession session;
     session.setCamera(&camera);
-    QVERIFY(videoFormats.count());
+    QVERIFY(videoFormats.size());
     camera.setCameraFormat(cameraFormat);
     QCOMPARE(camera.cameraFormat(), cameraFormat);
-    QVERIFY(spy.count() == 1);
+    QVERIFY(spy.size() == 1);
 
     TestVideoFormat videoFormatTester(cameraFormat);
     session.setVideoOutput(&videoFormatTester);
@@ -294,11 +277,11 @@ void tst_QCameraBackend::testCameraFormat()
     spy.clear();
     camera.stop();
     // Change camera format
-    if (videoFormats.count() > 1) {
+    if (videoFormats.size() > 1) {
         QCameraFormat secondFormat = videoFormats.at(1);
         camera.setCameraFormat(secondFormat);
         QCOMPARE(camera.cameraFormat(), secondFormat);
-        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.size(), 1);
         QCOMPARE(camera.cameraFormat(), secondFormat);
         videoFormatTester.setCameraFormatToTest(secondFormat);
         camera.start();
@@ -313,7 +296,7 @@ void tst_QCameraBackend::testCameraFormat()
     spy.clear();
     camera.stop();
     camera.setCameraFormat({});
-    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.size(), 1);
     videoFormatTester.setCameraFormatToTest({});
     camera.start();
     // In case of a null format, the backend should have picked
@@ -324,7 +307,7 @@ void tst_QCameraBackend::testCameraFormat()
     spy.clear();
     // Shouldn't change anything as it's the same device
     camera.setCameraDevice(device);
-    QCOMPARE(spy.count(), 0);
+    QCOMPARE(spy.size(), 0);
 }
 
 void tst_QCameraBackend::testCameraCapture()
@@ -477,13 +460,13 @@ void tst_QCameraBackend::testExposureCompensation()
 
     camera.setExposureCompensation(1.0);
     QCOMPARE(camera.exposureCompensation(), 1.0);
-    QTRY_COMPARE(exposureCompensationSignal.count(), 1);
+    QTRY_COMPARE(exposureCompensationSignal.size(), 1);
     QCOMPARE(exposureCompensationSignal.last().first().toReal(), 1.0);
 
     //exposureCompensationChanged should not be emitted when value is not changed
     camera.setExposureCompensation(1.0);
     QTest::qWait(50);
-    QCOMPARE(exposureCompensationSignal.count(), 1);
+    QCOMPARE(exposureCompensationSignal.size(), 1);
 
     //exposure compensation should be preserved during start
     camera.start();
@@ -494,7 +477,7 @@ void tst_QCameraBackend::testExposureCompensation()
     exposureCompensationSignal.clear();
     camera.setExposureCompensation(-1.0);
     QCOMPARE(camera.exposureCompensation(), -1.0);
-    QTRY_COMPARE(exposureCompensationSignal.count(), 1);
+    QTRY_COMPARE(exposureCompensationSignal.size(), 1);
     QCOMPARE(exposureCompensationSignal.last().first().toReal(), -1.0);
 }
 
@@ -568,7 +551,7 @@ void tst_QCameraBackend::testVideoRecording()
     session.setRecorder(&recorder);
 
     QSignalSpy errorSignal(camera.data(), SIGNAL(errorOccurred(QCamera::Error, const QString &)));
-    QSignalSpy recorderErrorSignal(&recorder, SIGNAL(errorOccurred(Error, const QString &)));
+    QSignalSpy recorderErrorSignal(&recorder, SIGNAL(errorOccurred(QMediaRecorder::Error, const QString &)));
     QSignalSpy recorderStateChanged(&recorder, SIGNAL(recorderStateChanged(RecorderState)));
     QSignalSpy durationChanged(&recorder, SIGNAL(durationChanged(qint64)));
 
@@ -588,18 +571,23 @@ void tst_QCameraBackend::testVideoRecording()
     QTRY_VERIFY(camera->isActive());
 
     QTRY_VERIFY(camera->isActive());
-
     for (int recordings = 0; recordings < 2; ++recordings) {
         //record 200ms clip
         recorder.record();
         durationChanged.clear();
-        QTRY_VERIFY(durationChanged.count());
+        if (!recorderErrorSignal.empty() || recorderErrorSignal.wait(100)) {
+            QCOMPARE(recorderErrorSignal.last().first().toInt(), QMediaRecorder::FormatError);
+            break;
+        }
+
+        QTRY_VERIFY(durationChanged.size());
 
         QCOMPARE(recorder.metaData(), metaData);
 
+        recorderStateChanged.clear();
         recorder.stop();
-        QVERIFY(recorderStateChanged.wait(1000));
-        QTRY_VERIFY(recorder.recorderState() == QMediaRecorder::StoppedState);
+        QTRY_VERIFY(recorderStateChanged.size() > 0);
+        QVERIFY(recorder.recorderState() == QMediaRecorder::StoppedState);
 
         QVERIFY(errorSignal.isEmpty());
         QVERIFY(recorderErrorSignal.isEmpty());
@@ -648,13 +636,14 @@ void tst_QCameraBackend::testNativeMetadata()
 
     recorder.record();
     durationChanged.clear();
-    QTRY_VERIFY(durationChanged.count());
+    QTRY_VERIFY(durationChanged.size());
 
     QCOMPARE(recorder.metaData(), metaData);
 
+    recorderStateChanged.clear();
     recorder.stop();
 
-    QVERIFY(recorderStateChanged.wait(1000));
+    QTRY_VERIFY(recorderStateChanged.size() > 0);
 
     QVERIFY(errorSignal.isEmpty());
     QVERIFY(recorderErrorSignal.isEmpty());
@@ -674,7 +663,7 @@ void tst_QCameraBackend::testNativeMetadata()
     player.setSource(QUrl::fromLocalFile(fileName));
     player.play();
 
-    QTRY_VERIFY(metadataChangedSpy.count() > 0);
+    QTRY_VERIFY(metadataChangedSpy.size() > 0);
 
     QCOMPARE(player.metaData().value(QMediaMetaData::Title).toString(), metaData.value(QMediaMetaData::Title).toString());
     auto lang = player.metaData().value(QMediaMetaData::Language).value<QLocale::Language>();
@@ -687,6 +676,31 @@ void tst_QCameraBackend::testNativeMetadata()
     player.stop();
     player.setSource({});
     QFile(fileName).remove();
+}
+
+void tst_QCameraBackend::multipleCameraSet()
+{
+    if (noCamera)
+        QSKIP("No camera available");
+
+    QMediaCaptureSession session;
+    QCameraDevice device = QMediaDevices::defaultVideoInput();
+
+    QMediaRecorder recorder;
+    session.setRecorder(&recorder);
+
+    for (int i = 0; i < 5; ++i) {
+#ifdef Q_OS_DARWIN
+        QMacAutoReleasePool releasePool;
+#endif
+
+        QCamera camera(device);
+        session.setCamera(&camera);
+
+        camera.start();
+
+        QTest::qWait(100);
+    }
 }
 
 QTEST_MAIN(tst_QCameraBackend)

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideoframeformat.h"
 #include "qvideotexturehelper_p.h"
@@ -74,7 +38,7 @@ public:
             && frameSize == other.frameSize
             && viewport == other.viewport
             && frameRatesEqual(frameRate, other.frameRate)
-            && ycbcrColorSpace == other.ycbcrColorSpace
+            && colorSpace == other.colorSpace
             && mirrored == other.mirrored)
             return true;
 
@@ -89,9 +53,12 @@ public:
     QVideoFrameFormat::PixelFormat pixelFormat = QVideoFrameFormat::Format_Invalid;
     QVideoFrameFormat::Direction scanLineDirection = QVideoFrameFormat::TopToBottom;
     QSize frameSize;
-    QVideoFrameFormat::YCbCrColorSpace ycbcrColorSpace = QVideoFrameFormat::YCbCr_Undefined;
+    QVideoFrameFormat::ColorSpace colorSpace = QVideoFrameFormat::ColorSpace_Undefined;
+    QVideoFrameFormat::ColorTransfer colorTransfer = QVideoFrameFormat::ColorTransfer_Unknown;
+    QVideoFrameFormat::ColorRange colorRange = QVideoFrameFormat::ColorRange_Unknown;
     QRect viewport;
-    qreal frameRate = 0.0;
+    float frameRate = 0.0;
+    float maxLuminance = -1.;
     bool mirrored = false;
 };
 
@@ -109,7 +76,7 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QVideoFrameFormatPrivate);
     A video sink presents a stream of video frames.  QVideoFrameFormat describes the type of
     the frames and determines how they should be presented.
 
-    The core properties of a video stream required to setup a video sink are the pixel format
+    The core properties of a video stream required to set up a video sink are the pixel format
     given by pixelFormat(), and the frame dimensions given by frameSize().
 
     The region of a frame that is actually displayed on a video surface is given by the viewport().
@@ -244,6 +211,9 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QVideoFrameFormatPrivate);
     The frame is stored in rectangle texture format (GL_TEXTURE_RECTANGLE). This is only being used on
     macOS with an OpenGL based Rendering Hardware interface. The underlying pixel format stored in the
     texture is Format_BRGA8888.
+
+    \value Format_YUV420P10
+    Similar to YUV420, but uses 16bits per component, 10 of those significant.
 */
 
 /*!
@@ -258,6 +228,8 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QVideoFrameFormatPrivate);
 /*!
     \enum QVideoFrameFormat::YCbCrColorSpace
 
+    \deprecated Use QVideoFrameFormat::ColorSpace instead.
+
     Enumerates the Y'CbCr color space of video frames.
 
     \value YCbCr_Undefined
@@ -266,25 +238,108 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QVideoFrameFormatPrivate);
     \value YCbCr_BT601
     A Y'CbCr color space defined by ITU-R recommendation BT.601
     with Y value range from 16 to 235, and Cb/Cr range from 16 to 240.
-    Used in standard definition video.
+    Used mostly by older videos that were targeting CRT displays.
 
     \value YCbCr_BT709
-    A Y'CbCr color space defined by ITU-R BT.709 with the same values range as YCbCr_BT601.  Used
-    for HDTV.
+    A Y'CbCr color space defined by ITU-R BT.709 with the same values range as YCbCr_BT601.
+    The most commonly used color space today.
 
     \value YCbCr_xvYCC601
+    This value is deprecated. Please check the \l ColorRange instead.
     The BT.601 color space with the value range extended to 0 to 255.
     It is backward compatible with BT.601 and uses values outside BT.601 range to represent a
     wider range of colors.
 
     \value YCbCr_xvYCC709
+    This value is deprecated. Please check the \l ColorRange instead.
     The BT.709 color space with the value range extended to 0 to 255.
 
     \value YCbCr_JPEG
-    The full range Y'CbCr color space used in JPEG files.
+    The full range Y'CbCr color space used in most JPEG files.
 
     \value YCbCr_BT2020
     The color space defined by ITU-R BT.2020. Used mainly for HDR videos.
+*/
+
+
+/*!
+    \enum QVideoFrameFormat::ColorSpace
+
+    Enumerates the color space of video frames.
+
+    \value ColorSpace_Undefined
+    No color space is specified.
+
+    \value ColorSpace_BT601
+    A color space defined by ITU-R recommendation BT.601
+    with Y value range from 16 to 235, and Cb/Cr range from 16 to 240.
+    Used mostly by older videos that were targeting CRT displays.
+
+    \value ColorSpace_BT709
+    A color space defined by ITU-R BT.709 with the same values range as ColorSpace_BT601.
+    The most commonly used color space today.
+
+    \value ColorSpace_AdobeRgb
+    The full range YUV color space used in most JPEG files.
+
+    \value ColorSpace_BT2020
+    The color space defined by ITU-R BT.2020. Used mainly for HDR videos.
+*/
+
+/*!
+    \enum QVideoFrameFormat::ColorTransfer
+
+    \value ColorTransfer_Unknown
+    The color transfer function is unknown.
+
+    \value ColorTransfer_BT709
+    Color values are encoded according to BT709. See also https://www.itu.int/rec/R-REC-BT.709/en.
+    This is close to, but not identical to a gamma curve of 2.2, and the same transfer curve as is
+    used in sRGB.
+
+    \value ColorTransfer_BT601
+    Color values are encoded according to BT601. See also https://www.itu.int/rec/R-REC-BT.601/en.
+
+    \value ColorTransfer_Linear
+    Color values are linear
+
+    \value ColorTransfer_Gamma22
+    Color values are encoded with a gamma of 2.2
+
+    \value ColorTransfer_Gamma28
+    Color values are encoded with a gamma of 2.8
+
+    \value ColorTransfer_ST2084
+    Color values are encoded using STME ST 2084. This transfer function is the most common HDR
+    transfer function and often called the 'perceptual quantizer'. See also https://www.itu.int/rec/R-REC-BT.2100
+    and https://en.wikipedia.org/wiki/Perceptual_quantizer.
+
+
+    \value ColorTransfer_STD_B67
+    Color values are encoded using ARIB STD B67. This transfer function is also often referred to as 'hybrid log gamma'.
+    See also https://www.itu.int/rec/R-REC-BT.2100 and https://en.wikipedia.org/wiki/Hybrid_log–gamma.
+*/
+
+/*!
+    \enum QVideoFrameFormat::ColorRange
+
+    Describes the color range used by the video data. Video data usually comes in either full
+    color range, where all values are being used, or a more limited range traditionally used in
+    YUV video formats, where a subset of all values is being used.
+
+    \value ColorRange_Unknown
+    The color range of the video is unknown.
+
+    \value ColorRange_Video
+
+    The color range traditionally used by most YUV video formats. For 8 bit formats, the Y component is
+    limited to values between 16 and 235. The U and V components are limited to values between 16 and 240
+
+    For higher bit depths multiply these values with 2^(depth-8).
+
+    \value ColorRange_Full
+
+    Full color range. All values from 0 to 2^depth - 1 are valid.
 */
 
 /*!
@@ -314,6 +369,12 @@ QVideoFrameFormat::QVideoFrameFormat(const QVideoFrameFormat &other) = default;
     \fn QVideoFrameFormat::QVideoFrameFormat(QVideoFrameFormat &&other)
 
     Constructs a QVideoFrameFormat by moving from \a other.
+*/
+
+/*!
+    \fn void QVideoFrameFormat::swap(QVideoFrameFormat &other) noexcept
+
+    Swaps the current video frame format with the \a other.
 */
 
 /*!
@@ -494,22 +555,83 @@ void QVideoFrameFormat::setFrameRate(qreal rate)
     d->frameRate = rate;
 }
 
+#if QT_DEPRECATED_SINCE(6, 4)
 /*!
+    \deprecated Use colorSpace() instead
+
     Returns the Y'CbCr color space of a video stream.
 */
 QVideoFrameFormat::YCbCrColorSpace QVideoFrameFormat::yCbCrColorSpace() const
 {
-    return d->ycbcrColorSpace;
+    return YCbCrColorSpace(d->colorSpace);
 }
 
 /*!
+    \deprecated Use setColorSpace() instead
+
     Sets the Y'CbCr color \a space of a video stream.
     It is only used with raw YUV frame types.
 */
 void QVideoFrameFormat::setYCbCrColorSpace(QVideoFrameFormat::YCbCrColorSpace space)
 {
     detach();
-    d->ycbcrColorSpace = space;
+    d->colorSpace = ColorSpace(space);
+}
+#endif // QT_DEPRECATED_SINCE(6, 4)
+
+/*!
+    Returns the color space of a video stream.
+*/
+QVideoFrameFormat::ColorSpace QVideoFrameFormat::colorSpace() const
+{
+    return d->colorSpace;
+}
+
+/*!
+    Sets the \a colorSpace of a video stream.
+*/
+void QVideoFrameFormat::setColorSpace(ColorSpace colorSpace)
+{
+    detach();
+    d->colorSpace = colorSpace;
+}
+
+/*!
+    Returns the color transfer function that should be used to render the
+    video stream.
+*/
+QVideoFrameFormat::ColorTransfer QVideoFrameFormat::colorTransfer() const
+{
+    return d->colorTransfer;
+}
+
+/*!
+    Sets the color transfer function that should be used to render the
+    video stream to \a colorTransfer.
+*/
+void QVideoFrameFormat::setColorTransfer(ColorTransfer colorTransfer)
+{
+    detach();
+    d->colorTransfer = colorTransfer;
+}
+
+/*!
+    Returns the color range that should be used to render the
+    video stream.
+*/
+QVideoFrameFormat::ColorRange QVideoFrameFormat::colorRange() const
+{
+    return d->colorRange;
+}
+
+/*!
+    Sets the color transfer range that should be used to render the
+    video stream to \a range.
+*/
+void QVideoFrameFormat::setColorRange(ColorRange range)
+{
+    detach();
+    d->colorRange = range;
 }
 
 /*!
@@ -547,7 +669,7 @@ void QVideoFrameFormat::setMirrored(bool mirrored)
 */
 QString QVideoFrameFormat::vertexShaderFileName() const
 {
-    return QVideoTextureHelper::vertexShaderFileName(d->pixelFormat);
+    return QVideoTextureHelper::vertexShaderFileName(*this);
 }
 
 /*!
@@ -555,7 +677,7 @@ QString QVideoFrameFormat::vertexShaderFileName() const
 */
 QString QVideoFrameFormat::fragmentShaderFileName() const
 {
-    return QVideoTextureHelper::fragmentShaderFileName(d->pixelFormat);
+    return QVideoTextureHelper::fragmentShaderFileName(*this);
 }
 
 /*!
@@ -564,6 +686,32 @@ QString QVideoFrameFormat::fragmentShaderFileName() const
 void QVideoFrameFormat::updateUniformData(QByteArray *dst, const QVideoFrame &frame, const QMatrix4x4 &transform, float opacity) const
 {
     QVideoTextureHelper::updateUniformData(dst, *this, frame, transform, opacity);
+}
+
+/*!
+    \internal
+
+    The maximum luminence in nits as set by the HDR metadata. If the video doesn't have meta data, the returned value depends on the
+    maximum that can be encoded by the transfer function.
+*/
+float QVideoFrameFormat::maxLuminance() const
+{
+    if (d->maxLuminance <= 0) {
+        if (d->colorTransfer == ColorTransfer_ST2084)
+            return 10000.; // ST2084 can encode up to 10000 nits
+        if (d->colorTransfer == ColorTransfer_STD_B67)
+            return 1500.; // SRD_B67 can encode up to 1200 nits, use a bit more for some headroom
+        return 100; // SDR
+    }
+    return d->maxLuminance;
+}
+/*!
+    Sets the maximum luminance to the given value, \a lum.
+*/
+void QVideoFrameFormat::setMaxLuminance(float lum)
+{
+    detach();
+    d->maxLuminance = lum;
 }
 
 
@@ -653,6 +801,7 @@ QImage::Format QVideoFrameFormat::imageFormatFromPixelFormat(QVideoFrameFormat::
     case QVideoFrameFormat::Format_AYUV:
     case QVideoFrameFormat::Format_AYUV_Premultiplied:
     case QVideoFrameFormat::Format_YUV420P:
+    case QVideoFrameFormat::Format_YUV420P10:
     case QVideoFrameFormat::Format_YUV422P:
     case QVideoFrameFormat::Format_YV12:
     case QVideoFrameFormat::Format_UYVY:
@@ -708,6 +857,8 @@ QString QVideoFrameFormat::pixelFormatToString(QVideoFrameFormat::PixelFormat pi
         return QStringLiteral("AYUV Premultiplied");
     case QVideoFrameFormat::Format_YUV420P:
         return QStringLiteral("YUV420P");
+    case QVideoFrameFormat::Format_YUV420P10:
+        return QStringLiteral("YUV420P10");
     case QVideoFrameFormat::Format_YUV422P:
         return QStringLiteral("YUV422P");
     case QVideoFrameFormat::Format_YV12:
@@ -748,6 +899,7 @@ QString QVideoFrameFormat::pixelFormatToString(QVideoFrameFormat::PixelFormat pi
 }
 
 #ifndef QT_NO_DEBUG_STREAM
+# if QT_DEPRECATED_SINCE(6, 4)
 QDebug operator<<(QDebug dbg, QVideoFrameFormat::YCbCrColorSpace cs)
 {
     QDebugStateSaver saver(dbg);
@@ -777,6 +929,31 @@ QDebug operator<<(QDebug dbg, QVideoFrameFormat::YCbCrColorSpace cs)
     }
     return dbg;
 }
+# endif // QT_DEPRECATED_SINCE(6, 4)
+
+QDebug operator<<(QDebug dbg, QVideoFrameFormat::ColorSpace cs)
+{
+    QDebugStateSaver saver(dbg);
+    dbg.nospace();
+    switch (cs) {
+        case QVideoFrameFormat::ColorSpace_BT601:
+            dbg << "ColorSpace_BT601";
+            break;
+        case QVideoFrameFormat::ColorSpace_BT709:
+            dbg << "ColorSpace_BT709";
+            break;
+        case QVideoFrameFormat::ColorSpace_AdobeRgb:
+            dbg << "ColorSpace_AdobeRgb";
+            break;
+        case QVideoFrameFormat::ColorSpace_BT2020:
+            dbg << "ColorSpace_BT2020";
+            break;
+        default:
+            dbg << "ColorSpace_Undefined";
+            break;
+    }
+    return dbg;
+}
 
 QDebug operator<<(QDebug dbg, QVideoFrameFormat::Direction dir)
 {
@@ -799,12 +976,12 @@ QDebug operator<<(QDebug dbg, const QVideoFrameFormat &f)
     dbg.nospace();
     dbg << "QVideoFrameFormat(" << f.pixelFormat() << ", " << f.frameSize()
         << ", viewport=" << f.viewport()
-        <<  ", yCbCrColorSpace=" << f.yCbCrColorSpace()
+        <<  ", colorSpace=" << f.colorSpace()
         << ')'
         << "\n    pixel format=" << f.pixelFormat()
         << "\n    frame size=" << f.frameSize()
         << "\n    viewport=" << f.viewport()
-        << "\n    yCbCrColorSpace=" << f.yCbCrColorSpace()
+        << "\n    colorSpace=" << f.colorSpace()
         << "\n    frameRate=" << f.frameRate()
         << "\n    mirrored=" << f.isMirrored();
 

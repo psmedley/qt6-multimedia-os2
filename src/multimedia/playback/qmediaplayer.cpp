@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmediaplayer_p.h"
 
@@ -51,6 +15,11 @@
 #include <QtCore/qfileinfo.h>
 #include <QtCore/qtemporaryfile.h>
 #include <QtCore/qdir.h>
+#include <QtCore/qcoreapplication.h>
+
+#if defined(Q_OS_ANDROID)
+#  include <QtCore/qjniobject.h>
+#endif
 
 QT_BEGIN_NAMESPACE
 
@@ -160,7 +129,7 @@ void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
     if (!control)
         return;
 
-    QScopedPointer<QFile> file;
+    std::unique_ptr<QFile> file;
 
     // Back ends can't play qrc files directly.
     // If the back end supports StreamPlayback, we pass a QFile for that resource.
@@ -176,7 +145,7 @@ void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
             control->error(QMediaPlayer::ResourceError, QMediaPlayer::tr("Attempting to play invalid Qt resource"));
 
         } else if (control->streamPlaybackSupported()) {
-            control->setMedia(media, file.data());
+            control->setMedia(media, file.get());
         } else {
 #if QT_CONFIG(temporaryfile)
 #if defined(Q_OS_ANDROID)
@@ -218,6 +187,20 @@ void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
             qWarning("Qt was built with -no-feature-temporaryfile: playback from resource file is not supported!");
 #endif
         }
+#if defined(Q_OS_ANDROID)
+    } else if (media.scheme() == QLatin1String("content") && !stream) {
+        // content scheme should happen only on android
+        const int fd = QJniObject::callStaticMethod<jint>(
+                "org/qtproject/qt/android/QtNative", "openFdForContentUrl",
+                "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)I",
+                QNativeInterface::QAndroidApplication::context(),
+                QJniObject::fromString(media.toString()).object(),
+                QJniObject::fromString(QLatin1String("r")).object());
+
+        file.reset(new QFile(QLatin1Char(':') + media.path()));
+        file->open(fd, QFile::ReadOnly, QFile::FileHandleFlag::AutoCloseHandle);
+        control->setMedia(media, file.get());
+#endif
     } else {
         qrcMedia = QUrl();
         QUrl url = media;
@@ -250,14 +233,14 @@ QMediaPlayer::QMediaPlayer(QObject *parent)
 {
     Q_D(QMediaPlayer);
 
-    d->control = QPlatformMediaIntegration::instance()->createPlayer(this);
-    if (!d->control) { // ### Should this be an assertion?
-        d->setError(QMediaPlayer::ResourceError, QMediaPlayer::tr("Platform does not support media playback."));
-        return;
+    auto maybeControl = QPlatformMediaIntegration::instance()->createPlayer(this);
+    if (maybeControl) {
+        d->control = maybeControl.value();
+        d->state = d->control->state();
+    } else {
+        qWarning() << "Failed to initialize QMediaPlayer" << maybeControl.error();
+        d->setError(QMediaPlayer::ResourceError, maybeControl.error());
     }
-    Q_ASSERT(d->control);
-
-    d->state = d->control->state();
 }
 
 
@@ -300,13 +283,18 @@ const QIODevice *QMediaPlayer::sourceDevice() const
     return d->stream;
 }
 
+/*!
+    \property QMediaPlayer::playbackState
+
+    Returns the \l{QMediaPlayer::}{PlaybackState}.
+*/
 QMediaPlayer::PlaybackState QMediaPlayer::playbackState() const
 {
     Q_D(const QMediaPlayer);
 
     // In case if EndOfMedia status is already received
     // but state is not.
-    if (d->control != nullptr
+    if (d->control
         && d->control->mediaStatus() == QMediaPlayer::EndOfMedia
         && d->state != d->control->state()) {
         return d->control->state();
@@ -331,11 +319,7 @@ QMediaPlayer::MediaStatus QMediaPlayer::mediaStatus() const
 qint64 QMediaPlayer::duration() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control != nullptr)
-        return d->control->duration();
-
-    return 0;
+    return d->control ? d->control->duration() : 0;
 }
 
 /*!
@@ -348,15 +332,11 @@ qint64 QMediaPlayer::duration() const
 qint64 QMediaPlayer::position() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control != nullptr)
-        return d->control->position();
-
-    return 0;
+    return d->control ? d->control->position() : 0;
 }
 
 /*!
-    Returns a number betwee 0 and 1 when buffering data.
+    Returns a number between 0 and 1 when buffering data.
 
     0 means that there is no buffered data available, playback is usually
     stalled in this case. Playback will resume once the buffer reaches 1,
@@ -367,11 +347,7 @@ qint64 QMediaPlayer::position() const
 float QMediaPlayer::bufferProgress() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control != nullptr)
-        return d->control->bufferProgress();
-
-    return 0.;
+    return d->control ? d->control->bufferProgress() : 0;
 }
 
 /*!
@@ -386,11 +362,7 @@ float QMediaPlayer::bufferProgress() const
 QMediaTimeRange QMediaPlayer::bufferedTimeRange() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control)
-        return d->control->availablePlaybackRanges();
-
-    return {};
+    return d->control ? d->control->availablePlaybackRanges() : QMediaTimeRange{};
 }
 
 /*!
@@ -406,11 +378,7 @@ QMediaTimeRange QMediaPlayer::bufferedTimeRange() const
 bool QMediaPlayer::hasAudio() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control != nullptr)
-        return d->control->isAudioAvailable();
-
-    return false;
+    return d->control && d->control->isAudioAvailable();
 }
 
 /*!
@@ -426,11 +394,7 @@ bool QMediaPlayer::hasAudio() const
 bool QMediaPlayer::hasVideo() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control != nullptr)
-        return d->control->isVideoAvailable();
-
-    return false;
+    return d->control && d->control->isVideoAvailable();
 }
 
 /*!
@@ -442,11 +406,7 @@ bool QMediaPlayer::hasVideo() const
 bool QMediaPlayer::isSeekable() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control != nullptr)
-        return d->control->isSeekable();
-
-    return false;
+    return d->control && d->control->isSeekable();
 }
 
 /*!
@@ -455,11 +415,7 @@ bool QMediaPlayer::isSeekable() const
 qreal QMediaPlayer::playbackRate() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control != nullptr)
-        return d->control->playbackRate();
-
-    return 0.0;
+    return d->control ? d->control->playbackRate() : 0.;
 }
 
 /*!
@@ -491,11 +447,7 @@ qreal QMediaPlayer::playbackRate() const
 int QMediaPlayer::loops() const
 {
     Q_D(const QMediaPlayer);
-
-    if (d->control)
-        return d->control->loops();
-
-    return 1;
+    return d->control ? d->control->loops() : 1;
 }
 
 void QMediaPlayer::setLoops(int loops)
@@ -576,7 +528,7 @@ void QMediaPlayer::pause()
 {
     Q_D(QMediaPlayer);
 
-    if (d->control != nullptr)
+    if (d->control)
         d->control->pause();
 }
 
@@ -597,7 +549,7 @@ void QMediaPlayer::stop()
 {
     Q_D(QMediaPlayer);
 
-    if (d->control != nullptr)
+    if (d->control)
         d->control->stop();
 }
 
@@ -605,7 +557,7 @@ void QMediaPlayer::setPosition(qint64 position)
 {
     Q_D(QMediaPlayer);
 
-    if (d->control == nullptr)
+    if (!d->control)
         return;
     if (!d->control->isSeekable())
         return;
@@ -616,7 +568,7 @@ void QMediaPlayer::setPlaybackRate(qreal rate)
 {
     Q_D(QMediaPlayer);
 
-    if (d->control != nullptr)
+    if (d->control)
         d->control->setPlaybackRate(rate);
 }
 
@@ -713,12 +665,14 @@ void QMediaPlayer::setAudioOutput(QAudioOutput *output)
     if (oldOutput == output)
         return;
     d->audioOutput = output;
-    d->control->setAudioOutput(nullptr);
+    if (d->control)
+        d->control->setAudioOutput(nullptr);
     if (oldOutput)
         oldOutput->setDisconnectFunction({});
     if (output) {
         output->setDisconnectFunction([this](){ setAudioOutput(nullptr); });
-        d->control->setAudioOutput(output->handle());
+        if (d->control)
+            d->control->setAudioOutput(output->handle());
     }
     emit audioOutputChanged();
 }
@@ -743,6 +697,8 @@ QAudioOutput *QMediaPlayer::audioOutput() const
 */
 
 /*!
+    \property QMediaPlayer::audioTracks
+
     Lists the set of available audio tracks inside the media.
 
     The QMediaMetaData returned describes the properties of individual
@@ -793,6 +749,8 @@ QList<QMediaMetaData> QMediaPlayer::videoTracks() const
 */
 
 /*!
+    \property QMediaPlayer::subtitleTracks
+
     Lists the set of available subtitle tracks inside the media.
 
     The QMediaMetaData returned describes the properties of individual
@@ -824,9 +782,7 @@ QList<QMediaMetaData> QMediaPlayer::subtitleTracks() const
 int QMediaPlayer::activeAudioTrack() const
 {
     Q_D(const QMediaPlayer);
-    if (d->control)
-        return d->control->activeTrack(QPlatformMediaPlayer::AudioStream);
-    return 0;
+    return d->control ? d->control->activeTrack(QPlatformMediaPlayer::AudioStream) : 0;
 }
 
 /*!
@@ -850,9 +806,7 @@ int QMediaPlayer::activeAudioTrack() const
 int QMediaPlayer::activeVideoTrack() const
 {
     Q_D(const QMediaPlayer);
-    if (d->control)
-        return d->control->activeTrack(QPlatformMediaPlayer::VideoStream);
-    return -1;
+    return d->control ? d->control->activeTrack(QPlatformMediaPlayer::VideoStream) : -1;
 }
 
 /*!
@@ -876,9 +830,7 @@ int QMediaPlayer::activeVideoTrack() const
 int QMediaPlayer::activeSubtitleTrack() const
 {
     Q_D(const QMediaPlayer);
-    if (d->control)
-        return d->control->activeTrack(QPlatformMediaPlayer::SubtitleStream);
-    return -1;
+    return d->control ? d->control->activeTrack(QPlatformMediaPlayer::SubtitleStream) : -1;
 }
 
 void QMediaPlayer::setActiveAudioTrack(int index)
@@ -942,31 +894,32 @@ QObject *QMediaPlayer::videoOutput() const
 void QMediaPlayer::setVideoOutput(QObject *output)
 {
     Q_D(QMediaPlayer);
-    if (!d->control)
-        return;
     if (d->videoOutput == output)
         return;
 
-    QVideoSink *sink = qobject_cast<QVideoSink *>(output);
+    auto *sink = qobject_cast<QVideoSink *>(output);
     if (!sink && output) {
         auto *mo = output->metaObject();
-        if (output)
-            mo->invokeMethod(output, "videoSink", Q_RETURN_ARG(QVideoSink *, sink));
+        mo->invokeMethod(output, "videoSink", Q_RETURN_ARG(QVideoSink *, sink));
     }
     d->videoOutput = output;
     d->setVideoSink(sink);
 }
 
+/*!
+    Sets \a sink to be the QVideoSink instance to
+    retrieve video data.
+*/
 void QMediaPlayer::setVideoSink(QVideoSink *sink)
 {
     Q_D(QMediaPlayer);
-    if (!d->control)
-        return;
-
     d->videoOutput = nullptr;
     d->setVideoSink(sink);
 }
 
+/*!
+    Returns the QVideoSink instance.
+*/
 QVideoSink *QMediaPlayer::videoSink() const
 {
     Q_D(const QMediaPlayer);
@@ -997,11 +950,7 @@ void QMediaPlayer::setVideoOutput(const QList<QVideoSink *> &sinks)
 bool QMediaPlayer::isAvailable() const
 {
     Q_D(const QMediaPlayer);
-
-    if (!d->control)
-        return false;
-
-    return true;
+    return bool(d->control);
 }
 
 /*!
@@ -1016,6 +965,8 @@ bool QMediaPlayer::isAvailable() const
 */
 
 /*!
+    \property QMediaPlayer::metaData
+
     Returns meta data for the current media used by the media player.
 
     Meta data can contain information such as the title of the video or its creation date.
@@ -1026,7 +977,7 @@ bool QMediaPlayer::isAvailable() const
 QMediaMetaData QMediaPlayer::metaData() const
 {
     Q_D(const QMediaPlayer);
-    return d->control->metaData();
+    return d->control ? d->control->metaData() : QMediaMetaData{};
 }
 
 // Enums

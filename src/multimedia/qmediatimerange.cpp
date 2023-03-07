@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include <QtCore/qdebug.h>
 
@@ -166,7 +130,7 @@ void QMediaTimeRangePrivate::addInterval(const QMediaTimeRange::Interval &interv
 
     // Find a place to insert the interval
     int i;
-    for (i = 0; i < intervals.count(); i++) {
+    for (i = 0; i < intervals.size(); i++) {
         // Insert before this element
         if(interval.s < intervals[i].s) {
             intervals.insert(i, interval);
@@ -175,7 +139,7 @@ void QMediaTimeRangePrivate::addInterval(const QMediaTimeRange::Interval &interv
     }
 
     // Interval needs to be added to the end of the list
-    if (i == intervals.count())
+    if (i == intervals.size())
         intervals.append(interval);
 
     // Do we need to correct the element before us?
@@ -183,7 +147,7 @@ void QMediaTimeRangePrivate::addInterval(const QMediaTimeRange::Interval &interv
         i--;
 
     // Merge trailing ranges
-    while (i < intervals.count() - 1
+    while (i < intervals.size() - 1
           && intervals[i].e >= intervals[i + 1].s - 1) {
         intervals[i].e = qMax(intervals[i].e, intervals[i + 1].e);
         intervals.removeAt(i + 1);
@@ -196,7 +160,7 @@ void QMediaTimeRangePrivate::removeInterval(const QMediaTimeRange::Interval &int
     if (!interval.isNormal())
         return;
 
-    for (int i = 0; i < intervals.count(); i++) {
+    for (int i = 0; i < intervals.size(); i++) {
         const QMediaTimeRange::Interval r = intervals.at(i);
 
         if (r.e < interval.s) {
@@ -296,6 +260,12 @@ QMediaTimeRange::QMediaTimeRange(const QMediaTimeRange &range) noexcept = defaul
 */
 
 /*!
+    \fn void QMediaTimeRange::swap(QMediaTimeRange &other) noexcept
+
+    Swaps the current instance with the \a other.
+*/
+
+/*!
     \fn QMediaTimeRange::~QMediaTimeRange()
 
     Destructor.
@@ -347,7 +317,7 @@ qint64 QMediaTimeRange::earliestTime() const
 qint64 QMediaTimeRange::latestTime() const
 {
     if (!d->intervals.isEmpty())
-        return d->intervals[d->intervals.count() - 1].end();
+        return d->intervals[d->intervals.size() - 1].end();
 
     return 0;
 }
@@ -536,7 +506,7 @@ bool QMediaTimeRange::isEmpty() const
 */
 bool QMediaTimeRange::isContinuous() const
 {
-    return (d->intervals.count() <= 1);
+    return (d->intervals.size() <= 1);
 }
 
 /*!
@@ -546,7 +516,7 @@ bool QMediaTimeRange::isContinuous() const
 */
 bool QMediaTimeRange::contains(qint64 time) const
 {
-    for (int i = 0; i < d->intervals.count(); i++) {
+    for (int i = 0; i < d->intervals.size(); i++) {
         if (d->intervals[i].contains(time))
             return true;
 

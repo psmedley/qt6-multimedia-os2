@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QVIDEOFRAMECONVERSIONHELPER_P_H
 #define QVIDEOFRAMECONVERSIONHELPER_P_H
@@ -62,17 +26,43 @@ typedef void (QT_FASTCALL *VideoFrameConvertFunc)(const QVideoFrame &frame, ucha
 VideoFrameConvertFunc qConverterForFormat(QVideoFrameFormat::PixelFormat format);
 
 template<int a, int r, int g, int b>
-struct RgbPixel
+struct ArgbPixel
 {
-    uchar data[4];
+    quint32 data;
     inline quint32 convert() const
     {
-        return (a >= 0 ? (uint(data[a]) << 24) : 0xff000000)
-               | (uint(data[r]) << 16)
-               | (uint(data[g]) << 8)
-               | (uint(data[b]));
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+        return (((data >> (8*a)) & 0xff) << 24)
+             | (((data >> (8*r)) & 0xff) << 16)
+             | (((data >> (8*g)) & 0xff) << 8)
+             | ((data >> (8*b)) & 0xff);
+#else
+        return (((data >> (32-8*a)) & 0xff) << 24)
+             | (((data >> (32-8*r)) & 0xff) << 16)
+             | (((data >> (32-8*g)) & 0xff) << 8)
+             | ((data >> (32-8*b)) & 0xff);
+#endif
     }
+};
 
+template<int r, int g, int b>
+struct RgbPixel
+{
+    quint32 data;
+    inline quint32 convert() const
+    {
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+        return 0xff000000
+                | (((data >> (8*r)) & 0xff) << 16)
+                | (((data >> (8*g)) & 0xff) << 8)
+                | ((data >> (8*b)) & 0xff);
+#else
+        return 0xff000000
+                | (((data >> (32-8*r)) & 0xff) << 16)
+                | (((data >> (32-8*g)) & 0xff) << 8)
+                | ((data >> (32-8*b)) & 0xff);
+#endif
+    }
 };
 
 template<typename Y>
@@ -92,14 +82,14 @@ struct YPixel
 };
 
 
-using ARGB8888 = RgbPixel<0, 1, 2, 3>;
-using ABGR8888 = RgbPixel<0, 3, 2, 1>;
-using RGBA8888 = RgbPixel<3, 0, 1, 2>;
-using BGRA8888 = RgbPixel<3, 2, 1, 0>;
-using XRGB8888 = RgbPixel<-1, 1, 2, 3>;
-using XBGR8888 = RgbPixel<-1, 3, 2, 1>;
-using RGBX8888 = RgbPixel<-1, 0, 1, 2>;
-using BGRX8888 = RgbPixel<-1, 2, 1, 0>;
+using ARGB8888 = ArgbPixel<0, 1, 2, 3>;
+using ABGR8888 = ArgbPixel<0, 3, 2, 1>;
+using RGBA8888 = ArgbPixel<3, 0, 1, 2>;
+using BGRA8888 = ArgbPixel<3, 2, 1, 0>;
+using XRGB8888 = RgbPixel<1, 2, 3>;
+using XBGR8888 = RgbPixel<3, 2, 1>;
+using RGBX8888 = RgbPixel<0, 1, 2>;
+using BGRX8888 = RgbPixel<2, 1, 0>;
 
 #define FETCH_INFO_PACKED(frame) \
     const uchar *src = frame.bits(0); \

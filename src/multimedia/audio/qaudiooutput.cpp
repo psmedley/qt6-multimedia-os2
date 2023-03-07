@@ -1,41 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR
+// GPL-3.0-only
 
 #include <qaudiooutput.h>
 #include <qaudiodevice.h>
@@ -67,10 +32,11 @@
     }
     \endqml
 
-    You can use AudioOutput together with a QtMultiMedia::MediaPlayer to play audio content, or you can use it
-    in conjunction with a MultiMedia::CaptureSession to monitor the audio processed by the capture session.
+    You can use AudioOutput together with a QtMultiMedia::MediaPlayer to play audio content, or you
+   can use it in conjunction with a MultiMedia::CaptureSession to monitor the audio processed by the
+   capture session.
 
-    \sa VideoOutput AudioInput
+    \sa VideoOutput, AudioInput
 */
 
 /*!
@@ -88,14 +54,21 @@
 */
 QAudioOutput::QAudioOutput(QObject *parent)
     : QAudioOutput(QMediaDevices::defaultAudioOutput(), parent)
-{}
+{
+}
 
 QAudioOutput::QAudioOutput(const QAudioDevice &device, QObject *parent)
-    : QObject(parent),
-    d(QPlatformMediaIntegration::instance()->createAudioOutput(this))
+    : QObject(parent)
 {
-    d->device = device.mode() == QAudioDevice::Output ? device : QMediaDevices::defaultAudioOutput();
-    d->setAudioDevice(d->device);
+    auto maybeAudioOutput = QPlatformMediaIntegration::instance()->createAudioOutput(this);
+    if (maybeAudioOutput) {
+        d = maybeAudioOutput.value();
+        d->device = device.mode() == QAudioDevice::Output ? device : QMediaDevices::defaultAudioOutput();
+        d->setAudioDevice(d->device);
+    } else {
+        d = new QPlatformAudioOutput(nullptr);
+        qWarning() << "Failed to initialize QAudioOutput" << maybeAudioOutput.error();
+    }
 }
 
 QAudioOutput::~QAudioOutput()
@@ -103,7 +76,6 @@ QAudioOutput::~QAudioOutput()
     setDisconnectFunction({});
     delete d;
 }
-
 
 /*!
     \qmlproperty real QtMultimedia::AudioOutput::volume
@@ -234,6 +206,5 @@ void QAudioOutput::setDisconnectFunction(std::function<void()> disconnectFunctio
     }
     d->disconnectFunction = std::move(disconnectFunction);
 }
-
 
 #include "moc_qaudiooutput.cpp"

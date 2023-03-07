@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QVIDEOSURFACEFORMAT_H
 #define QVIDEOSURFACEFORMAT_H
@@ -98,9 +62,11 @@ public:
         Format_SamplerExternalOES,
         Format_Jpeg,
         Format_SamplerRect,
+
+        Format_YUV420P10
     };
 #ifndef Q_QDOC
-    static constexpr int NPixelFormats = Format_SamplerRect + 1;
+    static constexpr int NPixelFormats = Format_YUV420P10 + 1;
 #endif
 
     enum Direction
@@ -109,15 +75,46 @@ public:
         BottomToTop
     };
 
+#if QT_DEPRECATED_SINCE(6, 4)
     enum YCbCrColorSpace
     {
-        YCbCr_Undefined,
-        YCbCr_BT601,
-        YCbCr_BT709,
-        YCbCr_xvYCC601,
-        YCbCr_xvYCC709,
-        YCbCr_JPEG,
-        YCbCr_BT2020
+        YCbCr_Undefined = 0,
+        YCbCr_BT601 = 1,
+        YCbCr_BT709 = 2,
+        YCbCr_xvYCC601 = 3,
+        YCbCr_xvYCC709 = 4,
+        YCbCr_JPEG = 5,
+        YCbCr_BT2020 = 6
+    };
+#endif
+
+    // Keep values compatible with YCbCrColorSpace
+    enum ColorSpace
+    {
+        ColorSpace_Undefined = 0,
+        ColorSpace_BT601 = 1,
+        ColorSpace_BT709 = 2,
+        ColorSpace_AdobeRgb = 5,
+        ColorSpace_BT2020 = 6
+    };
+
+    enum ColorTransfer
+    {
+        ColorTransfer_Unknown,
+        ColorTransfer_BT709,
+        ColorTransfer_BT601,
+        ColorTransfer_Linear,
+        ColorTransfer_Gamma22,
+        ColorTransfer_Gamma28,
+        ColorTransfer_ST2084,
+        ColorTransfer_STD_B67,
+    };
+
+    enum ColorRange
+    {
+        ColorRange_Unknown,
+        ColorRange_Video,
+        ColorRange_Full
     };
 
     QVideoFrameFormat();
@@ -159,8 +156,21 @@ public:
     qreal frameRate() const;
     void setFrameRate(qreal rate);
 
+#if QT_DEPRECATED_SINCE(6, 4)
+    QT_DEPRECATED_VERSION_X_6_4("Use colorSpace()")
     YCbCrColorSpace yCbCrColorSpace() const;
+    QT_DEPRECATED_VERSION_X_6_4("Use setColorSpace()")
     void setYCbCrColorSpace(YCbCrColorSpace colorSpace);
+#endif
+
+    ColorSpace colorSpace() const;
+    void setColorSpace(ColorSpace colorSpace);
+
+    ColorTransfer colorTransfer() const;
+    void setColorTransfer(ColorTransfer colorTransfer);
+
+    ColorRange colorRange() const;
+    void setColorRange(ColorRange range);
 
     bool isMirrored() const;
     void setMirrored(bool mirrored);
@@ -168,6 +178,9 @@ public:
     QString vertexShaderFileName() const;
     QString fragmentShaderFileName() const;
     void updateUniformData(QByteArray *dst, const QVideoFrame &frame, const QMatrix4x4 &transform, float opacity) const;
+
+    float maxLuminance() const;
+    void setMaxLuminance(float lum);
 
     static PixelFormat pixelFormatFromImageFormat(QImage::Format format);
     static QImage::Format imageFormatFromPixelFormat(PixelFormat format);
@@ -183,7 +196,11 @@ Q_DECLARE_SHARED(QVideoFrameFormat)
 #ifndef QT_NO_DEBUG_STREAM
 Q_MULTIMEDIA_EXPORT QDebug operator<<(QDebug, const QVideoFrameFormat &);
 Q_MULTIMEDIA_EXPORT QDebug operator<<(QDebug, QVideoFrameFormat::Direction);
+#if QT_DEPRECATED_SINCE(6, 4)
+QT_DEPRECATED_VERSION_X_6_4("Use QVideoFrameFormat::ColorSpace")
 Q_MULTIMEDIA_EXPORT QDebug operator<<(QDebug, QVideoFrameFormat::YCbCrColorSpace);
+#endif
+Q_MULTIMEDIA_EXPORT QDebug operator<<(QDebug, QVideoFrameFormat::ColorSpace);
 Q_MULTIMEDIA_EXPORT QDebug operator<<(QDebug, QVideoFrameFormat::PixelFormat);
 #endif
 

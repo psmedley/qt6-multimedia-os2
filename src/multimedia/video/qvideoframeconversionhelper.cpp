@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideoframeconversionhelper_p.h"
 #include "qrgb.h"
@@ -67,6 +31,7 @@ static inline void planarYUV420_to_ARGB32(const uchar *y, int yStride,
                                           quint32 *rgb,
                                           int width, int height)
 {
+    height &= ~1;
     quint32 *rgb0 = rgb;
     quint32 *rgb1 = rgb + width;
 
@@ -353,14 +318,15 @@ static void QT_FASTCALL qt_convert_to_ARGB32(const QVideoFrame &frame, uchar *ou
 
         int x = 0;
         for (; x < width - 3; x += 4) {
-            *argb++ = qPremultiply(data->convert());
-            ++data;
-            *argb++ = qPremultiply(data->convert());
-            ++data;
-            *argb++ = qPremultiply(data->convert());
-            ++data;
-            *argb++ = qPremultiply(data->convert());
-            ++data;
+            // Copy 4 pixels onto the stack in one go. This significantly increases performance
+            // in the case where the mapped memory is uncached (because it's a framebuffer)
+            Pixel p[4];
+            memcpy(p, data, 4*sizeof(Pixel));
+            *argb++ = qPremultiply(p[0].convert());
+            *argb++ = qPremultiply(p[1].convert());
+            *argb++ = qPremultiply(p[2].convert());
+            *argb++ = qPremultiply(p[3].convert());
+            data += 4;
         }
 
         // leftovers
@@ -386,14 +352,15 @@ static void QT_FASTCALL qt_convert_premultiplied_to_ARGB32(const QVideoFrame &fr
 
         int x = 0;
         for (; x < width - 3; x += 4) {
-            *argb++ = data->convert();
-            ++data;
-            *argb++ = data->convert();
-            ++data;
-            *argb++ = data->convert();
-            ++data;
-            *argb++ = data->convert();
-            ++data;
+            // Copy 4 pixels onto the stack in one go. This significantly increases performance
+            // in the case where the mapped memory is uncached (because it's a framebuffer)
+            Pixel p[4];
+            memcpy(p, data, 4*sizeof(Pixel));
+            *argb++ = p[0].convert();
+            *argb++ = p[1].convert();
+            *argb++ = p[2].convert();
+            *argb++ = p[3].convert();
+            data += 4;
         }
 
         // leftovers
@@ -413,6 +380,7 @@ static inline void planarYUV420_16bit_to_ARGB32(const uchar *y, int yStride,
                                           quint32 *rgb,
                                           int width, int height)
 {
+    height &= ~1;
     quint32 *rgb0 = rgb;
     quint32 *rgb1 = rgb + width;
 

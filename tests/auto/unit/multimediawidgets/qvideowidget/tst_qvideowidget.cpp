@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 //TESTED_COMPONENT=src/multimedia
 
@@ -202,14 +177,14 @@ void tst_QVideoWidget::fullScreen()
     widget.setFullScreen(true);
     QVERIFY(QTest::qWaitForWindowExposed(&widget));
     QCOMPARE(widget.isFullScreen(), true);
-    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.size(), 1);
     QCOMPARE(spy.value(0).value(0).toBool(), true);
 
     // Test returning to normal with setFullScreen(false).
     widget.setFullScreen(false);
     QVERIFY(QTest::qWaitForWindowExposed(&widget));
     QCOMPARE(widget.isFullScreen(), false);
-    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.size(), 2);
     QCOMPARE(spy.value(1).value(0).toBool(), false);
     QCOMPARE(widget.windowFlags(), windowFlags);
 
@@ -217,35 +192,35 @@ void tst_QVideoWidget::fullScreen()
     widget.showFullScreen();
     QVERIFY(QTest::qWaitForWindowExposed(&widget));
     QCOMPARE(widget.isFullScreen(), true);
-    QCOMPARE(spy.count(), 3);
+    QCOMPARE(spy.size(), 3);
     QCOMPARE(spy.value(2).value(0).toBool(), true);
 
     // Test returning to normal with showNormal().
     widget.showNormal();
     QVERIFY(QTest::qWaitForWindowExposed(&widget));
     QCOMPARE(widget.isFullScreen(), false);
-    QCOMPARE(spy.count(), 4);
+    QCOMPARE(spy.size(), 4);
     QCOMPARE(spy.value(3).value(0).toBool(), false);
     QCOMPARE(widget.windowFlags(), windowFlags);
 
     // Test setFullScreen(false) and showNormal() do nothing when isFullScreen() == false.
     widget.setFullScreen(false);
     QCOMPARE(widget.isFullScreen(), false);
-    QCOMPARE(spy.count(), 4);
+    QCOMPARE(spy.size(), 4);
     widget.showNormal();
     QVERIFY(QTest::qWaitForWindowExposed(&widget));
     QCOMPARE(widget.isFullScreen(), false);
-    QCOMPARE(spy.count(), 4);
+    QCOMPARE(spy.size(), 4);
 
     // Test setFullScreen(true) and showFullScreen() do nothing when isFullScreen() == true.
     widget.showFullScreen();
     QVERIFY(QTest::qWaitForWindowExposed(&widget));
     widget.setFullScreen(true);
     QCOMPARE(widget.isFullScreen(), true);
-    QCOMPARE(spy.count(), 5);
+    QCOMPARE(spy.size(), 5);
     widget.showFullScreen();
     QCOMPARE(widget.isFullScreen(), true);
-    QCOMPARE(spy.count(), 5);
+    QCOMPARE(spy.size(), 5);
 }
 
 static const uchar rgb32ImageData[] =

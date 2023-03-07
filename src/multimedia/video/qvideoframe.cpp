@@ -1,47 +1,11 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideoframe.h"
 
 #include "qvideotexturehelper_p.h"
 #include "qmemoryvideobuffer_p.h"
-#include "qvideoframeconversionhelper_p.h"
+#include "qvideoframeconverter_p.h"
 #include "qvideoframeformat.h"
 #include "qpainter.h"
 #include <qtextlayout.h>
@@ -56,45 +20,6 @@
 #include <QDebug>
 
 QT_BEGIN_NAMESPACE
-static bool pixelFormatHasAlpha[QVideoFrameFormat::NPixelFormats] =
-{
-    false, //Format_Invalid,
-    true, //Format_ARGB32,
-    true, //Format_ARGB32_Premultiplied,
-    false, //Format_XRGB32,
-    true, //Format_BGRA32,
-    true, //Format_BGRA32_Premultiplied,
-    false, //Format_BGRX32,
-    true, //Format_ABGR32,
-    false, //Format_XBGR32,
-    true, //Format_RGBA32,
-    false, //Format_RGBX32,
-
-    true, //Format_AYUV,
-    true, //Format_AYUV_Premultiplied,
-    false, //Format_YUV420P,
-    false, //Format_YUV422P,
-    false, //Format_YV12,
-    false, //Format_UYVY,
-    false, //Format_YUYV,
-    false, //Format_NV12,
-    false, //Format_NV21,
-    false, //Format_IMC1,
-    false, //Format_IMC2,
-    false, //Format_IMC3,
-    false, //Format_IMC4,
-    false, //Format_Y8,
-    false, //Format_Y16,
-
-    false, //Format_P010,
-    false, //Format_P016,
-
-    false, //Format_SamplerExternalOES
-    false, //Format_Jpeg,
-    false, //Format_SamplerRect
-
-};
-
 
 class QVideoFramePrivate : public QSharedData
 {
@@ -120,6 +45,7 @@ public:
     QString subtitleText;
     QVideoFrame::RotationAngle rotationAngle = QVideoFrame::Rotation0;
     bool mirrored = false;
+    QImage image;
 private:
     Q_DISABLE_COPY(QVideoFramePrivate)
 };
@@ -220,6 +146,12 @@ QVideoFrame::QVideoFrame(const QVideoFrame &other) = default;
     \fn  QVideoFrame::QVideoFrame(QVideoFrame &&other)
 
     Constructs a QVideoFrame by moving from \a other.
+*/
+
+/*!
+    \fn void QVideoFrame::swap(QVideoFrame &other) noexcept
+
+    Swaps the current video frame with \a other.
 */
 
 /*!
@@ -469,6 +401,7 @@ bool QVideoFrame::map(QVideoFrame::MapMode mode)
             // Single plane or opaque format.
             break;
         case QVideoFrameFormat::Format_YUV420P:
+        case QVideoFrameFormat::Format_YUV420P10:
         case QVideoFrameFormat::Format_YUV422P:
         case QVideoFrameFormat::Format_YV12: {
             // The UV stride is usually half the Y stride and is 32-bit aligned.
@@ -638,18 +571,6 @@ int QVideoFrame::planeCount() const
 }
 
 /*!
-    \internal
-    Returns a texture id to the video frame's buffers.
-*/
-quint64 QVideoFrame::textureHandle(int plane) const
-{
-    if (!d || !d->buffer)
-        return 0;
-    d->buffer->mapTextures();
-    return d->buffer->textureHandle(plane);
-}
-
-/*!
     Returns the presentation time (in microseconds) when the frame should be displayed.
 
     An invalid time is represented as -1.
@@ -753,40 +674,14 @@ bool QVideoFrame::mirrored() const
 */
 QImage QVideoFrame::toImage() const
 {
-    QVideoFrame frame = *this;
-    QImage result;
+    if (!isValid())
+        return {};
+    if (!d->image.isNull())
+        return d->image;
 
-    if (!frame.isValid() || !frame.map(QVideoFrame::ReadOnly))
-        return result;
-
-    if (frame.pixelFormat() == QVideoFrameFormat::Format_Jpeg) {
-        // Load from JPG
-        result.loadFromData(frame.bits(0), frame.mappedBytes(0), "JPG");
-    }
-
-    // Need conversion
-    else {
-        VideoFrameConvertFunc convert = qConverterForFormat(frame.pixelFormat());
-        if (!convert) {
-            qWarning() << Q_FUNC_INFO << ": unsupported pixel format" << frame.pixelFormat();
-        } else {
-            auto format = pixelFormatHasAlpha[frame.pixelFormat()] ? QImage::Format_ARGB32_Premultiplied : QImage::Format_RGB32;
-            result = QImage(frame.width(), frame.height(), format);
-            convert(frame, result.bits());
-        }
-    }
-
-    frame.unmap();
-
-    QTransform t;
-    if (mirrored())
-        t.scale(-1.f, 1.f);
-    if (rotationAngle() != Rotation0)
-        t.rotate(float(rotationAngle()));
-    if (surfaceFormat().scanLineDirection() != QVideoFrameFormat::TopToBottom)
-        t.scale(1.f, -1.f);
-
-    return t.isIdentity() ? result : result.transformed(t);
+    d->image = qImageFromVideoFrame(*this, rotationAngle(), mirrored(),
+                                    surfaceFormat().scanLineDirection() != QVideoFrameFormat::TopToBottom);
+    return d->image;
 }
 
 /*!

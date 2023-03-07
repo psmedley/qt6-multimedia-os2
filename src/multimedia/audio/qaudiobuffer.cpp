@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qaudiobuffer.h"
 
@@ -48,9 +12,7 @@ class QAudioBufferPrivate : public QSharedData
 {
 public:
     QAudioBufferPrivate(const QAudioFormat &f, const QByteArray &d, qint64 start)
-        : format(f),
-        data(d),
-        startTime(start)
+        : format(f), data(d), startTime(start)
     {
     }
 
@@ -71,11 +33,12 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QAudioBufferPrivate);
     \inmodule QtMultimedia
     \ingroup multimedia
     \ingroup multimedia_audio
-    \brief The QAudioBuffer class represents a collection of audio samples with a specific format and sample rate.
+    \brief The QAudioBuffer class represents a collection of audio samples with a specific format
+   and sample rate.
 
-    QAudioBuffer is used by the QAudioDecoder class to hand decoded audio data over to the application. An audio buffer
-    contains data in a certain QAudioFormat that can be queried using format(). It is also tagged with timing and duration
-    information.
+    QAudioBuffer is used by the QAudioDecoder class to hand decoded audio data over to the
+   application. An audio buffer contains data in a certain QAudioFormat that can be queried using
+   format(). It is also tagged with timing and duration information.
 
     To access the data stored inside the buffer, use the data() or constData() methods.
 
@@ -140,6 +103,12 @@ QAudioBuffer::QAudioBuffer(int numFrames, const QAudioFormat &format, qint64 sta
 */
 
 /*!
+   \fn void QAudioBuffer::swap(QAudioBuffer &other) noexcept
+
+   Swaps the audio buffer with \a other.
+*/
+
+/*!
     \fn QAudioBuffer &QAudioBuffer::operator=(QAudioBuffer &&other)
 
     Moves \a other into this QAudioBuffer.
@@ -148,7 +117,7 @@ QAudioBuffer::QAudioBuffer(int numFrames, const QAudioFormat &format, qint64 sta
 /*!
     Assigns the \a other buffer to this.
  */
-QAudioBuffer &QAudioBuffer::operator =(const QAudioBuffer &other) = default;
+QAudioBuffer &QAudioBuffer::operator=(const QAudioBuffer &other) = default;
 
 /*!
     Destroys this audio buffer.
@@ -261,7 +230,7 @@ qint64 QAudioBuffer::startTime() const noexcept
     \endcode
 
 */
-const void* QAudioBuffer::constData() const noexcept
+const void *QAudioBuffer::constData() const noexcept
 {
     if (!d)
         return nullptr;
@@ -284,13 +253,12 @@ const void* QAudioBuffer::constData() const noexcept
     const quint16 *data = buffer->data<quint16>();
     \endcode
 */
-const void* QAudioBuffer::data() const noexcept
+const void *QAudioBuffer::data() const noexcept
 {
     if (!d)
         return nullptr;
     return d->data.constData();
 }
-
 
 /*
     Template data/constData functions caused override problems with qdoc,
@@ -328,4 +296,33 @@ void *QAudioBuffer::data()
     channel is a \e {signed short}.
 */
 
+/*!
+    \typedef QAudioBuffer::U8M
+
+    This is a predefined specialization for an unsigned 8 bit mono sample.
+*/
+/*!
+    \typedef QAudioBuffer::S16M
+    This is a predefined specialization for a signed 16 bit mono sample.
+i*/
+/*!
+    \typedef QAudioBuffer::S32M
+    This is a predefined specialization for a signed 32 bit mono sample.
+*/
+/*!
+    \typedef QAudioBuffer::F32M
+    This is a predefined specialization for a 32 bit float mono sample.
+*/
+/*!
+    \typedef QAudioBuffer::U8S
+    This is a predifined specialization for an unsiged 8 bit stereo sample.
+*/
+/*!
+    \typedef QAudioBuffer::S32S
+    This is a predifined specialization for a siged 32 bit stereo sample.
+*/
+/*!
+    \typedef QAudioBuffer::F32S
+    This is a predifined specialization for a 32 bit float stereo sample.
+*/
 QT_END_NAMESPACE

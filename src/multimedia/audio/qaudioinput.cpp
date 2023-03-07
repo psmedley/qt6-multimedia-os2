@@ -1,41 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR
+// GPL-3.0-only
 
 #include <qaudioinput.h>
 #include <qaudiodevice.h>
@@ -69,10 +34,10 @@
     }
     \endqml
 
-    You can use AudioInput together with a QtMultiMedia::CaptureSession to capture audio from an audio
-    input device.
+    You can use AudioInput together with a QtMultiMedia::CaptureSession to capture audio from an
+   audio input device.
 
-    \sa Camera AudioOutput
+    \sa Camera, AudioOutput
 */
 
 /*!
@@ -87,16 +52,22 @@
     to be used, muting the channel, and changing the channel's volume.
 */
 
-QAudioInput::QAudioInput(QObject *parent)
-    : QAudioInput(QMediaDevices::defaultAudioInput(), parent)
-{}
+QAudioInput::QAudioInput(QObject *parent) : QAudioInput(QMediaDevices::defaultAudioInput(), parent)
+{
+}
 
 QAudioInput::QAudioInput(const QAudioDevice &device, QObject *parent)
-    : QObject(parent),
-    d(QPlatformMediaIntegration::instance()->createAudioInput(this))
+    : QObject(parent)
 {
-    d->device = device.mode() == QAudioDevice::Input ? device : QMediaDevices::defaultAudioInput();
-    d->setAudioDevice(d->device);
+    auto maybeAudioInput = QPlatformMediaIntegration::instance()->createAudioInput(this);
+    if (maybeAudioInput) {
+        d = maybeAudioInput.value();
+        d->device = device.mode() == QAudioDevice::Input ? device : QMediaDevices::defaultAudioInput();
+        d->setAudioDevice(d->device);
+    } else {
+        d = new QPlatformAudioInput(nullptr);
+        qWarning() << "Failed to initialize QAudioInput" << maybeAudioInput.error();
+    }
 }
 
 QAudioInput::~QAudioInput()
@@ -117,6 +88,11 @@ QAudioInput::~QAudioInput()
     using a logarithmic scale will produce linear changes in perceived loudness,
     which is what a user would normally expect from a volume control.
     \sa QAudio::convertVolume()
+*/
+/*!
+    \property QAudioInput::volume
+
+    The property returns the volume of the audio input.
 */
 float QAudioInput::volume() const
 {

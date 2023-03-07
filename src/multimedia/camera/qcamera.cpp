@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 
 #include "qcamera_p.h"
@@ -204,12 +168,14 @@ void QCameraPrivate::init(const QCameraDevice &device)
 {
     Q_Q(QCamera);
 
-    control = QPlatformMediaIntegration::instance()->createCamera(q);
-    if (!control) {
-        _q_error(QCamera::CameraError, QString::fromUtf8("Camera not supported"));
+    auto maybeControl = QPlatformMediaIntegration::instance()->createCamera(q);
+    if (!maybeControl) {
+        qWarning() << "Failed to initialize QCamera" << maybeControl.error();
+        error = QCamera::CameraError;
+        errorString =  maybeControl.error();
         return;
     }
-
+    control = maybeControl.value();
     cameraDevice = !device.isNull() ? device : QMediaDevices::defaultVideoInput();
     if (cameraDevice.isNull())
         _q_error(QCamera::CameraError, QString::fromUtf8("No camera detected"));
@@ -279,7 +245,6 @@ QCamera::~QCamera()
     Q_D(QCamera);
     if (d->captureSession)
         d->captureSession->setCamera(nullptr);
-    Q_ASSERT(!d->captureSession);
 }
 
 /*!
@@ -329,6 +294,8 @@ void QCamera::setActive(bool active)
 */
 
 /*!
+    \property QCamera::error
+
     Returns the error state of the camera.
 */
 
@@ -344,6 +311,8 @@ QCamera::Error QCamera::error() const
 */
 
 /*!
+    \property QCamera::errorString
+
     Returns a human readable string describing a camera's error state.
 */
 QString QCamera::errorString() const
@@ -378,6 +347,8 @@ QString QCamera::errorString() const
 */
 
 /*!
+    \property QCamera::supportedFeatures
+
     Returns the features supported by this camera.
 
     \sa QCamera::Feature
@@ -449,12 +420,14 @@ QPlatformCamera *QCamera::platformCamera()
     return d->control;
 }
 
-/*! \qmlproperty CameraDevice QtMultimedia::Camera::cameraDevice
+/*! \qmlproperty cameraDevice QtMultimedia::Camera::cameraDevice
 
     Gets or sets the currently active camera device.
 */
 
 /*!
+    \property QCamera::cameraDevice
+
     Returns the QCameraDevice object associated with this camera.
  */
 QCameraDevice QCamera::cameraDevice() const
@@ -483,14 +456,16 @@ void QCamera::setCameraDevice(const QCameraDevice &cameraDevice)
     setCameraFormat({});
 }
 
-/*! \qmlproperty CameraDevice QtMultimedia::Camera::cameraFormat
+/*! \qmlproperty cameraDevice QtMultimedia::Camera::cameraFormat
 
     Gets or sets the currently active camera format.
 
-    \sa CameraDevice::videoFormats
+    \sa cameraDevice::videoFormats
 */
 
 /*!
+    \property QCamera::cameraFormat
+
     Returns the camera format currently used by the camera.
 
     \sa QCameraDevice::videoFormats
@@ -578,6 +553,11 @@ QCamera::FocusMode QCamera::focusMode() const
     return d->control ? d->control->focusMode() : QCamera::FocusModeAuto;
 }
 
+/*!
+    \fn void QCamera::focusModeChanged()
+
+    Signals when the focusMode changes.
+*/
 void QCamera::setFocusMode(QCamera::FocusMode mode)
 {
     Q_D(QCamera);
@@ -608,6 +588,8 @@ bool QCamera::isFocusModeSupported(FocusMode mode) const
 */
 
 /*!
+    \property QCamera::focusPoint
+
     Returns the point currently used by the auto focus system to focus onto.
  */
 QPointF QCamera::focusPoint() const
@@ -650,20 +632,19 @@ QPointF QCamera::customFocusPoint() const
 void QCamera::setCustomFocusPoint(const QPointF &point)
 {
     Q_D(QCamera);
-    if (!d->control)
-        return;
-    d->control->setCustomFocusPoint(point);
+    if (d->control)
+        d->control->setCustomFocusPoint(point);
 }
 
 /*!
-    \qmlproperty float QCamera::focusDistance
+    \qmlproperty float QtMultimedia::Camera::focusDistance
 
     This property return an approximate focus distance of the camera. The value reported
     is between 0 and 1, 0 being the closest possible focus distance, 1 being as far away
     as possible. Note that 1 is often, but not always infinity.
 
     Setting the focus distance will be ignored unless the focus mode is set to
-    \l FocusModeManual.
+    \l {focusMode}{FocusModeManual}.
 */
 
 /*!
@@ -700,6 +681,8 @@ float QCamera::focusDistance() const
 
 
 /*!
+    \property QCamera::maximumZoomFactor
+
     Returns the maximum zoom factor.
 
     This will be \c 1.0 on cameras that do not support zooming.
@@ -708,7 +691,7 @@ float QCamera::focusDistance() const
 float QCamera::maximumZoomFactor() const
 {
     Q_D(const QCamera);
-    return d->control ? d->control->maxZoomFactor() : 1.;
+    return d->control ? d->control->maxZoomFactor() : 1.f;
 }
 
 /*!
@@ -720,6 +703,8 @@ float QCamera::maximumZoomFactor() const
 */
 
 /*!
+    \property QCamera::minimumZoomFactor
+
     Returns the minimum zoom factor.
 
     This will be \c 1.0 on cameras that do not support zooming.
@@ -728,7 +713,7 @@ float QCamera::maximumZoomFactor() const
 float QCamera::minimumZoomFactor() const
 {
     Q_D(const QCamera);
-    return d->control ? d->control->minZoomFactor() : 1.;
+    return d->control ? d->control->minZoomFactor() : 1.f;
 }
 
 /*!
@@ -748,14 +733,14 @@ float QCamera::minimumZoomFactor() const
 float QCamera::zoomFactor() const
 {
     Q_D(const QCamera);
-    return d->control ? d->control->zoomFactor() : 1.;
+    return d->control ? d->control->zoomFactor() : 1.f;
 }
 /*!
     Zooms to a zoom factor \a factor at a rate of 1 factor per second.
  */
 void QCamera::setZoomFactor(float factor)
 {
-    zoomTo(factor, 0.);
+    zoomTo(factor, 0.f);
 }
 
 /*!
@@ -781,9 +766,9 @@ void QCamera::setZoomFactor(float factor)
 */
 void QCamera::zoomTo(float factor, float rate)
 {
-    Q_ASSERT(rate >= 0.);
-    if (rate < 0.)
-        rate = 0.;
+    Q_ASSERT(rate >= 0.f);
+    if (rate < 0.f)
+        rate = 0.f;
 
     Q_D(QCamera);
     if (!d->control)
@@ -806,11 +791,15 @@ void QCamera::zoomTo(float factor, float rate)
 */
 
 /*!
-    \qmlproperty Camera::FlashMode QtMultimedia::Camera::flashMode
+    \qmlproperty enumeration QtMultimedia::Camera::flashMode
 
     Gets or sets a certain flash mode if the camera has a flash.
 
-    \sa QCamera::FlashMode, Camera::isFlashModeSupported, Camera::isFlashReady
+    \value Camera.FlashOff      Flash is Off.
+    \value Camera.FlashOn       Flash is On.
+    \value Camera.FlashAuto     Automatic flash.
+
+    \sa isFlashModeSupported, isFlashReady
 */
 
 /*!
@@ -952,14 +941,11 @@ void QCamera::setExposureMode(QCamera::ExposureMode mode)
 bool QCamera::isExposureModeSupported(QCamera::ExposureMode mode) const
 {
     Q_D(const QCamera);
-    if (!d->control)
-        return false;
-
-    return d->control->isExposureModeSupported(mode);
+    return d->control && d->control->isExposureModeSupported(mode);
 }
 
 /*!
-    \qmlproperty real QCamera::exposureCompensation
+    \qmlproperty real QtMultimedia::Camera::exposureCompensation
 
     Gets or sets the exposure compensation in EV units.
 
@@ -977,7 +963,7 @@ bool QCamera::isExposureModeSupported(QCamera::ExposureMode mode) const
 float QCamera::exposureCompensation() const
 {
     Q_D(const QCamera);
-    return d->control ? d->control->exposureCompensation() : 0.;
+    return d->control ? d->control->exposureCompensation() : 0.f;
 }
 
 void QCamera::setExposureCompensation(float ev)
@@ -1075,7 +1061,7 @@ int QCamera::maximumIsoSensitivity() const
 float QCamera::minimumExposureTime() const
 {
     Q_D(const QCamera);
-    return d->control ? d->control->minExposureTime() : -1.;
+    return d->control ? d->control->minExposureTime() : -1.f;
 }
 
 /*!
@@ -1084,7 +1070,7 @@ float QCamera::minimumExposureTime() const
 float QCamera::maximumExposureTime() const
 {
     Q_D(const QCamera);
-    return d->control ? d->control->maxExposureTime() : -1.;
+    return d->control ? d->control->maxExposureTime() : -1.f;
 }
 
 /*!
@@ -1127,6 +1113,8 @@ float QCamera::exposureTime() const
 */
 
 /*!
+    \property QCamera::manualExposureTime
+
     Set the manual exposure time to \a seconds
 */
 
@@ -1235,6 +1223,8 @@ void QCamera::setAutoExposureTime()
 */
 
 /*!
+    \property QCamera::whiteBalanceMode
+
     Returns the white balance mode being used.
 */
 QCamera::WhiteBalanceMode QCamera::whiteBalanceMode() const
@@ -1270,9 +1260,7 @@ void QCamera::setWhiteBalanceMode(QCamera::WhiteBalanceMode mode)
 bool QCamera::isWhiteBalanceModeSupported(QCamera::WhiteBalanceMode mode) const
 {
     Q_D(const QCamera);
-    if (!d->control)
-        return false;
-    return d->control->isWhiteBalanceModeSupported(mode);
+    return d->control && d->control->isWhiteBalanceModeSupported(mode);
 }
 
 /*!
@@ -1287,6 +1275,8 @@ bool QCamera::isWhiteBalanceModeSupported(QCamera::WhiteBalanceMode mode) const
 */
 
 /*!
+    \property QCamera::colorTemperature
+
     Returns the current color temperature if the
     current white balance mode is \c WhiteBalanceManual. For other modes the
     return value is undefined.
@@ -1339,6 +1329,22 @@ void QCamera::setColorTemperature(int colorTemperature)
     \value WhiteBalanceSunset       Sunset white balance mode.
 */
 
+/*!
+    \fn void QCamera::brightnessChanged()
+    \internal
+*/
+/*!
+    \fn void QCamera::contrastChanged()
+    \internal
+*/
+/*!
+    \fn void QCamera::hueChanged()
+    \internal
+*/
+/*!
+    \fn void QCamera::saturationChanged()
+    \internal
+*/
 QT_END_NAMESPACE
 
 #include "moc_qcamera.cpp"

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #include <QDebug>
 #include <qaudioformat.h>
 #include <qalgorithms.h>
@@ -117,9 +81,15 @@ QT_BEGIN_NAMESPACE
 */
 
 /*!
-    \fn QAudioFormat& QAudioFormat::operator=(const QAudioFormat &other)
+    \fn bool QAudioFormat::operator==(const QAudioFormat &a, const QAudioFormat &b)
 
-    Assigns \a other to this QAudioFormat implementation.
+    Returns \c true if audio format \a a is equal to \a b, otherwise returns \c false.
+*/
+
+/*!
+    \fn bool QAudioFormat::operator!=(const QAudioFormat &a, const QAudioFormat &b)
+
+    Returns \c true if audio format \a a is not equal to \a b, otherwise returns \c false.
 */
 
 /*!
@@ -172,7 +142,10 @@ QT_BEGIN_NAMESPACE
     \value BottomFrontLeft
     \value BottomFrontRight
 */
-
+/*!
+    \variable QAudioFormat::NChannelPositions
+    \internal
+*/
 
 /*!
     \enum QAudioFormat::ChannelConfig
@@ -182,13 +155,22 @@ QT_BEGIN_NAMESPACE
     and 7.1 surround configurations.
 
     \value ChannelConfigUnknown The channel configuration is not known.
-    \value ChannelConfigMono The audio has one Center channel
-    \value ChannelConfigStereo The audio has two channels, Left and Right
-    \value ChannelConfig2Dot1 The audio has three channels, Left, Right and LFE (low frequency effect)
-    \value ChannelConfigSurround5Dot0 The audio has five channels, Left, Right, Center, BackLeft, BackRight
-    \value ChannelConfigSurround5Dot1 The audio has 6 channels, Left, Right, Center, LFE, BackLeft and BackRight
-    \value ChannelConfigSurround7Dot0 The audio has 7 channels, Left, Right, Center, BackLeft, BackRight, SideLeft and SideRight
-    \value ChannelConfigSurround7Dot1 The audio has 8 channels, Left, Right, Center, LFE, BackLeft, BackRight, SideLeft and SideRight
+    \value ChannelConfigMono The audio has one Center channel.
+    \value ChannelConfigStereo The audio has two channels, Left and Right.
+    \value ChannelConfig2Dot1 The audio has three channels, Left, Right and
+           LFE (low frequency effect).
+    \value ChannelConfig3Dot0 The audio has three channels, Left, Right, and
+           Center.
+    \value ChannelConfig3Dot1 The audio has four channels, Left, Right, Center,
+           and LFE (low frequency effect).
+    \value ChannelConfigSurround5Dot0 The audio has five channels, Left, Right,
+           Center, BackLeft, and BackRight.
+    \value ChannelConfigSurround5Dot1 The audio has 6 channels, Left, Right,
+           Center, LFE, BackLeft, and BackRight.
+    \value ChannelConfigSurround7Dot0 The audio has 7 channels, Left, Right,
+           Center, BackLeft, BackRight, SideLeft, and SideRight.
+    \value ChannelConfigSurround7Dot1 The audio has 8 channels, Left, Right,
+           Center, LFE, BackLeft, BackRight, SideLeft, and SideRight.
 */
 
 /*!
@@ -228,7 +210,11 @@ int QAudioFormat::channelOffset(AudioChannelPosition channel) const noexcept
     config to ChannelConfigUnknown.
 */
 
+/*!
+    \fn template <typename... Args> QAudioFormat::ChannelConfig QAudioFormat::channelConfig(Args... channels)
 
+    Returns the current channel configuration for the given \a channels.
+*/
 /*!
     \fn QAudioFormat::ChannelConfig QAudioFormat::channelConfig() const noexcept
 
@@ -374,11 +360,15 @@ float QAudioFormat::normalizedSampleValue(const void *sample) const
 {
     switch (m_sampleFormat) {
     case UInt8:
-        return ((float)*reinterpret_cast<const quint8 *>(sample))/(float)std::numeric_limits<qint8>::max() - 1.;
+        return ((float)*reinterpret_cast<const quint8 *>(sample))
+                / (float)std::numeric_limits<qint8>::max()
+                - 1.;
     case Int16:
-        return ((float)*reinterpret_cast<const qint16 *>(sample))/(float)std::numeric_limits<qint16>::max();
+        return ((float)*reinterpret_cast<const qint16 *>(sample))
+                / (float)std::numeric_limits<qint16>::max();
     case Int32:
-        return ((float)*reinterpret_cast<const qint32 *>(sample))/(float)std::numeric_limits<qint32>::max();
+        return ((float)*reinterpret_cast<const qint32 *>(sample))
+                / (float)std::numeric_limits<qint32>::max();
     case Float:
         return *reinterpret_cast<const float *>(sample);
     case Unknown:
@@ -387,6 +377,50 @@ float QAudioFormat::normalizedSampleValue(const void *sample) const
     }
 
     return 0.;
+}
+
+/*!
+    Returns a default channel configuration for \a channelCount.
+
+    Default configurations are defined for up to 8 channels, and correspond to
+    standard Mono, Stereo and Surround configurations. For higher channel counts,
+    this simply uses the first \a channelCount audio channels defined in
+    \l QAudioFormat::AudioChannelPosition.
+*/
+QAudioFormat::ChannelConfig QAudioFormat::defaultChannelConfigForChannelCount(int channelCount)
+{
+    QAudioFormat::ChannelConfig config;
+    switch (channelCount) {
+    case 1:
+        config = QAudioFormat::ChannelConfigMono;
+        break;
+    case 2:
+        config = QAudioFormat::ChannelConfigStereo;
+        break;
+    case 3:
+        config = QAudioFormat::ChannelConfig2Dot1;
+        break;
+    case 4:
+        config = QAudioFormat::channelConfig(QAudioFormat::FrontLeft, QAudioFormat::FrontRight,
+                                             QAudioFormat::BackLeft, QAudioFormat::BackRight);
+        break;
+    case 5:
+        config = QAudioFormat::ChannelConfigSurround5Dot0;
+        break;
+    case 6:
+        config = QAudioFormat::ChannelConfigSurround5Dot1;
+        break;
+    case 7:
+        config = QAudioFormat::ChannelConfigSurround7Dot0;
+        break;
+    case 8:
+        config = QAudioFormat::ChannelConfigSurround7Dot1;
+        break;
+    default:
+        // give up, simply use the first n channels
+        config = QAudioFormat::ChannelConfig((1 << (channelCount + 1)) - 1);
+    }
+    return config;
 }
 
 /*!
@@ -432,12 +466,10 @@ QDebug operator<<(QDebug dbg, QAudioFormat::SampleFormat type)
 
 QDebug operator<<(QDebug dbg, const QAudioFormat &f)
 {
-    dbg << "QAudioFormat(" << f.sampleRate() << "Hz, " << f.channelCount() << "Channels, " << f.sampleFormat() << "Format";
+    dbg << "QAudioFormat(" << f.sampleRate() << "Hz, " << f.channelCount() << "Channels, "
+        << f.sampleFormat() << "Format )";
     return dbg;
 }
 #endif
 
-
-
 QT_END_NAMESPACE
-

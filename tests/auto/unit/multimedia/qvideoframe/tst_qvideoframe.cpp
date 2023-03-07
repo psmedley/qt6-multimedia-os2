@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 //TESTED_COMPONENT=src/multimedia
 
@@ -189,7 +164,8 @@ void tst_QVideoFrame::create()
 
     QVERIFY(frame.isValid());
     QCOMPARE(frame.handleType(), QVideoFrame::NoHandle);
-    QCOMPARE(frame.textureHandle(0), 0u);
+    QVERIFY(frame.videoBuffer() != nullptr);
+    QCOMPARE(frame.videoBuffer()->textureHandle(0), 0u);
     QCOMPARE(frame.pixelFormat(), pixelFormat);
     QCOMPARE(frame.size(), size);
     QCOMPARE(frame.width(), size.width());
@@ -220,7 +196,7 @@ void tst_QVideoFrame::createInvalid()
 
     QVERIFY(!frame.isValid());
     QCOMPARE(frame.handleType(), QVideoFrame::NoHandle);
-    QCOMPARE(frame.textureHandle(0), 0u);
+    QCOMPARE(frame.videoBuffer(), nullptr);
     QCOMPARE(frame.pixelFormat(), pixelFormat);
     QCOMPARE(frame.size(), size);
     QCOMPARE(frame.width(), size.width());
@@ -669,24 +645,24 @@ void tst_QVideoFrame::mapPlanes()
     QFETCH(QList<int>, strides);
     QFETCH(QList<int>, offsets);
 
-    QCOMPARE(strides.count(), offsets.count() + 1);
+    QCOMPARE(strides.size(), offsets.size() + 1);
 
     QCOMPARE(frame.map(QVideoFrame::ReadOnly), true);
-    QCOMPARE(frame.planeCount(), strides.count());
+    QCOMPARE(frame.planeCount(), strides.size());
 
-    QVERIFY(strides.count() > 0);
+    QVERIFY(strides.size() > 0);
     QCOMPARE(frame.bytesPerLine(0), strides.at(0));
     QVERIFY(frame.bits(0));
 
-    if (strides.count() > 1) {
+    if (strides.size() > 1) {
         QCOMPARE(frame.bytesPerLine(1), strides.at(1));
         QCOMPARE(int(frame.bits(1) - frame.bits(0)), offsets.at(0));
     }
-    if (strides.count() > 2) {
+    if (strides.size() > 2) {
         QCOMPARE(frame.bytesPerLine(2), strides.at(2));
         QCOMPARE(int(frame.bits(2) - frame.bits(0)), offsets.at(1));
     }
-    if (strides.count() > 3) {
+    if (strides.size() > 3) {
         QCOMPARE(frame.bytesPerLine(3), strides.at(3));
         QCOMPARE(int(frame.bits(3) - frame.bits(0)), offsets.at(0));
     }
@@ -915,85 +891,69 @@ void tst_QVideoFrame::image_data()
 {
     QTest::addColumn<QSize>("size");
     QTest::addColumn<QVideoFrameFormat::PixelFormat>("pixelFormat");
-    QTest::addColumn<QImage::Format>("imageFormat");
 
     QTest::newRow("64x64 ARGB32")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_ARGB8888
-            << QImage::Format_ARGB32_Premultiplied;
+            << QVideoFrameFormat::Format_ARGB8888;
 
     QTest::newRow("64x64 ARGB32_Premultiplied")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_ARGB8888_Premultiplied
-            << QImage::Format_ARGB32_Premultiplied;
+            << QVideoFrameFormat::Format_ARGB8888_Premultiplied;
 
     QTest::newRow("64x64 RGB32")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_XRGB8888
-            << QImage::Format_RGB32;
+            << QVideoFrameFormat::Format_XRGB8888;
 
     QTest::newRow("64x64 BGRA32")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_BGRA8888
-            << QImage::Format_ARGB32_Premultiplied;
+            << QVideoFrameFormat::Format_BGRA8888;
 
     QTest::newRow("64x64 BGRA32_Premultiplied")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_BGRA8888_Premultiplied
-            << QImage::Format_ARGB32_Premultiplied;
+            << QVideoFrameFormat::Format_BGRA8888_Premultiplied;
 
     QTest::newRow("64x64 BGR32")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_XBGR8888
-            << QImage::Format_RGB32;
+            << QVideoFrameFormat::Format_XBGR8888;
 
     QTest::newRow("64x64 AYUV")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_AYUV
-            << QImage::Format_ARGB32_Premultiplied;
+            << QVideoFrameFormat::Format_AYUV;
 
     QTest::newRow("64x64 YUV420P")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_YUV420P
-            << QImage::Format_RGB32;
+            << QVideoFrameFormat::Format_YUV420P;
 
     QTest::newRow("64x64 YV12")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_YV12
-            << QImage::Format_RGB32;
+            << QVideoFrameFormat::Format_YV12;
 
     QTest::newRow("64x64 UYVY")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_UYVY
-            << QImage::Format_RGB32;
+            << QVideoFrameFormat::Format_UYVY;
 
     QTest::newRow("64x64 YUYV")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_YUYV
-            << QImage::Format_RGB32;
+            << QVideoFrameFormat::Format_YUYV;
 
     QTest::newRow("64x64 NV12")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_NV12
-            << QImage::Format_RGB32;
+            << QVideoFrameFormat::Format_NV12;
 
     QTest::newRow("64x64 NV21")
             << QSize(64, 64)
-            << QVideoFrameFormat::Format_NV21
-            << QImage::Format_RGB32;
+            << QVideoFrameFormat::Format_NV21;
 }
 
 void tst_QVideoFrame::image()
 {
     QFETCH(QSize, size);
     QFETCH(QVideoFrameFormat::PixelFormat, pixelFormat);
-    QFETCH(QImage::Format, imageFormat);
 
     QVideoFrame frame(QVideoFrameFormat(size, pixelFormat));
     QImage img = frame.toImage();
 
     QVERIFY(!img.isNull());
-    QCOMPARE(img.format(), imageFormat);
     QCOMPARE(img.size(), size);
 }
 

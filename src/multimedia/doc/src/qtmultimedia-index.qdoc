@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt for Multimedia module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 /*!
     \page qtmultimedia-index.html
@@ -55,10 +19,14 @@
     \table
      \row
       \li \l{Multimedia Overview}{Qt Multimedia}
-      \li Provides API for multimedia-specific use cases.
+      \li Provides an API for multimedia-specific use cases.
      \row
       \li \l{Qt Multimedia Widgets}
-      \li Provides the widget-based multimedia API.
+      \li Provides a widget-based multimedia API.
+    \row
+      \li \l{Qt Spatial Audio}
+      \li (Technology Preview)
+          Provides an API for implementing sound fields in 3D space.
     \endtable
 
     \section1 Getting started
@@ -71,17 +39,6 @@
     \qml
      import QtMultimedia
     \endqml
-
-    If you want to use the C++ classes in your application, include the C++
-    definitions using the following directive:
-
-    \code
-      #include <QtMultimedia>
-      #include <QtMultimediaWidgets>
-    \endcode
-
-    \note If you are using a few classes from this module, we recommend
-    including those specific classes only instead of the module.
 
     To link against the C++ libraries, add the following to your project's
     \c CMakeLists.txt file. Substitute \c my_project with the name of your
@@ -98,6 +55,7 @@
       \li \l{Changes to Qt Multimedia}{Changes in Qt 6}
       \li \l{Multimedia Overview}
       \li \l{Audio Overview}
+      \li \l{Spatial Audio Overview} (Technology Preview)
       \li \l{Video Overview}
       \li \l{Camera Overview}
       \li \l{Supported Media Formats}
@@ -195,13 +153,22 @@
     the \l{GNU General Public License, version 2}.
     See \l{Qt Licensing} for further details.
 
-    \section1 Platform Notes
+    The FFmpeg backend uses the \l {https://ffmpeg.org}{FFmpeg framework}. FFmpeg is licensed under
+    LGPLv2.1, GPLv2, or later versions of the licenses. Some optional components of FFmpeg are only
+    available under GPL. The FFmpeg backend shipped with the Qt binary packages is configured to not
+    contain any of the components that are available under GPLv2 only.
+    See the \l {https://ffmpeg.org/legal.html}{FFmpeg licensing page} for further details.
 
-    For most features, Qt Multimedia builds upon the multimedia framework of the
-    underlying operating system. Therefore there are several multimedia back ends
-    based on different technologies and APIs.
+    \section1 Target platform and backend notes
 
-    While we try to support our full API on all platforms, platform specific limitations do
+    On most platforms, there are two different backends that can be used for Qt Multimedia.
+
+    The first one is the backend built on the native multimedia framework of the underlying
+    operating system. This is currently the default, and will use gstreamer on Linux,
+    AVFoundation on macOS/iOS, WMF on Windows, and the MediaCodec framework on Android.
+
+    While we try to support our full API on all backends using the native multimedia framework,
+    platform specific limitations do
     exist in a few places. This is due to the fact that the feature set supported by those
     frameworks varies, implying that some functionality
     might not be available on all platforms. This is especially true for the set of
@@ -209,6 +176,20 @@
 
     Where limitations exist, we aim to document those in the respective classes and
     methods.
+
+    With Qt 6.4, we are adding a new, more platform independent backend based on the
+    \l {http://ffmpeg.org}{FFmpeg framework}. The FFmpeg backend is currently available as a
+    technology preview. This backend has the advantage that we can offer proper cross-platform
+    support for all features of Qt Multimedia, going beyond the limitations that exist with many
+    of the native frameworks.
+
+    You can test the FFmpeg backend right now by using a Qt build that has FFmpeg enabled and
+    setting the \c{QT_MEDIA_BACKEND} environment variable to ffmpeg:
+
+    \code
+    export QT_MEDIA_BACKEND=ffmpeg
+    \endcode
+
 
     \list
       \li \l{Qt Multimedia on macOS and iOS}{macOS and iOS}

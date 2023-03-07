@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QVIDEOWINDOW_P_H
 #define QVIDEOWINDOW_P_H
@@ -96,9 +60,8 @@ public:
 
     void updateTextures(QRhiResourceUpdateBatch *rub);
     void updateSubtitle(QRhiResourceUpdateBatch *rub, const QSize &frameSize);
-    void freeTextures();
 
-    void setupGraphicsPipeline(QRhiGraphicsPipeline *pipeline, QRhiShaderResourceBindings *bindings, QVideoFrameFormat::PixelFormat fmt);
+    void setupGraphicsPipeline(QRhiGraphicsPipeline *pipeline, QRhiShaderResourceBindings *bindings, const QVideoFrameFormat &fmt);
 
     QVideoWindow *q = nullptr;
     Qt::AspectRatioMode aspectRatioMode = Qt::KeepAspectRatio;
@@ -115,7 +78,7 @@ public:
     std::unique_ptr<QRhiBuffer> m_vertexBuf;
     bool m_vertexBufReady = false;
     std::unique_ptr<QRhiBuffer> m_uniformBuf;
-    QRhiTexture *m_frameTextures[3] = {};
+    std::unique_ptr<QVideoFrameTextures> m_frameTextures;
     std::unique_ptr<QRhiSampler> m_textureSampler;
     std::unique_ptr<QRhiShaderResourceBindings> m_shaderResourceBindings;
     std::unique_ptr<QRhiGraphicsPipeline> m_graphicsPipeline;
@@ -127,7 +90,6 @@ public:
 
     std::unique_ptr<QVideoSink> m_sink;
     QRhi::Implementation m_graphicsApi = QRhi::Null;
-    QSize m_frameSize = QSize(-1, -1);
     QVideoFrame m_currentFrame;
     QVideoTextureHelper::SubtitleLayout m_subtitleLayout;
 
@@ -141,7 +103,7 @@ public:
     bool m_texturesDirty = true;
     bool m_subtitleDirty = false;
     bool m_hasSubtitle = false;
-    QVideoFrameFormat::PixelFormat format = QVideoFrameFormat::Format_Invalid;
+    QVideoFrameFormat format;
 };
 
 class Q_MULTIMEDIA_EXPORT QVideoWindow : public QWindow

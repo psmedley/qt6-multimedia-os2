@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include <QtTest/QtTest>
 #include <QDebug>
@@ -267,7 +242,12 @@ void tst_QMediaPlayerBackend::unloadMedia()
     QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::LoadedMedia);
 
     QVERIFY(player.position() == 0);
+#ifdef Q_OS_QNX
+    // QNX mm-renderer only updates the duration when 'play' is triggered
+    QVERIFY(player.duration() == 0);
+#else
     QVERIFY(player.duration() > 0);
+#endif
 
     player.play();
 
@@ -288,10 +268,8 @@ void tst_QMediaPlayerBackend::unloadMedia()
     QCOMPARE(player.mediaStatus(), QMediaPlayer::NoMedia);
     QCOMPARE(player.source(), QUrl());
 
-    QVERIFY(!stateSpy.isEmpty());
     QVERIFY(!statusSpy.isEmpty());
     QVERIFY(!mediaSpy.isEmpty());
-    QVERIFY(!positionSpy.isEmpty());
 }
 
 void tst_QMediaPlayerBackend::loadMediaInLoadingState()
@@ -392,7 +370,6 @@ void tst_QMediaPlayerBackend::playPauseStop()
     QTest::qWait(500);
 
     QTRY_VERIFY(qAbs(player.position() - positionBeforePause) < 150);
-    QTRY_VERIFY(positionSpy.count() > 0);
 
     stateSpy.clear();
     statusSpy.clear();
@@ -410,6 +387,7 @@ void tst_QMediaPlayerBackend::playPauseStop()
 
     //ensure the position is reset to 0 at stop and positionChanged(0) is emitted
     QTRY_COMPARE(player.position(), qint64(0));
+    QTRY_VERIFY(positionSpy.count() > 0);
     QCOMPARE(positionSpy.last()[0].value<qint64>(), qint64(0));
     QVERIFY(player.duration() > 0);
 
@@ -440,17 +418,22 @@ void tst_QMediaPlayerBackend::playPauseStop()
     QCOMPARE(stateSpy.count(), 0);
 
     player.play();
+    QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::BufferedMedia);
 
-    QTRY_VERIFY(player.position() > 100);
+    QTRY_VERIFY(positionSpy.count() > 0 && positionSpy.last()[0].value<qint64>() > 100);
+    QVERIFY(player.position() > 100);
+    positionSpy.clear();
 
     player.setSource(localWavFile);
 
     QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::LoadedMedia);
+    QTRY_VERIFY(statusSpy.count() > 0);
     QCOMPARE(statusSpy.last()[0].value<QMediaPlayer::MediaStatus>(), QMediaPlayer::LoadedMedia);
     QCOMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+    QTRY_VERIFY(stateSpy.count() > 0);
     QCOMPARE(stateSpy.last()[0].value<QMediaPlayer::PlaybackState>(), QMediaPlayer::StoppedState);
+    QTRY_VERIFY(positionSpy.count() > 0 && positionSpy.last()[0].value<qint64>() == 0);
     QCOMPARE(player.position(), 0);
-    QCOMPARE(positionSpy.last()[0].value<qint64>(), 0);
 
     stateSpy.clear();
     statusSpy.clear();
@@ -463,9 +446,12 @@ void tst_QMediaPlayerBackend::playPauseStop()
     player.setSource(QUrl());
 
     QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::NoMedia);
+    QTRY_VERIFY(statusSpy.count() > 0);
     QCOMPARE(statusSpy.last()[0].value<QMediaPlayer::MediaStatus>(), QMediaPlayer::NoMedia);
     QCOMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+    QTRY_VERIFY(stateSpy.count() > 0);
     QCOMPARE(stateSpy.last()[0].value<QMediaPlayer::PlaybackState>(), QMediaPlayer::StoppedState);
+    QTRY_VERIFY(positionSpy.count() > 0);
     QCOMPARE(player.position(), 0);
     QCOMPARE(positionSpy.last()[0].value<qint64>(), 0);
     QCOMPARE(player.duration(), 0);
@@ -523,6 +509,9 @@ void tst_QMediaPlayerBackend::processEOS()
     QVERIFY(statusSpy.count() > 0);
     QCOMPARE(statusSpy.last()[0].value<QMediaPlayer::MediaStatus>(), QMediaPlayer::BufferedMedia);
 
+    positionSpy.clear();
+    QTRY_VERIFY(player.position() > 100);
+    QTRY_VERIFY(positionSpy.count() > 0 && positionSpy.last()[0].value<qint64>() > 100);
     player.setPosition(900);
     //wait up to 5 seconds for EOS
     QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::EndOfMedia);
@@ -616,6 +605,7 @@ void tst_QMediaPlayerBackend::deleteLaterAtEOS()
     QPointer<QMediaPlayer> player(new QMediaPlayer);
     QAudioOutput output;
     player->setAudioOutput(&output);
+    player->setPosition(800); // don't wait as long for EOS
     DeleteLaterAtEos deleter(player);
     player->setSource(localWavFile);
 
@@ -624,7 +614,7 @@ void tst_QMediaPlayerBackend::deleteLaterAtEOS()
     // DeferredDelete events during the wait, which interferes with this test.
     QEventLoop loop;
     QTimer::singleShot(0, &deleter, SLOT(play()));
-    QTimer::singleShot(1500, &loop, SLOT(quit()));
+    QTimer::singleShot(5000, &loop, SLOT(quit()));
     connect(player.data(), SIGNAL(destroyed()), &loop, SLOT(quit()));
     loop.exec();
     // Verify that the player was destroyed within the event loop.

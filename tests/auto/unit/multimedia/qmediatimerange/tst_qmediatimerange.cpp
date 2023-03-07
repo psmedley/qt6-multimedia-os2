@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 //TESTED_COMPONENT=src/multimedia
 
@@ -170,7 +145,7 @@ void tst_QMediaTimeRange::testGetters()
     // isEmpty + isContinuous + intervals + start + end
     QVERIFY(!x.isEmpty());
     QVERIFY(!x.isContinuous());
-    QVERIFY(x.intervals().count() == 2);
+    QVERIFY(x.intervals().size() == 2);
     QVERIFY(x.intervals()[0].start() == 10);
     QVERIFY(x.intervals()[0].end() == 20);
     QVERIFY(x.intervals()[1].start() == 30);
@@ -316,7 +291,7 @@ void tst_QMediaTimeRange::testAddInterval()
 
     QVERIFY(!x.isEmpty());
     QVERIFY(!x.isContinuous());
-    QVERIFY(x.intervals().count() == 2);
+    QVERIFY(x.intervals().size() == 2);
     QVERIFY(x.intervals()[0].start() == 10);
     QVERIFY(x.intervals()[0].end() == 40);
     QVERIFY(x.intervals()[1].start() == 50);
@@ -466,7 +441,7 @@ void tst_QMediaTimeRange::testRemoveInterval()
 
     QVERIFY(!x.isEmpty());
     QVERIFY(!x.isContinuous());
-    QVERIFY(x.intervals().count() == 2);
+    QVERIFY(x.intervals().size() == 2);
     QVERIFY(x.intervals()[0].start() == 10);
     QVERIFY(x.intervals()[0].end() == 19);
     QVERIFY(x.intervals()[1].start() == 41);
@@ -514,7 +489,7 @@ void tst_QMediaTimeRange::testRemoveInterval()
 
     QVERIFY(!x.isEmpty());
     QVERIFY(!x.isContinuous());
-    QVERIFY(x.intervals().count() == 2);
+    QVERIFY(x.intervals().size() == 2);
     QVERIFY(x.intervals()[0].start() == 10);
     QVERIFY(x.intervals()[0].end() == 14);
     QVERIFY(x.intervals()[1].start() == 36);
@@ -536,7 +511,7 @@ void tst_QMediaTimeRange::testRemoveInterval()
 
     QVERIFY(!x.isEmpty());
     QVERIFY(!x.isContinuous());
-    QVERIFY(x.intervals().count() == 2);
+    QVERIFY(x.intervals().size() == 2);
     QVERIFY(x.intervals()[0].start() == 10);
     QVERIFY(x.intervals()[0].end() == 19);
     QVERIFY(x.intervals()[1].start() == 41);
@@ -597,7 +572,7 @@ void tst_QMediaTimeRange::testRemoveTimeRange()
 
     QVERIFY(!b.isEmpty());
     QVERIFY(!b.isContinuous());
-    QVERIFY(b.intervals().count() == 2);
+    QVERIFY(b.intervals().size() == 2);
     QVERIFY(b.intervals()[0].start() == 10);
     QVERIFY(b.intervals()[0].end() == 19);
     QVERIFY(b.intervals()[1].start() == 51);
@@ -618,7 +593,7 @@ void tst_QMediaTimeRange::testRemoveTimeRange()
 
     QVERIFY(!b.isEmpty());
     QVERIFY(!b.isContinuous());
-    QVERIFY(b.intervals().count() == 2);
+    QVERIFY(b.intervals().size() == 2);
     QVERIFY(b.intervals()[0].start() == 10);
     QVERIFY(b.intervals()[0].end() == 19);
     QVERIFY(b.intervals()[1].start() == 91);

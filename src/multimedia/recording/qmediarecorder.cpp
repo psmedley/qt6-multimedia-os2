@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmediarecorder_p.h"
 
@@ -143,7 +107,13 @@ QMediaRecorder::QMediaRecorder(QObject *parent)
 {
     Q_D(QMediaRecorder);
     d->q_ptr = this;
-    d->control = QPlatformMediaIntegration::instance()->createRecorder(this);
+    auto maybeControl = QPlatformMediaIntegration::instance()->createRecorder(this);
+    if (maybeControl) {
+        d->control = maybeControl.value();
+    } else {
+        d->initErrorMessage = maybeControl.error();
+        qWarning() << "Failed to initialize QMediaRecorder" << maybeControl.error();
+    }
 }
 
 /*!
@@ -227,7 +197,7 @@ void QMediaRecorder::setCaptureSession(QMediaCaptureSession *session)
 */
 bool QMediaRecorder::isAvailable() const
 {
-    return d_func()->control != nullptr && d_func()->captureSession;
+    return d_func()->control && d_func()->captureSession;
 }
 
 QUrl QMediaRecorder::outputLocation() const
@@ -239,7 +209,7 @@ void QMediaRecorder::setOutputLocation(const QUrl &location)
 {
     Q_D(QMediaRecorder);
     if (!d->control) {
-        emit errorOccurred(QMediaRecorder::ResourceError, tr("Not available"));
+        emit errorOccurred(QMediaRecorder::ResourceError, d->initErrorMessage);
         return;
     }
     d->control->setOutputLocation(location);
@@ -293,7 +263,7 @@ QString QMediaRecorder::errorString() const
 {
     Q_D(const QMediaRecorder);
 
-    return d->control ? d->control->errorString() : tr("QMediaRecorder not supported on this platform");
+    return d->control ? d->control->errorString() : d->initErrorMessage;
 }
 /*!
     \qmlproperty qint64 QtMultimedia::MediaRecorder::duration
@@ -399,17 +369,18 @@ void QMediaRecorder::pause()
 }
 /*!
     \qmlmethod QtMultimedia::MediaRecorder::stop()
-    \brief Stops recording.
+    \brief Stops the recording.
 
-    The recorder state is changed to \c{QMediaRecorder.StoppedState}.
+    The recorder will stop the recording. Processing pending video and audio data might
+    however still take some time. The recording is finished, once the state of the media
+    recorder changes to QMediaRecorder::StoppedState.
 */
 
 /*!
-    Stops recording.
-
-    The recorder state is changed to QMediaRecorder::StoppedState.
+    The recorder will stop the recording. Processing pending video and audio data might
+    however still take some time. The recording is finished, once the state of the media
+    recorder changes to QMediaRecorder::StoppedState.
 */
-
 void QMediaRecorder::stop()
 {
     Q_D(QMediaRecorder);

@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmediametadata.h"
 #include <QtCore/qcoreapplication.h>
@@ -44,6 +8,8 @@
 #include <qdatetime.h>
 #include <qmediaformat.h>
 #include <qsize.h>
+#include <qurl.h>
+#include <qimage.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -64,7 +30,7 @@ QT_BEGIN_NAMESPACE
     \row \li Comment \li A user comment about the media. \li QString
     \row \li Description \li A description of the media.  \li QString
     \row \li Genre \li The genre of the media.  \li QStringList
-    \row \li Date \li The date of the media. \li QDate.
+    \row \li Date \li The date of the media. \li QDateTime.
     \row \li Language \li The language of media. \li QLocale::Language
 
     \row \li Publisher \li The publisher of the media.  \li QString
@@ -80,7 +46,7 @@ QT_BEGIN_NAMESPACE
     \header \li {3,1}
     Audio attributes
     \row \li AudioBitRate \li The bit rate of the media's audio stream in bits per second.  \li int
-    \row \li AudioCodec \li The codec of the media's audio stream.  \li QMediaForma::AudioCodec
+    \row \li AudioCodec \li The codec of the media's audio stream.  \li QMediaFormat::AudioCodec
 
     \header \li {3,1}
     Video attributes
@@ -108,8 +74,69 @@ QT_BEGIN_NAMESPACE
     \endtable
 */
 
+
 /*!
-    \qmlbasictype mediaMetaData
+    Returns the meta type used to store data for Key \a key.
+*/
+QMetaType QMediaMetaData::keyType(Key key)
+{
+    switch (key) {
+    case Title:
+    case Comment:
+    case Description:
+    case Publisher:
+    case Copyright:
+    case MediaType:
+    case AlbumTitle:
+    case AlbumArtist:
+        return QMetaType::fromType<QString>();
+    case Genre:
+    case Author:
+    case ContributingArtist:
+    case Composer:
+    case LeadPerformer:
+        return QMetaType::fromType<QStringList>();
+
+    case Date:
+        return QMetaType::fromType<QDateTime>();
+
+    case Language:
+        return QMetaType::fromType<QLocale::Language>();
+    case Url:
+        return QMetaType::fromType<QUrl>();
+
+    case Duration:
+        return QMetaType::fromType<qint64>();
+    case FileFormat:
+        return QMetaType::fromType<QMediaFormat::FileFormat>();
+
+    case AudioBitRate:
+    case VideoBitRate:
+    case TrackNumber:
+    case Orientation:
+        return QMetaType::fromType<int>();
+    case AudioCodec:
+        return QMetaType::fromType<QMediaFormat::AudioCodec>();
+    case VideoCodec:
+        return QMetaType::fromType<QMediaFormat::VideoCodec>();
+    case VideoFrameRate:
+        return QMetaType::fromType<qreal>();
+
+
+    case ThumbnailImage:
+    case CoverArtImage:
+        return QMetaType::fromType<QImage>();
+
+    case Resolution:
+        return QMetaType::fromType<QSize>();
+    default:
+        return QMetaType::fromType<void>();
+    }
+}
+
+/*!
+    \qmlvaluetype mediaMetaData
+    \ingroup qmlvaluetypes
     \inqmlmodule QtMultimedia
     \since 6.2
     //! \instantiates QMediaMetaData
@@ -214,6 +241,46 @@ QT_BEGIN_NAMESPACE
         \li The name of the GPS area. \li QString
 
     \endtable
+*/
+
+/*!
+    \enum QMediaMetaData::Key
+
+    The following meta data keys can be used:
+
+    \value Title Media title
+    \value Author Media author
+    \value Comment Comment
+    \value Description Brief desripttion
+    \value Genre Genre the media belongs to
+    \value Date Creation date
+    \value Language Media language
+    \value Publisher Media publisher info.
+    \value Copyright Media copyright info.
+    \value Url Publisher's website URL
+    \value Duration Media playback duration
+    \value MediaType Type of the media
+    \value FileFormat File format
+    \value AudioBitRate
+    \value AudioCodec
+    \value VideoBitRate
+    \value VideoCodec
+    \value VideoFrameRate
+    \value AlbumTitle Album's title
+    \value AlbumArtist Artist's info.
+    \value ContributingArtist
+    \value TrackNumber
+    \value Composer Media composer's info.
+    \value LeadPerformer
+    \value ThumbnailImage Media thumbnail image
+    \value CoverArtImage Media cover art
+    \value Orientation
+    \value Resolution
+*/
+
+/*!
+    \variable QMediaMetaData::NumMetaData
+    \internal
 */
 
 /*!
@@ -415,6 +482,7 @@ QString QMediaMetaData::metaDataKeyToString(QMediaMetaData::Key key)
     }
     return QString();
 }
+
 // operator documentation
 /*!
 \fn QVariant &QMediaMetaData ::operator[](QMediaMetaData::Key k)

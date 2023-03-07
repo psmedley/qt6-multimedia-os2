@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qcameradevice_p.h"
 
@@ -65,7 +29,8 @@ QT_BEGIN_NAMESPACE
 */
 
 /*!
-    \qmlbasictype cameraFormat
+    \qmlvaluetype cameraFormat
+    \ingroup qmlvaluetypes
     \inqmlmodule QtMultimedia
     \since 6.2
     //! \instantiates QCameraFormat
@@ -113,7 +78,7 @@ QCameraFormat::~QCameraFormat() = default;
 */
 
 /*!
-    \qmlproperty enumeration QtMultimedia::CameraFormat::pixelFormat
+    \qmlproperty enumeration QtMultimedia::cameraFormat::pixelFormat
 
     Holds the pixel format.
 
@@ -124,6 +89,8 @@ QCameraFormat::~QCameraFormat() = default;
 */
 
 /*!
+    \property QCameraFormat::pixelFormat
+
     Returns the pixel format.
 
     Most commonly this is either QVideoFrameFormat::Format_Jpeg or QVideoFrameFormat::Format_YUVY
@@ -137,12 +104,14 @@ QVideoFrameFormat::PixelFormat QCameraFormat::pixelFormat() const noexcept
 }
 
 /*!
-    \qmlproperty size QtMultimedia::CameraFormat::resolution
+    \qmlproperty size QtMultimedia::cameraFormat::resolution
 
     Returns the resolution.
 */
 
 /*!
+    \property QCameraFormat::resolution
+
     Returns the resolution.
 */
 QSize QCameraFormat::resolution() const noexcept
@@ -151,12 +120,14 @@ QSize QCameraFormat::resolution() const noexcept
 }
 
 /*!
-    \qmlproperty real QtMultimedia::CameraFormat::minFrameRate
+    \qmlproperty real QtMultimedia::cameraFormat::minFrameRate
 
     Returns the lowest frame rate defined by this format.
 */
 
 /*!
+    \property QCameraFormat::minFrameRate
+
     Returns the lowest frame rate defined by this format.
 */
 float QCameraFormat::minFrameRate() const noexcept
@@ -165,7 +136,7 @@ float QCameraFormat::minFrameRate() const noexcept
 }
 
 /*!
-    \qmlproperty real QtMultimedia::CameraFormat::maxFrameRate
+    \qmlproperty real QtMultimedia::cameraFormat::maxFrameRate
 
     Returns the highest frame rate defined by this format.
 
@@ -174,6 +145,8 @@ float QCameraFormat::minFrameRate() const noexcept
 */
 
 /*!
+    \property QCameraFormat::maxFrameRate
+
     Returns the highest frame rate defined by this format.
 
     In 6.2, the camera will always try to use the highest frame rate supported by a
@@ -245,7 +218,8 @@ bool QCameraFormat::operator==(const QCameraFormat &other) const
 */
 
 /*!
-    \qmlbasictype cameraDevice
+    \qmlvaluetype cameraDevice
+    \ingroup qmlvaluetypes
     \inqmlmodule QtMultimedia
     \since 6.2
     //! \instantiates QCameraDevice
@@ -320,6 +294,8 @@ bool QCameraDevice::isNull() const
 */
 
 /*!
+    \property QCameraDevice::id
+
     Returns the device id of the camera
 
     This is a unique ID to identify the camera and may not be human-readable.
@@ -336,6 +312,8 @@ QByteArray QCameraDevice::id() const
 */
 
 /*!
+    \property QCameraDevice::isDefault
+
     Returns true if this is the default camera device.
 */
 bool QCameraDevice::isDefault() const
@@ -352,6 +330,8 @@ bool QCameraDevice::isDefault() const
 */
 
 /*!
+    \property QCameraDevice::description
+
     Returns the human-readable description of the camera.
 
     Use this string to present the device to the user.
@@ -390,6 +370,8 @@ QString QCameraDevice::description() const
 */
 
 /*!
+    \property QCameraDevice::position
+
     Returns the physical position of the camera on the hardware system.
 */
 QCameraDevice::Position QCameraDevice::position() const
@@ -409,12 +391,14 @@ QList<QSize> QCameraDevice::photoResolutions() const
 }
 
 /*!
-    \qmlproperty CameraFormat QtMultiMedia::CameraDevice::videoFormats
+    \qmlproperty CameraFormat QtMultiMedia::cameraDevice::videoFormats
 
     Holds the video formats supported by the camera.
 */
 
 /*!
+    \property QCameraDevice::videoFormats
+
     Returns the video formats supported by the camera.
 */
 QList<QCameraFormat> QCameraDevice::videoFormats() const

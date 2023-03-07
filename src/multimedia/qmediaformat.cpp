@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmediaformat.h"
 #include "private/qplatformmediaintegration_p.h"
@@ -58,7 +22,8 @@ QT_BEGIN_NAMESPACE
 */
 
 /*!
-    \qmlbasictype mediaFormat
+    \qmlvaluetype mediaFormat
+    \ingroup qmlvaluetypes
     \since 6.2
     //! \instantiates QMediaFormat
     \brief MediaFormat describes the format of a media file.
@@ -401,6 +366,11 @@ QMediaFormat::~QMediaFormat() = default;
 */
 QMediaFormat::QMediaFormat(const QMediaFormat &other) noexcept = default;
 
+/*!
+    \fn void swap(QMediaFormat &other) noexcept
+
+    Swaps the media format with \a other.
+*/
 /*!
     Copies \a other into this QMediaFormat object.
 */
@@ -757,6 +727,17 @@ QString QMediaFormat::videoCodecDescription(QMediaFormat::VideoCodec codec)
     return QString::fromUtf8(descriptions[int(codec) + 1]);
 }
 
+/*!
+    \fn bool QMediaFormat::operator!=(const QMediaFormat &other) const
+
+    Returns \c true if \a other is not equal to the current media format,
+    otherwise returns \c false.
+*/
+
+/*!
+    Returns \c true if \a other is equal to the current media format, otherwise
+    returns \c false.
+*/
 bool QMediaFormat::operator==(const QMediaFormat &other) const
 {
     Q_ASSERT(!d);
@@ -892,4 +873,20 @@ void QMediaFormat::resolveForEncoding(ResolveFlags flags)
     }
 }
 
+/*!
+    \variable QMediaFormat::audio
+    \internal
+*/
+/*!
+    \variable QMediaFormat::d
+    \internal
+*/
+/*!
+    \variable QMediaFormat::video
+    \internal
+*/
+/*!
+    \variable QMediaFormat::fmt
+    \internal
+*/
 QT_END_NAMESPACE

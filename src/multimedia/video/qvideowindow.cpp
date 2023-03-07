@@ -1,47 +1,13 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideowindow_p.h"
 #include <QPlatformSurfaceEvent>
 #include <qfile.h>
 #include <qpainter.h>
 #include <private/qguiapplication_p.h>
+#include <private/qabstractvideobuffer_p.h>
+#include <private/qmemoryvideobuffer_p.h>
 #include <qpa/qplatformintegration.h>
 
 QT_BEGIN_NAMESPACE
@@ -54,13 +20,18 @@ static QSurface::SurfaceType platformSurfaceType()
     return QSurface::Direct3DSurface;
 #endif
 
-    if (!QGuiApplicationPrivate::platformIntegration()->hasCapability(QPlatformIntegration::OpenGL))
-        return QSurface::RasterSurface;
-    if (!QGuiApplicationPrivate::platformIntegration()->hasCapability(QPlatformIntegration::RasterGLSurface)
-        || QCoreApplication::testAttribute(Qt::AA_ForceRasterWidgets))
+    auto *integration = QGuiApplicationPrivate::platformIntegration();
+
+    if (!integration->hasCapability(QPlatformIntegration::OpenGL))
         return QSurface::RasterSurface;
 
-    return QSurface::RasterGLSurface;
+    if (QCoreApplication::testAttribute(Qt::AA_ForceRasterWidgets))
+        return QSurface::RasterSurface;
+
+    if (integration->hasCapability(QPlatformIntegration::RasterGLSurface))
+        return QSurface::RasterGLSurface;
+
+    return QSurface::OpenGLSurface;
 }
 
 QVideoWindowPrivate::QVideoWindowPrivate(QVideoWindow *q)
@@ -99,8 +70,6 @@ QVideoWindowPrivate::QVideoWindowPrivate(QVideoWindow *q)
 
 QVideoWindowPrivate::~QVideoWindowPrivate()
 {
-    freeTextures();
-
     QObject::disconnect(m_sink.get(), &QVideoSink::videoFrameChanged,
             q, &QVideoWindow::setVideoFrame);
 }
@@ -184,6 +153,8 @@ void QVideoWindowPrivate::initRhi()
         return;
 
     m_swapChain.reset(m_rhi->newSwapChain());
+    if (m_swapChain->isFormatSupported(QRhiSwapChain::HDRExtendedSrgbLinear))
+        m_swapChain->setFormat(QRhiSwapChain::HDRExtendedSrgbLinear);
     m_swapChain->setWindow(q);
     m_renderPass.reset(m_swapChain->newCompatibleRenderPassDescriptor());
     m_swapChain->setRenderPassDescriptor(m_renderPass.get());
@@ -192,7 +163,7 @@ void QVideoWindowPrivate::initRhi()
     m_vertexBuf->create();
     m_vertexBufReady = false;
 
-    m_uniformBuf.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64 + 64 + 4 + 4));
+    m_uniformBuf.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, sizeof(QVideoTextureHelper::UniformData)));
     m_uniformBuf->create();
 
     m_textureSampler.reset(m_rhi->newSampler(QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
@@ -202,19 +173,19 @@ void QVideoWindowPrivate::initRhi()
     m_shaderResourceBindings.reset(m_rhi->newShaderResourceBindings());
     m_subtitleResourceBindings.reset(m_rhi->newShaderResourceBindings());
 
-    m_subtitleUniformBuf.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, 64 + 64 + 4 + 4));
+    m_subtitleUniformBuf.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, sizeof(QVideoTextureHelper::UniformData)));
     m_subtitleUniformBuf->create();
 
     Q_ASSERT(NVideoFrameSlots >= m_rhi->resourceLimit(QRhi::FramesInFlight));
 }
 
-void QVideoWindowPrivate::setupGraphicsPipeline(QRhiGraphicsPipeline *pipeline, QRhiShaderResourceBindings *bindings, QVideoFrameFormat::PixelFormat fmt)
+void QVideoWindowPrivate::setupGraphicsPipeline(QRhiGraphicsPipeline *pipeline, QRhiShaderResourceBindings *bindings, const QVideoFrameFormat &fmt)
 {
 
     pipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
     QShader vs = getShader(QVideoTextureHelper::vertexShaderFileName(fmt));
     Q_ASSERT(vs.isValid());
-    QShader fs = getShader(QVideoTextureHelper::fragmentShaderFileName(fmt));
+    QShader fs = getShader(QVideoTextureHelper::fragmentShaderFileName(fmt, m_swapChain->format()));
     Q_ASSERT(fs.isValid());
     pipeline->setShaderStages({
         { QRhiShaderStage::Vertex, vs },
@@ -238,34 +209,26 @@ void QVideoWindowPrivate::updateTextures(QRhiResourceUpdateBatch *rub)
 {
     m_texturesDirty = false;
 
-    auto fmt = m_currentFrame.pixelFormat();
-    if (fmt == QVideoFrameFormat::Format_Invalid)
-        // We render a 1x1 black pixel when we don't have a video
-        fmt = QVideoFrameFormat::Format_RGBA8888;
+    // We render a 1x1 black pixel when we don't have a video
+    if (!m_currentFrame.isValid())
+        m_currentFrame = QVideoFrame(new QMemoryVideoBuffer(QByteArray{4, 0}, 4),
+                                     QVideoFrameFormat(QSize(1,1), QVideoFrameFormat::Format_RGBA8888));
 
-    auto textureDesc = QVideoTextureHelper::textureDescription(fmt);
-
-    m_frameSize = m_currentFrame.isValid() ? m_currentFrame.size() : QSize(1, 1);
-
-    freeTextures();
-    if (m_currentFrame.isValid()) {
-        QVideoTextureHelper::updateRhiTextures(m_currentFrame, m_rhi.get(), rub, m_frameTextures);
-    } else {
-        Q_ASSERT(fmt == QVideoFrameFormat::Format_RGBA8888);
-        QImage img(QSize(1, 1), QImage::Format_RGBA8888);
-        img.fill(Qt::black);
-        m_frameTextures[0] = m_rhi->newTexture(QRhiTexture::RGBA8, m_frameSize, 1);
-        m_frameTextures[0]->create();
-        rub->uploadTexture(m_frameTextures[0], img);
-    }
+    m_frameTextures = QVideoTextureHelper::createTextures(m_currentFrame, m_rhi.get(), rub, std::move(m_frameTextures));
+    if (!m_frameTextures)
+        return;
 
     QRhiShaderResourceBinding bindings[4];
     auto *b = bindings;
     *(b++) = QRhiShaderResourceBinding::uniformBuffer(0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage,
                                                    m_uniformBuf.get());
+
+    auto fmt = m_currentFrame.surfaceFormat();
+    auto textureDesc = QVideoTextureHelper::textureDescription(fmt.pixelFormat());
+
     for (int i = 0; i < textureDesc->nplanes; ++i)
         (*b++) = QRhiShaderResourceBinding::sampledTexture(i + 1, QRhiShaderResourceBinding::FragmentStage,
-                                                           m_frameTextures[i], m_textureSampler.get());
+                                                           m_frameTextures->texture(i), m_textureSampler.get());
     m_shaderResourceBindings->setBindings(bindings, b);
     m_shaderResourceBindings->create();
 
@@ -310,16 +273,7 @@ void QVideoWindowPrivate::updateSubtitle(QRhiResourceUpdateBatch *rub, const QSi
         QRhiGraphicsPipeline::TargetBlend blend;
         blend.enable = true;
         m_subtitlePipeline->setTargetBlends({ blend });
-        setupGraphicsPipeline(m_subtitlePipeline.get(), m_subtitleResourceBindings.get(), QVideoFrameFormat::Format_RGBA8888);
-    }
-}
-
-void QVideoWindowPrivate::freeTextures()
-{
-    for (int i = 0; i < 3; ++i) {
-        if (m_frameTextures[i])
-            delete m_frameTextures[i];
-        m_frameTextures[i] = nullptr;
+        setupGraphicsPipeline(m_subtitlePipeline.get(), m_subtitleResourceBindings.get(), QVideoFrameFormat(QSize(1, 1), QVideoFrameFormat::Format_RGBA8888));
     }
 }
 
@@ -431,8 +385,17 @@ void QVideoWindowPrivate::render()
     QMatrix4x4 transform;
     transform.scale(xscale, yscale);
 
-    QByteArray uniformData(64 + 64 + 4 + 4, Qt::Uninitialized);
-    QVideoTextureHelper::updateUniformData(&uniformData, m_currentFrame.surfaceFormat(), m_currentFrame, transform, 1.f);
+    float maxNits = 100;
+    if (m_swapChain->format() == QRhiSwapChain::HDRExtendedSrgbLinear) {
+        auto info = m_swapChain->hdrInfo();
+        if (info.limitsType == QRhiSwapChainHdrInfo::ColorComponentValue)
+            maxNits = 100 * info.limits.colorComponentValue.maxColorComponentValue;
+        else
+            maxNits = info.limits.luminanceInNits.maxLuminance;
+    }
+
+    QByteArray uniformData;
+    QVideoTextureHelper::updateUniformData(&uniformData, m_currentFrame.surfaceFormat(), m_currentFrame, transform, 1.f, maxNits);
     rub->updateDynamicBuffer(m_uniformBuf.get(), 0, uniformData.size(), uniformData.constData());
 
     if (m_hasSubtitle) {
@@ -441,7 +404,7 @@ void QVideoWindowPrivate::render()
         st.scale(float(m_subtitleLayout.bounds.width())/float(rect.width()),
                 -1.f * float(m_subtitleLayout.bounds.height())/float(rect.height()));
 
-        QByteArray uniformData(64 + 64 + 4 + 4, Qt::Uninitialized);
+        QByteArray uniformData;
         QVideoFrameFormat fmt(m_subtitleLayout.bounds.size().toSize(), QVideoFrameFormat::Format_ARGB8888);
         QVideoTextureHelper::updateUniformData(&uniformData, fmt, QVideoFrame(), st, 1.f);
         rub->updateDynamicBuffer(m_subtitleUniformBuf.get(), 0, uniformData.size(), uniformData.constData());

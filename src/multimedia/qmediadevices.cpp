@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmediadevices.h"
 #include "private/qplatformmediaintegration_p.h"
@@ -140,6 +104,8 @@ QT_BEGIN_NAMESPACE
 */
 
 /*!
+    \property QMediaDevices::audioInputs
+
     Returns a list of available audio input devices on the system.
 
     Those devices are usually microphones. Devices can be either built-in, or
@@ -147,7 +113,7 @@ QT_BEGIN_NAMESPACE
 */
 QList<QAudioDevice> QMediaDevices::audioInputs()
 {
-    return QPlatformMediaIntegration::instance()->devices()->audioInputs();
+    return QPlatformMediaDevices::instance()->audioInputs();
 }
 
 /*!
@@ -159,6 +125,8 @@ QList<QAudioDevice> QMediaDevices::audioInputs()
 */
 
 /*!
+    \property QMediaDevices::audioOutputs
+
     Returns a list of available audio output devices on the system.
 
     Those devices are usually loudspeakers or head sets. Devices can be either
@@ -166,7 +134,7 @@ QList<QAudioDevice> QMediaDevices::audioInputs()
 */
 QList<QAudioDevice> QMediaDevices::audioOutputs()
 {
-    return QPlatformMediaIntegration::instance()->devices()->audioOutputs();
+    return QPlatformMediaDevices::instance()->audioOutputs();
 }
 
 /*!
@@ -175,11 +143,13 @@ QList<QAudioDevice> QMediaDevices::audioOutputs()
 */
 
 /*!
+    \property QMediaDevices::videoInputs
+
     Returns a list of available cameras on the system.
 */
 QList<QCameraDevice> QMediaDevices::videoInputs()
 {
-    return QPlatformMediaIntegration::instance()->devices()->videoInputs();
+    return QPlatformMediaIntegration::instance()->videoInputs();
 }
 
 /*!
@@ -191,6 +161,8 @@ QList<QCameraDevice> QMediaDevices::videoInputs()
 */
 
 /*!
+    \property QMediaDevices::defaultAudioInput
+
     Returns the default audio input device.
 
     The default device can change during the runtime of the application.
@@ -216,6 +188,8 @@ QAudioDevice QMediaDevices::defaultAudioInput()
 */
 
 /*!
+    \property QMediaDevices::defaultAudioOutput
+
     Returns the default audio output device.
 
     The default device can change during the runtime of the application. The
@@ -244,9 +218,11 @@ QAudioDevice QMediaDevices::defaultAudioOutput()
 */
 
 /*!
+    \property QMediaDevices::defaultVideoInput
+
     Returns the default camera on the system.
 
-    /note The returned object should be checked using isNull() before being used,
+    \note The returned object should be checked using isNull() before being used,
     in case there is no default camera or no cameras at all.
 
     The default device can change during the runtime of the application. The
@@ -271,7 +247,7 @@ QCameraDevice QMediaDevices::defaultVideoInput()
 QMediaDevices::QMediaDevices(QObject *parent)
     : QObject(parent)
 {
-    QPlatformMediaIntegration::instance()->devices()->addDevices(this);
+    QPlatformMediaDevices::instance()->addMediaDevices(this);
 }
 
 /*!
@@ -279,7 +255,7 @@ QMediaDevices::QMediaDevices(QObject *parent)
 */
 QMediaDevices::~QMediaDevices()
 {
-    QPlatformMediaIntegration::instance()->devices()->removeDevices(this);
+    QPlatformMediaDevices::instance()->removeMediaDevices(this);
 }
 
 

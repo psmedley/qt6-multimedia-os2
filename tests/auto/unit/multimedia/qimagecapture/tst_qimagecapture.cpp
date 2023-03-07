@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include <QtTest/QtTest>
 #include <QDebug>
@@ -231,7 +206,7 @@ void tst_QImageCapture::error()
     QSignalSpy spy(&imageCapture, SIGNAL(errorOccurred(int,QImageCapture::Error,QString)));
     imageCapture.captureToFile();
     QTest::qWait(30);
-    QVERIFY(spy.count() == 1);
+    QVERIFY(spy.size() == 1);
     QVERIFY(qvariant_cast<int>(spy.at(0).at(0)) == -1);
     QVERIFY(qvariant_cast<QImageCapture::Error>(spy.at(0).at(1)) == QImageCapture::NotReadyError);
     QVERIFY(qvariant_cast<QString>(spy.at(0).at(2)) == "Could not capture in stopped state");
@@ -253,7 +228,7 @@ void tst_QImageCapture::imageCaptured()
     imageCapture.captureToFile();
     QTRY_VERIFY(imageCapture.isReadyForCapture());
 
-    QVERIFY(spy.count() == 1);
+    QVERIFY(spy.size() == 1);
     QVERIFY(qvariant_cast<int>(spy.at(0).at(0)) > 0);
     QImage image = qvariant_cast<QImage>(spy.at(0).at(1));
     QVERIFY(image.isNull() == true);
@@ -276,7 +251,7 @@ void tst_QImageCapture::imageExposed()
     imageCapture.captureToFile();
     QTRY_VERIFY(imageCapture.isReadyForCapture());
 
-    QVERIFY(spy.count() == 1);
+    QVERIFY(spy.size() == 1);
     QVERIFY(qvariant_cast<int>(spy.at(0).at(0)) > 0);
     spy.clear();
     camera.stop();
@@ -297,7 +272,7 @@ void tst_QImageCapture::imageSaved()
     imageCapture.captureToFile(QString::fromLatin1("/usr/share"));
     QTRY_VERIFY(imageCapture.isReadyForCapture());
 
-    QVERIFY(spy.count() == 1);
+    QVERIFY(spy.size() == 1);
     QVERIFY(qvariant_cast<int>(spy.at(0).at(0)) > 0);
     QVERIFY(qvariant_cast<QString>(spy.at(0).at(1)) == "/usr/share");
     spy.clear();
@@ -316,13 +291,13 @@ void tst_QImageCapture::readyForCaptureChanged()
     QVERIFY(imageCapture.isReadyForCapture() == false);
     imageCapture.captureToFile();
     QTest::qWait(100);
-    QVERIFY(spy.count() == 0);
+    QVERIFY(spy.size() == 0);
     QVERIFY2(!imageCapture.errorString().isEmpty(),"Could not capture in stopped state" );
     camera.start();
     QTest::qWait(100);
     imageCapture.captureToFile();
     QTest::qWait(100);
-    QVERIFY(spy.count() == 2);
+    QVERIFY(spy.size() == 2);
     QVERIFY(spy.at(0).at(0).toBool() == false);
     QVERIFY(spy.at(1).at(0).toBool() == true);
     camera.stop();

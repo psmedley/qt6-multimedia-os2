@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qaudiosystem_p.h"
 #include "qaudiodevice_p.h"
@@ -52,12 +16,14 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QAudioDevicePrivate);
 
 /*!
     \class QAudioDevice
-    \brief The QAudioDevice class provides an information about audio devices and their functionality.
+    \brief The QAudioDevice class provides an information about audio devices and their
+           functionality.
     \inmodule QtMultimedia
     \ingroup multimedia
     \ingroup multimedia_audio
 
-    QAudioDevice describes an audio device available in the system, either for input or for playback.
+    QAudioDevice describes an audio device available in the system, either for input or for
+    playback.
 
     A QAudioDevice is used by Qt to construct
     classes that communicate with the device -- such as
@@ -87,17 +53,18 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QAudioDevicePrivate);
     sound, i.e., play an audio stream in a supported format. For each device we
     find, we simply print the deviceName().
 
-    \sa QAudioSink, QAudioSource QAudioFormat
+    \sa QAudioSink, QAudioSource, QAudioFormat
 */
 
 /*!
-    \qmlbasictype audioDevice
+    \qmlvaluetype audioDevice
     \inqmlmodule QtMultimedia
     \since 6.2
     //! \instantiates QAudioDevice
     \brief Describes an audio device.
     \ingroup multimedia_qml
     \ingroup multimedia_audio_qml
+    \ingroup qmlvaluetypes
 
     The audioDevice value type describes the properties of an audio device that
     is connected to the system.
@@ -126,14 +93,18 @@ QAudioDevice::QAudioDevice() = default;
 /*!
     Constructs a copy of \a other.
 */
-QAudioDevice::QAudioDevice(const QAudioDevice& other) = default;
+QAudioDevice::QAudioDevice(const QAudioDevice &other) = default;
 
 /*!
     \fn QAudioDevice::QAudioDevice(QAudioDevice &&other)
 
     Move constructs from \a other.
 */
+/*!
+    \fn void QAudioDevice::swap(QAudioDevice &other) noexcept
 
+    Swaps the audio device with the \a other.
+*/
 /*!
     Destroy this audio device info.
 */
@@ -142,7 +113,7 @@ QAudioDevice::~QAudioDevice() = default;
 /*!
     Sets the QAudioDevice object to be equal to \a other.
 */
-QAudioDevice& QAudioDevice::operator=(const QAudioDevice &other) = default;
+QAudioDevice &QAudioDevice::operator=(const QAudioDevice &other) = default;
 
 /*!
     \fn QAudioDevice& QAudioDevice::operator=(QAudioDevice &&other)
@@ -154,13 +125,13 @@ QAudioDevice& QAudioDevice::operator=(const QAudioDevice &other) = default;
     Returns true if this QAudioDevice class represents the
     same audio device as \a other.
 */
-bool QAudioDevice::operator ==(const QAudioDevice &other) const
+bool QAudioDevice::operator==(const QAudioDevice &other) const
 {
     if (d == other.d)
         return true;
     if (!d || !other.d)
         return false;
-    if (d->mode == other.d->mode && d->id == other.d->id)
+    if (d->mode == other.d->mode && d->id == other.d->id && d->isDefault == other.d->isDefault)
         return true;
     return false;
 }
@@ -169,7 +140,7 @@ bool QAudioDevice::operator ==(const QAudioDevice &other) const
     Returns true if this QAudioDevice class represents a
     different audio device than \a other
 */
-bool QAudioDevice::operator !=(const QAudioDevice &other) const
+bool QAudioDevice::operator!=(const QAudioDevice &other) const
 {
     return !operator==(other);
 }
@@ -193,6 +164,8 @@ bool QAudioDevice::isNull() const
 */
 
 /*!
+    \property QAudioDevice::id
+
     Returns an identifier for the audio device.
 
     Device names vary depending on the platform/audio plugin being used.
@@ -213,6 +186,8 @@ QByteArray QAudioDevice::id() const
 */
 
 /*!
+    \property QAudioDevice::description
+
     Returns a human readable name of the audio device.
 
     Use this string to present the device to the user.
@@ -229,6 +204,8 @@ QString QAudioDevice::description() const
 */
 
 /*!
+    \property QAudioDevice::isDefault
+
     Returns true if this is the default audio device.
 */
 bool QAudioDevice::isDefault() const
@@ -244,9 +221,11 @@ bool QAudioDevice::isFormatSupported(const QAudioFormat &settings) const
 {
     if (isNull())
         return false;
-    if (settings.sampleRate() < d->minimumSampleRate || settings.sampleRate() > d->maximumSampleRate)
+    if (settings.sampleRate() < d->minimumSampleRate
+        || settings.sampleRate() > d->maximumSampleRate)
         return false;
-    if (settings.channelCount() < d->minimumChannelCount || settings.channelCount() > d->maximumChannelCount)
+    if (settings.channelCount() < d->minimumChannelCount
+        || settings.channelCount() > d->maximumChannelCount)
         return false;
     if (!d->supportedSampleFormats.contains(settings.sampleFormat()))
         return false;
@@ -316,16 +295,26 @@ QList<QAudioFormat::SampleFormat> QAudioDevice::supportedSampleFormats() const
 }
 
 /*!
+    Returns the channel configuration of the device.
+*/
+QAudioFormat::ChannelConfig QAudioDevice::channelConfiguration() const
+{
+    return isNull() ? QAudioFormat::ChannelConfigUnknown : d->channelConfiguration;
+}
+
+/*!
+    \fn QAudioDevicePrivate QAudioDevice::handle() const
     \internal
 */
-QAudioDevice::QAudioDevice(QAudioDevicePrivate *p)
-    : d(p)
-{}
+/*!
+    \internal
+*/
+QAudioDevice::QAudioDevice(QAudioDevicePrivate *p) : d(p) { }
 
 /*!
     \enum QAudioDevice::Mode
 
-    Describes the mode of a QAudioDevice
+    Describes the mode of this device.
 
     \value Null
          A null device.
@@ -350,7 +339,9 @@ QAudioDevice::QAudioDevice(QAudioDevicePrivate *p)
 */
 
 /*!
-    returns whether this device is an input or output device.
+    \property QAudioDevice::mode
+
+    Returns whether this device is an input or output device.
 */
 QAudioDevice::Mode QAudioDevice::mode() const
 {

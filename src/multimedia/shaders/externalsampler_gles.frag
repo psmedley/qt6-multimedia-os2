@@ -8,6 +8,8 @@ struct buf
     mat4 colorMatrix;
     float opacity;
     float width;
+    float masteringWhite;
+    float maxLum;
 };
 
 uniform buf ubuf;
@@ -19,4 +21,8 @@ varying vec2 texCoord;
 void main()
 {
     gl_FragColor = texture2D(plane1Texture, texCoord).rgba * ubuf.opacity;
+
+#ifdef QMM_OUTPUTSURFACE_LINEAR
+    fragColor = pow(fragColor, 2.2);
+#endif
 }

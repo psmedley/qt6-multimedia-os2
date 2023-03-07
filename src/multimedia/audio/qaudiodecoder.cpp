@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qtmultimediaglobal_p.h"
 #include "qaudiodecoder.h"
@@ -77,7 +41,12 @@ QT_BEGIN_NAMESPACE
 QAudioDecoder::QAudioDecoder(QObject *parent)
     : QObject(parent)
 {
-    decoder = QPlatformMediaIntegration::instance()->createAudioDecoder(this);
+    auto maybeDecoder = QPlatformMediaIntegration::instance()->createAudioDecoder(this);
+    if (maybeDecoder) {
+        decoder = maybeDecoder.value();
+    } else {
+        qWarning() << "Failed to initialize QAudioDecoder" << maybeDecoder.error();
+    }
 }
 
 
@@ -91,7 +60,7 @@ QAudioDecoder::~QAudioDecoder() = default;
 */
 bool QAudioDecoder::isSupported() const
 {
-    return decoder != nullptr;
+    return bool(decoder);
 }
 
 /*!
@@ -104,17 +73,17 @@ bool QAudioDecoder::isDecoding() const
 }
 
 /*!
-    \property QAudioDecoder::error
-    \brief The current error state.
+
+    Returns the current error state of the QAudioDecoder.
 */
 QAudioDecoder::Error QAudioDecoder::error() const
 {
-    if (!decoder)
-        return NotSupportedError;
-    return decoder->error();
+    return decoder ? decoder->error() : NotSupportedError;
 }
 
 /*!
+    \property QAudioDecoder::error
+
     Returns a human readable description of the current error, or
     an empty string is there is no error.
 */
@@ -139,12 +108,11 @@ QString QAudioDecoder::errorString() const
 */
 void QAudioDecoder::start()
 {
-    if (decoder == nullptr)
+    if (!decoder)
         return;
 
     // Reset error conditions
     decoder->clearError();
-
     decoder->start();
 }
 
@@ -153,10 +121,8 @@ void QAudioDecoder::start()
 */
 void QAudioDecoder::stop()
 {
-    if (!decoder)
-        return;
-
-    decoder->stop();
+    if (decoder)
+        decoder->stop();
 }
 
 /*!
@@ -166,9 +132,7 @@ void QAudioDecoder::stop()
 */
 QUrl QAudioDecoder::source() const
 {
-    if (decoder)
-        return decoder->source();
-    return QString();
+    return decoder ? decoder->source() : QString{};
 }
 
 /*!
@@ -195,9 +159,7 @@ void QAudioDecoder::setSource(const QUrl &fileName)
 */
 QIODevice *QAudioDecoder::sourceDevice() const
 {
-    if (decoder)
-        return decoder->sourceDevice();
-    return nullptr;
+    return decoder ? decoder->sourceDevice() : nullptr;
 }
 
 /*!
@@ -211,9 +173,8 @@ QIODevice *QAudioDecoder::sourceDevice() const
 */
 void QAudioDecoder::setSourceDevice(QIODevice *device)
 {
-    if (!decoder)
-        return;
-    decoder->setSourceDevice(device);
+    if (decoder)
+        decoder->setSourceDevice(device);
 }
 
 /*!
@@ -226,9 +187,7 @@ void QAudioDecoder::setSourceDevice(QIODevice *device)
 */
 QAudioFormat QAudioDecoder::audioFormat() const
 {
-    if (decoder)
-        return decoder->audioFormat();
-    return QAudioFormat();
+    return decoder ? decoder->audioFormat() : QAudioFormat{};
 }
 
 /*!
@@ -255,7 +214,7 @@ void QAudioDecoder::setAudioFormat(const QAudioFormat &format)
     if (isDecoding())
         return;
 
-    if (decoder != nullptr)
+    if (decoder)
         decoder->setAudioFormat(format);
 }
 
@@ -266,9 +225,7 @@ void QAudioDecoder::setAudioFormat(const QAudioFormat &format)
 */
 bool QAudioDecoder::bufferAvailable() const
 {
-    if (decoder)
-        return decoder->bufferAvailable();
-    return false;
+    return decoder && decoder->bufferAvailable();
 }
 
 /*!
@@ -278,9 +235,7 @@ bool QAudioDecoder::bufferAvailable() const
 
 qint64 QAudioDecoder::position() const
 {
-    if (decoder)
-        return decoder->position();
-    return -1;
+    return decoder ? decoder->position() : -1;
 }
 
 /*!
@@ -290,9 +245,7 @@ qint64 QAudioDecoder::position() const
 
 qint64 QAudioDecoder::duration() const
 {
-    if (decoder)
-        return decoder->duration();
-    return -1;
+    return decoder ? decoder->duration() : -1;
 }
 
 /*!
@@ -307,10 +260,7 @@ qint64 QAudioDecoder::duration() const
 
 QAudioBuffer QAudioDecoder::read() const
 {
-    if (decoder)
-        return decoder->read();
-
-    return QAudioBuffer();
+    return decoder ? decoder->read() : QAudioBuffer{};
 }
 
 // Enums
@@ -328,7 +278,7 @@ QAudioBuffer QAudioDecoder::read() const
 
 // Signals
 /*!
-    \fn QAudioDecoder::error(QAudioDecoder::Error error)
+    \fn void QAudioDecoder::error(QAudioDecoder::Error error)
 
     Signals that an \a error condition has occurred.
 

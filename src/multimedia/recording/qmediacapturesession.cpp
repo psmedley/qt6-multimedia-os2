@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmediacapturesession.h"
 #include "qaudiodevice.h"
@@ -57,7 +21,7 @@ class QMediaCaptureSessionPrivate
 {
 public:
     QMediaCaptureSession *q = nullptr;
-    QPlatformMediaCaptureSession *captureSession;
+    QPlatformMediaCaptureSession *captureSession = nullptr;
     QAudioInput *audioInput = nullptr;
     QAudioOutput *audioOutput = nullptr;
     QCamera *camera = nullptr;
@@ -75,7 +39,8 @@ public:
         videoSink = sink;
         if (sink)
             sink->setSource(q);
-        captureSession->setVideoPreview(sink);
+        if (captureSession)
+            captureSession->setVideoPreview(sink);
         emit q->videoOutputChanged();
     }
 
@@ -157,8 +122,13 @@ QMediaCaptureSession::QMediaCaptureSession(QObject *parent)
     d_ptr(new QMediaCaptureSessionPrivate)
 {
     d_ptr->q = this;
-    d_ptr->captureSession = QPlatformMediaIntegration::instance()->createCaptureSession();
-    Q_ASSERT(d_ptr->captureSession);
+    auto maybeCaptureSession = QPlatformMediaIntegration::instance()->createCaptureSession();
+    if (maybeCaptureSession) {
+        d_ptr->captureSession = maybeCaptureSession.value();
+        d_ptr->captureSession->setCaptureSession(this);
+    } else {
+        qWarning() << "Failed to initialize QMediaCaptureSession" << maybeCaptureSession.error();
+    }
 }
 
 /*!
@@ -200,12 +170,14 @@ void QMediaCaptureSession::setAudioInput(QAudioInput *input)
     if (oldInput == input)
         return;
     d_ptr->audioInput = input;
-    d_ptr->captureSession->setAudioInput(nullptr);
+    if (d_ptr->captureSession)
+        d_ptr->captureSession->setAudioInput(nullptr);
     if (oldInput)
         oldInput->setDisconnectFunction({});
     if (input) {
         input->setDisconnectFunction([this](){ setAudioInput(nullptr); });
-        d_ptr->captureSession->setAudioInput(input->handle());
+        if (d_ptr->captureSession)
+            d_ptr->captureSession->setAudioInput(input->handle());
     }
     emit audioInputChanged();
 }
@@ -238,7 +210,8 @@ void QMediaCaptureSession::setCamera(QCamera *camera)
     if (oldCamera == camera)
         return;
     d_ptr->camera = camera;
-    d_ptr->captureSession->setCamera(nullptr);
+    if (d_ptr->captureSession)
+        d_ptr->captureSession->setCamera(nullptr);
     if (oldCamera) {
         if (oldCamera->captureSession() && oldCamera->captureSession() != this)
             oldCamera->captureSession()->setCamera(nullptr);
@@ -247,7 +220,8 @@ void QMediaCaptureSession::setCamera(QCamera *camera)
     if (camera) {
         if (camera->captureSession())
             camera->captureSession()->setCamera(nullptr);
-        d_ptr->captureSession->setCamera(camera->platformCamera());
+        if (d_ptr->captureSession)
+            d_ptr->captureSession->setCamera(camera->platformCamera());
         camera->setCaptureSession(this);
     }
     emit cameraChanged();
@@ -279,7 +253,8 @@ void QMediaCaptureSession::setImageCapture(QImageCapture *imageCapture)
     if (oldImageCapture == imageCapture)
         return;
     d_ptr->imageCapture = imageCapture;
-    d_ptr->captureSession->setImageCapture(nullptr);
+    if (d_ptr->captureSession)
+        d_ptr->captureSession->setImageCapture(nullptr);
     if (oldImageCapture) {
         if (oldImageCapture->captureSession() && oldImageCapture->captureSession() != this)
             oldImageCapture->captureSession()->setImageCapture(nullptr);
@@ -288,7 +263,8 @@ void QMediaCaptureSession::setImageCapture(QImageCapture *imageCapture)
     if (imageCapture) {
         if (imageCapture->captureSession())
             imageCapture->captureSession()->setImageCapture(nullptr);
-        d_ptr->captureSession->setImageCapture(imageCapture->platformImageCapture());
+        if (d_ptr->captureSession)
+            d_ptr->captureSession->setImageCapture(imageCapture->platformImageCapture());
         imageCapture->setCaptureSession(this);
     }
     emit imageCaptureChanged();
@@ -321,7 +297,8 @@ void QMediaCaptureSession::setRecorder(QMediaRecorder *recorder)
     if (oldRecorder == recorder)
         return;
     d_ptr->recorder = recorder;
-    d_ptr->captureSession->setMediaRecorder(nullptr);
+    if (d_ptr->captureSession)
+        d_ptr->captureSession->setMediaRecorder(nullptr);
     if (oldRecorder) {
         if (oldRecorder->captureSession() && oldRecorder->captureSession() != this)
             oldRecorder->captureSession()->setRecorder(nullptr);
@@ -330,7 +307,8 @@ void QMediaCaptureSession::setRecorder(QMediaRecorder *recorder)
     if (recorder) {
         if (recorder->captureSession())
             recorder->captureSession()->setRecorder(nullptr);
-        d_ptr->captureSession->setMediaRecorder(recorder->platformRecoder());
+        if (d_ptr->captureSession)
+            d_ptr->captureSession->setMediaRecorder(recorder->platformRecoder());
         recorder->setCaptureSession(this);
     }
     emit recorderChanged();
@@ -401,12 +379,14 @@ void QMediaCaptureSession::setAudioOutput(QAudioOutput *output)
     if (oldOutput == output)
         return;
     d_ptr->audioOutput = output;
-    d_ptr->captureSession->setAudioOutput(nullptr);
+    if (d_ptr->captureSession)
+        d_ptr->captureSession->setAudioOutput(nullptr);
     if (oldOutput)
         oldOutput->setDisconnectFunction({});
     if (output) {
         output->setDisconnectFunction([this](){ setAudioOutput(nullptr); });
-        d_ptr->captureSession->setAudioOutput(output->handle());
+        if (d_ptr->captureSession)
+            d_ptr->captureSession->setAudioOutput(output->handle());
     }
     emit audioOutputChanged();
 }

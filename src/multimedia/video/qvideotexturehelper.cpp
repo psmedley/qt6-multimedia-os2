@@ -1,47 +1,9 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideotexturehelper_p.h"
 #include "qvideoframe.h"
-#ifdef Q_OS_ANDROID
-#include <private/qandroidvideooutput_p.h>
-#endif
+#include "qabstractvideobuffer_p.h"
 
 #include <qpainter.h>
 #include <qloggingcategory.h>
@@ -240,9 +202,9 @@ static const TextureDescription descriptions[QVideoFrameFormat::NPixelFormats] =
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_Jpeg
-    { 1, 0,
-      [](int, int) { return 0; },
-     { QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+    { 1, 4,
+      [](int stride, int height) { return stride*height; },
+     { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
      { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_SamplerRect
@@ -251,7 +213,13 @@ static const TextureDescription descriptions[QVideoFrameFormat::NPixelFormats] =
         [](int, int) { return 0; },
         { QRhiTexture::BGRA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
-    }
+    },
+    // Format_YUV420P10
+    { 3, 1,
+        [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
+        { QRhiTexture::R16, QRhiTexture::R16, QRhiTexture::R16 },
+        { { 1, 1 }, { 2, 2 }, { 2, 2 } }
+    },
 };
 
 const TextureDescription *textureDescription(QVideoFrameFormat::PixelFormat format)
@@ -259,106 +227,203 @@ const TextureDescription *textureDescription(QVideoFrameFormat::PixelFormat form
     return descriptions + format;
 }
 
-QString vertexShaderFileName(QVideoFrameFormat::PixelFormat format)
+QString vertexShaderFileName(const QVideoFrameFormat &format)
 {
-    Q_UNUSED(format);
+    auto fmt = format.pixelFormat();
+    Q_UNUSED(fmt);
 
 #if 1//def Q_OS_ANDROID
-    if (format == QVideoFrameFormat::Format_SamplerExternalOES)
+    if (fmt == QVideoFrameFormat::Format_SamplerExternalOES)
         return QStringLiteral(":/qt-project.org/multimedia/shaders/externalsampler.vert.qsb");
 #endif
 #if 1//def Q_OS_MACOS
-    if (format == QVideoFrameFormat::Format_SamplerRect)
+    if (fmt == QVideoFrameFormat::Format_SamplerRect)
         return QStringLiteral(":/qt-project.org/multimedia/shaders/rectsampler.vert.qsb");
 #endif
 
     return QStringLiteral(":/qt-project.org/multimedia/shaders/vertex.vert.qsb");
 }
 
-QString fragmentShaderFileName(QVideoFrameFormat::PixelFormat format)
+QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhiSwapChain::Format surfaceFormat)
 {
-    switch (format) {
+    const char *shader = nullptr;
+    switch (format.pixelFormat()) {
     case QVideoFrameFormat::Format_Y8:
     case QVideoFrameFormat::Format_Y16:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/y.frag.qsb");
+        shader = "y";
+        break;
     case QVideoFrameFormat::Format_AYUV:
     case QVideoFrameFormat::Format_AYUV_Premultiplied:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/ayuv.frag.qsb");
+        shader = "ayuv";
+        break;
     case QVideoFrameFormat::Format_ARGB8888:
     case QVideoFrameFormat::Format_ARGB8888_Premultiplied:
     case QVideoFrameFormat::Format_XRGB8888:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/argb.frag.qsb");
+        shader = "argb";
+        break;
     case QVideoFrameFormat::Format_ABGR8888:
     case QVideoFrameFormat::Format_XBGR8888:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/abgr.frag.qsb");
+        shader = "abgr";
+        break;
+    case QVideoFrameFormat::Format_Jpeg: // Jpeg is decoded transparently into an ARGB texture
+        shader = "bgra";
+        break;
     case QVideoFrameFormat::Format_RGBA8888:
     case QVideoFrameFormat::Format_RGBX8888:
     case QVideoFrameFormat::Format_BGRA8888:
     case QVideoFrameFormat::Format_BGRA8888_Premultiplied:
     case QVideoFrameFormat::Format_BGRX8888:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/rgba.frag.qsb");
+        shader = "rgba";
+        break;
     case QVideoFrameFormat::Format_YUV420P:
     case QVideoFrameFormat::Format_YUV422P:
     case QVideoFrameFormat::Format_IMC3:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/yuv_triplanar.frag.qsb");
+        shader = "yuv_triplanar";
+        break;
+    case QVideoFrameFormat::Format_YUV420P10:
+        shader = "yuv_triplanar_p10";
+        break;
     case QVideoFrameFormat::Format_YV12:
     case QVideoFrameFormat::Format_IMC1:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/yvu_triplanar.frag.qsb");
+        shader = "yvu_triplanar";
+        break;
     case QVideoFrameFormat::Format_IMC2:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/imc2.frag.qsb");
+        shader = "imc2";
+        break;
     case QVideoFrameFormat::Format_IMC4:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/imc4.frag.qsb");
+        shader = "imc4";
+        break;
     case QVideoFrameFormat::Format_UYVY:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/uyvy.frag.qsb");
+        shader = "uyvy";
+        break;
     case QVideoFrameFormat::Format_YUYV:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/yuyv.frag.qsb");
-    case QVideoFrameFormat::Format_NV12:
+        shader = "yuyv";
+        break;
     case QVideoFrameFormat::Format_P010:
     case QVideoFrameFormat::Format_P016:
         // P010/P016 have the same layout as NV12, just 16 instead of 8 bits per pixel
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/nv12.frag.qsb");
+        if (format.colorTransfer() == QVideoFrameFormat::ColorTransfer_ST2084) {
+            shader = "nv12_bt2020_pq";
+            break;
+        }
+        if (format.colorTransfer() == QVideoFrameFormat::ColorTransfer_STD_B67) {
+            shader = "nv12_bt2020_hlg";
+            break;
+        }
+        // Fall through, should be bt709
+        Q_FALLTHROUGH();
+    case QVideoFrameFormat::Format_NV12:
+        shader = "nv12";
+        break;
     case QVideoFrameFormat::Format_NV21:
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/nv21.frag.qsb");
+        shader = "nv21";
+        break;
     case QVideoFrameFormat::Format_SamplerExternalOES:
 #if 1//def Q_OS_ANDROID
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/externalsampler.frag.qsb");
+        shader = "externalsampler";
+        break;
 #endif
     case QVideoFrameFormat::Format_SamplerRect:
 #if 1//def Q_OS_MACOS
-        return QStringLiteral(":/qt-project.org/multimedia/shaders/rectsampler_bgra.frag.qsb");
+        shader = "rectsampler_bgra";
+        break;
 #endif
         // fallthrough
     case QVideoFrameFormat::Format_Invalid:
-    case QVideoFrameFormat::Format_Jpeg:
     default:
-        return QString();
+        break;
     }
+    if (!shader)
+        return QString();
+    QString shaderFile = QStringLiteral(":/qt-project.org/multimedia/shaders/") + QString::fromLatin1(shader);
+    if (surfaceFormat == QRhiSwapChain::HDRExtendedSrgbLinear)
+        shaderFile += QLatin1String("_linear");
+    shaderFile += QStringLiteral(".frag.qsb");
+    return shaderFile;
 }
 
+// Matrices are calculated from
+// https://www.itu.int/dms_pubrec/itu-r/rec/bt/R-REC-BT.601-7-201103-I!!PDF-E.pdf
+// https://www.itu.int/dms_pubrec/itu-r/rec/bt/R-REC-BT.709-6-201506-I!!PDF-E.pdf
+// https://www.itu.int/dms_pubrec/itu-r/rec/bt/R-REC-BT.2020-2-201510-I!!PDF-E.pdf
+//
+// For BT2020, we also need to convert the Rec2020 RGB colorspace to sRGB see
+// shaders/colorconvert.glsl for details.
+//
+// Doing the math gives the following (Y, U & V normalized to [0..1] range):
+//
+// Y = a*R + b*G + c*B
+// R = Y           + e*V
+// G = Y - c*d/b*U - a*e/b*V
+// B = Y + d*U
 
-static QMatrix4x4 colorMatrix(QVideoFrameFormat::YCbCrColorSpace colorSpace)
+// BT2020:
+// a = .2627, b = 0.6780, c = 0.0593
+// d = 1.8814
+// e = 1.4746
+//
+// BT709:
+// a = 0.2126, b = 0.7152, c = 0.0722
+// d = 1.8556
+// e = 1.5748
+//
+// BT601:
+// a = 0.299, b = 0.578, c = 0.114
+// d = 1.42
+// e = 1.772
+//
+static QMatrix4x4 colorMatrix(const QVideoFrameFormat &format)
 {
+    auto colorSpace = format.colorSpace();
+    if (colorSpace == QVideoFrameFormat::ColorSpace_Undefined) {
+        if (format.frameHeight() > 576)
+            // HD video, assume BT709
+            colorSpace = QVideoFrameFormat::ColorSpace_BT709;
+        else
+            // SD video, assume BT601
+            colorSpace = QVideoFrameFormat::ColorSpace_BT601;
+    }
     switch (colorSpace) {
-    case QVideoFrameFormat::YCbCr_JPEG:
+    case QVideoFrameFormat::ColorSpace_AdobeRgb:
         return QMatrix4x4(
             1.0f,  0.000f,  1.402f, -0.701f,
             1.0f, -0.344f, -0.714f,  0.529f,
             1.0f,  1.772f,  0.000f, -0.886f,
             0.0f,  0.000f,  0.000f,  1.0000f);
-    case QVideoFrameFormat::YCbCr_BT709:
-    case QVideoFrameFormat::YCbCr_xvYCC709:
+    default:
+    case QVideoFrameFormat::ColorSpace_BT709:
+        if (format.colorRange() == QVideoFrameFormat::ColorRange_Full)
+            return QMatrix4x4(
+                1.f,  0.000f,  1.5748f, -0.8774f,
+                1.f, -0.187324f, -0.468124f,  0.327724f,
+                1.f,  1.8556f,  0.000f, -0.9278f,
+                0.0f,    0.000f,  0.000f,  1.0000f);
         return QMatrix4x4(
             1.1644f,  0.000f,  1.7928f, -0.9731f,
             1.1644f, -0.5329f, -0.2132f,  0.3015f,
             1.1644f,  2.1124f,  0.000f, -1.1335f,
             0.0f,    0.000f,  0.000f,  1.0000f);
-    case QVideoFrameFormat::YCbCr_BT2020:
+    case QVideoFrameFormat::ColorSpace_BT2020:
+        if (format.colorRange() == QVideoFrameFormat::ColorRange_Full)
+            return QMatrix4x4(
+                1.f,  0.000f,  1.4746f, -0.7373f,
+                1.f, -0.2801f, -0.91666f,  0.5984f,
+                1.f,  1.8814f,  0.000f, -0.9407f,
+                0.0f,    0.000f,  0.000f,  1.0000f);
         return QMatrix4x4(
             1.1644f,  0.000f,  1.6787f, -0.9158f,
             1.1644f, -0.1874f, -0.6511f,  0.3478f,
             1.1644f,  2.1418f,  0.000f, -1.1483f,
             0.0f,  0.000f,  0.000f,  1.0000f);
-    default: //BT 601:
+    case QVideoFrameFormat::ColorSpace_BT601:
+        // Corresponds to the primaries used by NTSC BT601. For PAL BT601, we use the BT709 conversion
+        // as those are very close.
+        if (format.colorRange() == QVideoFrameFormat::ColorRange_Full)
+            return QMatrix4x4(
+                1.f,  0.000f,  1.772f, -0.886f,
+                1.f, -0.1646f, -0.57135f,  0.36795f,
+                1.f,  1.42f,  0.000f, -0.71f,
+                0.0f,    0.000f,  0.000f,  1.0000f);
         return QMatrix4x4(
             1.164f,  0.000f,  1.596f, -0.8708f,
             1.164f, -0.392f, -0.813f,  0.5296f,
@@ -401,7 +466,41 @@ static QMatrix4x4 yuvColorCorrectionMatrix(float brightness, float contrast, flo
 }
 #endif
 
-void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const QVideoFrame &frame, const QMatrix4x4 &transform, float opacity)
+// PQ transfer function, see also https://en.wikipedia.org/wiki/Perceptual_quantizer
+// or https://ieeexplore.ieee.org/document/7291452
+static float convertPQFromLinear(float sig)
+{
+    const float m1 = 1305.f/8192.f;
+    const float m2 = 2523.f/32.f;
+    const float c1 = 107.f/128.f;
+    const float c2 = 2413.f/128.f;
+    const float c3 = 2392.f/128.f;
+
+    const float SDR_LEVEL = 100.f;
+    sig *= SDR_LEVEL/10000.f;
+    float psig = powf(sig, m1);
+    float num = c1 + c2*psig;
+    float den = 1 + c3*psig;
+    return powf(num/den, m2);
+}
+
+float convertHLGFromLinear(float sig)
+{
+    const float a = 0.17883277f;
+    const float b = 0.28466892f; // = 1 - 4a
+    const float c = 0.55991073f; // = 0.5 - a ln(4a)
+
+    if (sig < 1.f/12.f)
+        return sqrtf(3.f*sig);
+    return a*logf(12.f*sig - b) + c;
+}
+
+static float convertSDRFromLinear(float sig)
+{
+    return sig;
+}
+
+void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const QVideoFrame &frame, const QMatrix4x4 &transform, float opacity, float maxNits)
 {
 #ifndef Q_OS_ANDROID
     Q_UNUSED(frame);
@@ -410,9 +509,9 @@ void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const Q
     QMatrix4x4 cmat;
     switch (format.pixelFormat()) {
     case QVideoFrameFormat::Format_Invalid:
-    case QVideoFrameFormat::Format_Jpeg:
         return;
 
+    case QVideoFrameFormat::Format_Jpeg:
     case QVideoFrameFormat::Format_ARGB8888:
     case QVideoFrameFormat::Format_ARGB8888_Premultiplied:
     case QVideoFrameFormat::Format_XRGB8888:
@@ -434,6 +533,7 @@ void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const Q
     case QVideoFrameFormat::Format_AYUV:
     case QVideoFrameFormat::Format_AYUV_Premultiplied:
     case QVideoFrameFormat::Format_YUV420P:
+    case QVideoFrameFormat::Format_YUV420P10:
     case QVideoFrameFormat::Format_YUV422P:
     case QVideoFrameFormat::Format_YV12:
     case QVideoFrameFormat::Format_UYVY:
@@ -442,16 +542,11 @@ void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const Q
     case QVideoFrameFormat::Format_NV21:
     case QVideoFrameFormat::Format_P010:
     case QVideoFrameFormat::Format_P016:
-        cmat = colorMatrix(format.yCbCrColorSpace());
+        cmat = colorMatrix(format);
         break;
     case QVideoFrameFormat::Format_SamplerExternalOES:
-#ifdef Q_OS_ANDROID
-    {
         // get Android specific transform for the externalsampler texture
-        if (auto *buffer = static_cast<AndroidTextureVideoBuffer *>(frame.videoBuffer()))
-            cmat = buffer->externalTextureMatrix();
-    }
-#endif
+        cmat = frame.videoBuffer()->externalTextureMatrix();
         break;
     case QVideoFrameFormat::Format_SamplerRect:
     {
@@ -464,94 +559,183 @@ void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const Q
     }
         break;
     }
-    // { matrix, colorMatrix, opacity, width }
-    Q_ASSERT(dst->size() >= 64 + 64 + 4 + 4);
-    char *data = dst->data();
-    memcpy(data, transform.constData(), 64);
-    memcpy(data + 64, cmat.constData(), 64);
-    memcpy(data + 64 + 64, &opacity, 4);
-    float width = format.frameWidth();
-    memcpy(data + 64 + 64 + 4, &width, 4);
+
+    // HDR with a PQ or HLG transfer function uses a BT2390 based tone mapping to cut off the HDR peaks
+    // This requires that we pass the max luminance the tonemapper should clip to over to the fragment
+    // shader. To reduce computations there, it's precomputed in PQ values here.
+    auto fromLinear = convertSDRFromLinear;
+    switch (format.colorTransfer()) {
+    case QVideoFrameFormat::ColorTransfer_ST2084:
+        fromLinear = convertPQFromLinear;
+        break;
+    case QVideoFrameFormat::ColorTransfer_STD_B67:
+        fromLinear = convertHLGFromLinear;
+        break;
+    default:
+        break;
+    }
+
+    if (dst->size() < qsizetype(sizeof(UniformData)))
+        dst->resize(sizeof(UniformData));
+
+    auto ud = reinterpret_cast<UniformData*>(dst->data());
+    memcpy(ud->transformMatrix, transform.constData(), sizeof(ud->transformMatrix));
+    memcpy(ud->colorMatrix, cmat.constData(), sizeof(ud->transformMatrix));
+    ud->opacity = opacity;
+    ud->width = float(format.frameWidth());
+    ud->masteringWhite = fromLinear(float(format.maxLuminance())/100.f);
+    ud->maxLum = fromLinear(float(maxNits)/100.f);
 }
 
-int updateRhiTextures(QVideoFrame frame, QRhi *rhi, QRhiResourceUpdateBatch *resourceUpdates, QRhiTexture **textures)
+static bool updateTextureWithMap(QVideoFrame frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, int plane, std::unique_ptr<QRhiTexture> &tex)
+{
+    if (!frame.map(QVideoFrame::ReadOnly)) {
+        qWarning() << "could not map data of QVideoFrame for upload";
+        return false;
+    }
+
+    QVideoFrameFormat fmt = frame.surfaceFormat();
+    QVideoFrameFormat::PixelFormat pixelFormat = fmt.pixelFormat();
+    QSize size = fmt.frameSize();
+
+    const TextureDescription &texDesc = descriptions[pixelFormat];
+    QSize planeSize(size.width()/texDesc.sizeScale[plane].x, size.height()/texDesc.sizeScale[plane].y);
+
+    bool needsRebuild = !tex || tex->pixelSize() != planeSize || tex->format() != texDesc.textureFormat[plane];
+    if (!tex) {
+        tex.reset(rhi->newTexture(texDesc.textureFormat[plane], planeSize, 1, {}));
+        if (!tex) {
+            qWarning("Failed to create new texture (size %dx%d)", planeSize.width(), planeSize.height());
+            return false;
+        }
+    }
+
+    if (needsRebuild) {
+        tex->setFormat(texDesc.textureFormat[plane]);
+        tex->setPixelSize(planeSize);
+        if (!tex->create()) {
+            qWarning("Failed to create texture (size %dx%d)", planeSize.width(), planeSize.height());
+            return false;
+        }
+    }
+
+    QRhiTextureSubresourceUploadDescription subresDesc;
+    QImage image;
+    if (pixelFormat == QVideoFrameFormat::Format_Jpeg) {
+        image = frame.toImage();
+        image.convertTo(QImage::Format_ARGB32);
+        subresDesc.setData(QByteArray((const char *)image.bits(), image.bytesPerLine()*image.height()));
+        subresDesc.setDataStride(image.bytesPerLine());
+    } else {
+        subresDesc.setData(QByteArray::fromRawData((const char *)frame.bits(plane), frame.mappedBytes(plane)));
+        subresDesc.setDataStride(frame.bytesPerLine(plane));
+    }
+
+    QRhiTextureUploadEntry entry(0, 0, subresDesc);
+    QRhiTextureUploadDescription desc({ entry });
+    rub->uploadTexture(tex.get(), desc);
+
+    return true;
+}
+
+static std::unique_ptr<QRhiTexture> createTextureFromHandle(const QVideoFrame &frame, QRhi *rhi, int plane)
 {
     QVideoFrameFormat fmt = frame.surfaceFormat();
     QVideoFrameFormat::PixelFormat pixelFormat = fmt.pixelFormat();
     QSize size = fmt.frameSize();
 
-    const TextureDescription *description = descriptions + pixelFormat;
+    const TextureDescription &texDesc = descriptions[pixelFormat];
+    QSize planeSize(size.width()/texDesc.sizeScale[plane].x, size.height()/texDesc.sizeScale[plane].y);
 
-    QSize planeSizes[TextureDescription::maxPlanes];
-    for (int plane = 0; plane < description->nplanes; ++plane)
-        planeSizes[plane] = QSize(size.width()/description->sizeScale[plane].x, size.height()/description->sizeScale[plane].y);
-
-    if (frame.handleType() == QVideoFrame::RhiTextureHandle) {
-        QRhiTexture::Flags textureFlags = {};
-        if (pixelFormat == QVideoFrameFormat::Format_SamplerExternalOES) {
+    QRhiTexture::Flags textureFlags = {};
+    if (pixelFormat == QVideoFrameFormat::Format_SamplerExternalOES) {
 #ifdef Q_OS_ANDROID
-            if (rhi->backend() == QRhi::OpenGLES2)
-                textureFlags |= QRhiTexture::ExternalOES;
+        if (rhi->backend() == QRhi::OpenGLES2)
+            textureFlags |= QRhiTexture::ExternalOES;
 #endif
-        }
-        if (pixelFormat == QVideoFrameFormat::Format_SamplerRect) {
+    }
+    if (pixelFormat == QVideoFrameFormat::Format_SamplerRect) {
 #ifdef Q_OS_MACOS
-            if (rhi->backend() == QRhi::OpenGLES2)
-                textureFlags |= QRhiTexture::TextureRectangleGL;
+        if (rhi->backend() == QRhi::OpenGLES2)
+            textureFlags |= QRhiTexture::TextureRectangleGL;
 #endif
-        }
-
-        quint64 textureHandles[TextureDescription::maxPlanes] = {};
-        bool textureHandlesOK = true;
-        for (int plane = 0; plane < description->nplanes; ++plane) {
-            quint64 handle = frame.textureHandle(plane);
-            textureHandles[plane] = handle;
-            textureHandlesOK &= handle > 0;
-        }
-
-        if (textureHandlesOK) {
-            for (int plane = 0; plane < description->nplanes; ++plane) {
-                textures[plane] = rhi->newTexture(description->textureFormat[plane], planeSizes[plane], 1, textureFlags);
-                if (!textures[plane]->createFrom({ textureHandles[plane], 0}))
-                    qWarning("Failed to initialize QRhiTexture wrapper for native texture object %llu", textureHandles[plane]);
-            }
-            return description->nplanes;
-        } else {
-            qCDebug(qLcVideoTextureHelper) << "Incorrect texture handle from QVideoFrame, trying to map and upload texture";
-        }
     }
 
-    // need to upload textures
-    bool mapped = frame.map(QVideoFrame::ReadOnly);
-    if (!mapped) {
-        qWarning() << "could not map data of QVideoFrame for upload";
-        return 0;
+    if (quint64 handle = frame.videoBuffer()->textureHandle(plane); handle) {
+        std::unique_ptr<QRhiTexture> tex(rhi->newTexture(texDesc.textureFormat[plane], planeSize, 1, textureFlags));
+        if (tex->createFrom({handle, 0}))
+            return tex;
+
+        qWarning("Failed to initialize QRhiTexture wrapper for native texture object %llu",handle);
+    }
+    return {};
+}
+
+class QVideoFrameTexturesArray : public QVideoFrameTextures
+{
+public:
+    using TextureArray = std::array<std::unique_ptr<QRhiTexture>, TextureDescription::maxPlanes>;
+    QVideoFrameTexturesArray(TextureArray &&textures)
+        : m_textures(std::move(textures))
+    {}
+
+    QRhiTexture *texture(uint plane) const override
+    {
+        return plane < std::size(m_textures) ? m_textures[plane].get() : nullptr;
     }
 
-    Q_ASSERT(frame.planeCount() == description->nplanes);
-    for (int plane = 0; plane < description->nplanes; ++plane) {
+    TextureArray takeTextures() { return std::move(m_textures); }
 
-        bool needsRebuild = !textures[plane] || textures[plane]->pixelSize() != planeSizes[plane];
-        if (!textures[plane])
-            textures[plane] = rhi->newTexture(description->textureFormat[plane], planeSizes[plane], 1, {});
+private:
+    TextureArray m_textures;
+};
 
-        if (needsRebuild) {
-            textures[plane]->setPixelSize(planeSizes[plane]);
-            bool created = textures[plane]->create();
-            if (!created) {
-                qWarning("Failed to create texture (size %dx%d)", planeSizes[plane].width(), planeSizes[plane].height());
-                return 0;
-            }
-        }
-
-        auto data = QByteArray::fromRawData((const char *)frame.bits(plane), frame.mappedBytes(plane));
-        QRhiTextureSubresourceUploadDescription subresDesc(data);
-        subresDesc.setDataStride(frame.bytesPerLine(plane));
-        QRhiTextureUploadEntry entry(0, 0, subresDesc);
-        QRhiTextureUploadDescription desc({ entry });
-        resourceUpdates->uploadTexture(textures[plane], desc);
+static std::unique_ptr<QVideoFrameTextures> createTexturesFromHandles(const QVideoFrame &frame, QRhi *rhi)
+{
+    const TextureDescription &texDesc = descriptions[frame.surfaceFormat().pixelFormat()];
+    bool ok = true;
+    QVideoFrameTexturesArray::TextureArray textures;
+    for (quint8 plane = 0; plane < texDesc.nplanes; ++plane) {
+        textures[plane] = QVideoTextureHelper::createTextureFromHandle(frame, rhi, plane);
+        ok &= bool(textures[plane]);
     }
-    return description->nplanes;
+    if (ok)
+        return std::make_unique<QVideoFrameTexturesArray>(std::move(textures));
+    else
+        return {};
+}
+
+std::unique_ptr<QVideoFrameTextures> createTexturesFromMemory(const QVideoFrame &frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, QVideoFrameTextures *old)
+{
+    const TextureDescription &texDesc = descriptions[frame.surfaceFormat().pixelFormat()];
+    QVideoFrameTexturesArray::TextureArray textures;
+    auto oldArray = dynamic_cast<QVideoFrameTexturesArray *>(old);
+    if (oldArray)
+        textures = oldArray->takeTextures();
+
+    bool ok = true;
+    for (quint8 plane = 0; plane < texDesc.nplanes; ++plane) {
+        ok &= updateTextureWithMap(frame, rhi, rub, plane, textures[plane]);
+    }
+    if (ok)
+        return std::make_unique<QVideoFrameTexturesArray>(std::move(textures));
+    else
+        return {};
+}
+
+std::unique_ptr<QVideoFrameTextures> createTextures(QVideoFrame &frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, std::unique_ptr<QVideoFrameTextures> &&oldTextures)
+{
+    QAbstractVideoBuffer *vf = frame.videoBuffer();
+    if (!vf)
+        return {};
+
+    if (auto vft = vf->mapTextures(rhi))
+        return vft;
+
+    if (auto vft = createTexturesFromHandles(frame, rhi))
+        return vft;
+
+    return createTexturesFromMemory(frame, rhi, rub, oldTextures.get());
 }
 
 bool SubtitleLayout::update(const QSize &frameSize, QString text)

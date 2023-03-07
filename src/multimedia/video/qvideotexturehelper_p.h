@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2021 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2021 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QVIDEOTEXTUREHELPER_H
 #define QVIDEOTEXTUREHELPER_H
@@ -60,6 +24,7 @@ QT_BEGIN_NAMESPACE
 
 class QVideoFrame;
 class QTextLayout;
+class QVideoFrameTextures;
 
 namespace QVideoTextureHelper
 {
@@ -95,11 +60,20 @@ struct TextureDescription
 
 Q_MULTIMEDIA_EXPORT const TextureDescription *textureDescription(QVideoFrameFormat::PixelFormat format);
 
-Q_MULTIMEDIA_EXPORT QString vertexShaderFileName(QVideoFrameFormat::PixelFormat format);
-Q_MULTIMEDIA_EXPORT QString fragmentShaderFileName(QVideoFrameFormat::PixelFormat format);
-Q_MULTIMEDIA_EXPORT void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const QVideoFrame &frame, const QMatrix4x4 &transform, float opacity);
-Q_MULTIMEDIA_EXPORT int updateRhiTextures(QVideoFrame frame, QRhi *rhi,
-                                           QRhiResourceUpdateBatch *resourceUpdates, QRhiTexture **textures);
+Q_MULTIMEDIA_EXPORT QString vertexShaderFileName(const QVideoFrameFormat &format);
+Q_MULTIMEDIA_EXPORT QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhiSwapChain::Format surfaceFormat = QRhiSwapChain::SDR);
+Q_MULTIMEDIA_EXPORT void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const QVideoFrame &frame,
+                                           const QMatrix4x4 &transform, float opacity, float maxNits = 100);
+Q_MULTIMEDIA_EXPORT std::unique_ptr<QVideoFrameTextures> createTextures(QVideoFrame &frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, std::unique_ptr<QVideoFrameTextures> &&oldTextures);
+
+struct UniformData {
+    float transformMatrix[4][4];
+    float colorMatrix[4][4];
+    float opacity;
+    float width;
+    float masteringWhite;
+    float maxLum;
+};
 
 struct Q_MULTIMEDIA_EXPORT SubtitleLayout
 {
