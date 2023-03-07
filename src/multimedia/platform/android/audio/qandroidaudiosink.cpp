@@ -328,6 +328,9 @@ void QAndroidAudioSink::bufferAvailable(quint32 count, quint32 playIndex)
 
     m_nextBuffer = (m_nextBuffer + 1) % BUFFER_COUNT;
     QMetaObject::invokeMethod(this, "onBytesProcessed", Qt::QueuedConnection, Q_ARG(qint64, readSize));
+
+    if (m_audioSource->atEnd())
+        setState(QAudio::IdleState);
 }
 
 void QAndroidAudioSink::playCallback(SLPlayItf player, void *ctx, SLuint32 event)
@@ -353,6 +356,9 @@ bool QAndroidAudioSink::preparePlayer()
     else
         return true;
 
+    if (!QOpenSLESEngine::setAudioOutput(m_deviceName))
+        qWarning() << "Unable to setup Audio Output Device";
+
     SLEngineItf engine = QOpenSLESEngine::instance()->slEngine();
     if (!engine) {
         qWarning() << "No engine";
@@ -361,7 +367,7 @@ bool QAndroidAudioSink::preparePlayer()
     }
 
     SLDataLocator_BufferQueue bufferQueueLocator = { SL_DATALOCATOR_BUFFERQUEUE, BUFFER_COUNT };
-    SLDataFormat_PCM pcmFormat = QOpenSLESEngine::audioFormatToSLFormatPCM(m_format);
+    SLAndroidDataFormat_PCM_EX pcmFormat = QOpenSLESEngine::audioFormatToSLFormatPCM(m_format);
 
     SLDataSource audioSrc = { &bufferQueueLocator, &pcmFormat };
 

@@ -123,10 +123,12 @@ static QMatrix4x4 extTransformMatrix(AndroidSurfaceTexture *surfaceTexture)
 
 quint64 AndroidTextureVideoBuffer::textureHandle(int plane) const
 {
-    if (plane != 0 || !rhi || !m_output->m_nativeSize.isValid())
+    if (plane != 0 || !rhi || !m_output->m_nativeSize.isValid() || !m_output->m_readbackRhi
+         || !m_output->m_surfaceTexture)
         return 0;
 
-    m_output->ensureExternalTexture(rhi);
+    m_output->m_readbackRhi->makeThreadLocalNativeContextCurrent();
+    m_output->ensureExternalTexture(m_output->m_readbackRhi);
     m_output->m_surfaceTexture->updateTexImage();
     m_externalMatrix = extTransformMatrix(m_output->m_surfaceTexture);
     return m_output->m_externalTex->nativeTexture().object;
@@ -233,21 +235,31 @@ void QAndroidTextureVideoOutput::setVideoSize(const QSize &size)
     if (m_nativeSize == size)
         return;
 
-    stop();
-
     m_nativeSize = size;
 }
 
 void QAndroidTextureVideoOutput::start()
 {
     m_started = true;
-    renderAndReadbackFrame();
+    QMetaObject::invokeMethod(this, "onFrameAvailable", Qt::QueuedConnection);
 }
 
 void QAndroidTextureVideoOutput::stop()
 {
     m_nativeSize = QSize();
     m_started = false;
+}
+
+void QAndroidTextureVideoOutput::renderFrame()
+{
+    if (!m_started) {
+        m_renderFrame = true;
+        bool frameok = renderAndReadbackFrame();
+        if (!frameok) {
+            m_renderFrame = true;
+            renderAndReadbackFrame();
+        }
+    }
 }
 
 void QAndroidTextureVideoOutput::reset()
@@ -259,22 +271,64 @@ void QAndroidTextureVideoOutput::reset()
     clearSurfaceTexture();
 }
 
+bool QAndroidTextureVideoOutput::moveToOpenGLContextThread()
+{
+    if (!m_sink)
+        return false;
+
+    const auto rhi = m_sink->rhi();
+    if (!rhi || rhi->backend() != QRhi::OpenGLES2)
+        return false;
+
+    const auto nativeHandles = static_cast<const QRhiGles2NativeHandles *>(rhi->nativeHandles());
+    if (!nativeHandles)
+        return false;
+
+    const auto context = nativeHandles->context;
+    if (!context)
+        return false;
+
+    // check if QAndroidTextureVideoOutput is already in the OpenGL context thread
+    if (QThread::currentThread() == context->thread())
+        return false;
+
+    // move to the OpenGL context thread;
+    parent()->moveToThread(context->thread());
+    moveToThread(context->thread());
+
+    return true;
+}
+
 void QAndroidTextureVideoOutput::onFrameAvailable()
 {
-    if (!m_nativeSize.isValid() || !m_sink || !m_started)
+    if (!(m_nativeSize.isValid() && m_sink) || !(m_started || m_renderFrame))
         return;
 
+    const bool needsToBeInOpenGLThread =
+              !m_readbackRhi || !m_readbackTex || !m_readbackSrb || !m_readbackPs;
+
+    const bool movedToOpenGLThread = needsToBeInOpenGLThread && moveToOpenGLContextThread();
+
+    if (movedToOpenGLThread || QThread::currentThread() != m_thread) {
+        // the render thread may get blocked waiting for events, force refresh until get back to
+        // original thread.
+        QMetaObject::invokeMethod(this, "onFrameAvailable", Qt::QueuedConnection);
+
+        if (!needsToBeInOpenGLThread) {
+            parent()->moveToThread(m_thread);
+            moveToThread(m_thread);
+        }
+    }
+
+    m_renderFrame = false;
+
     QRhi *rhi = m_sink ? m_sink->rhi() : nullptr;
+
     auto *buffer = new AndroidTextureVideoBuffer(rhi, this, m_nativeSize);
     const QVideoFrameFormat::PixelFormat format = rhi ? QVideoFrameFormat::Format_SamplerExternalOES
                                                       : QVideoFrameFormat::Format_RGBA8888;
     QVideoFrame frame(buffer, QVideoFrameFormat(m_nativeSize, format));
     m_sink->platformVideoSink()->setVideoFrame(frame);
-
-    QMetaObject::invokeMethod(m_surfaceTexture
-                              , "frameAvailable"
-                              , Qt::QueuedConnection
-                              );
 }
 
 static const float g_quad[] = {
@@ -306,13 +360,30 @@ bool QAndroidTextureVideoOutput::renderAndReadbackFrame()
             // There is an rhi from the sink, e.g. VideoOutput.  We lack the necessary
             // insight to use that directly, so create our own a QRhi that just wraps the
             // same QOpenGLContext.
+
+            const auto constHandles =
+                    static_cast<const QRhiGles2NativeHandles *>(sinkRhi->nativeHandles());
+            if (!constHandles) {
+                qWarning("Failed to get the QRhiGles2NativeHandles to create QRhi readback.");
+                return false;
+            }
+
+            auto handles = const_cast<QRhiGles2NativeHandles *>(constHandles);
+            const auto context = handles->context;
+            if (!context) {
+                qWarning("Failed to get the QOpenGLContext to create QRhi readback.");
+                return false;
+            }
+
             sinkRhi->finish();
-            QRhiGles2NativeHandles h = *static_cast<const QRhiGles2NativeHandles *>(sinkRhi->nativeHandles());
-            m_readbackRhiFallbackSurface = QRhiGles2InitParams::newFallbackSurface(h.context->format());
+            m_readbackRhiFallbackSurface =
+                    QRhiGles2InitParams::newFallbackSurface(context->format());
             QRhiGles2InitParams initParams;
-            initParams.format = h.context->format();
+            initParams.format = context->format();
             initParams.fallbackSurface = m_readbackRhiFallbackSurface;
-            m_readbackRhi = QRhi::create(QRhi::OpenGLES2, &initParams, {}, &h);
+            context->doneCurrent();
+
+            m_readbackRhi = QRhi::create(QRhi::OpenGLES2, &initParams, {}, handles);
         } else {
             // No rhi from the sink, e.g. QVideoWidget.
             // We will fire up our own QRhi with its own QOpenGLContext.

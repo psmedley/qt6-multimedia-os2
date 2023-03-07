@@ -197,6 +197,7 @@ public:
                 else
                     qCDebug(qLcEvrD3DPresentEngine) << "Could not delete texture, OpenGL context functions missing";
             }
+
             if (!m_wgl.wglDXCloseDeviceNV(m_d3dglHandle))
                 qCDebug(qLcEvrD3DPresentEngine) << "Failed to close D3D-GL device";
 
@@ -361,8 +362,11 @@ static bool readWglNvDxInteropProc(WglNvDxInterop &f)
         return false;
     }
 
-    auto dc = ::GetDC(::GetShellWindow());
-    if (!strstr(wglGetExtensionsStringARB(dc), "WGL_NV_DX_interop")) {
+    HWND hwnd = ::GetShellWindow();
+    auto dc = ::GetDC(hwnd);
+    bool hasExtension = strstr(wglGetExtensionsStringARB(dc), "WGL_NV_DX_interop");
+    ReleaseDC(hwnd, dc);
+    if (!hasExtension) {
         qCDebug(qLcEvrD3DPresentEngine) << "WGL_NV_DX_interop missing";
         return false;
     }

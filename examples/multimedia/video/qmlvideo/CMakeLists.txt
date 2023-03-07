@@ -1,25 +1,15 @@
-# Generated from qmlvideo.pro.
-
 cmake_minimum_required(VERSION 3.16)
 project(qmlvideo LANGUAGES CXX)
 
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
-
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
 
 if(NOT DEFINED INSTALL_EXAMPLESDIR)
-  set(INSTALL_EXAMPLESDIR "examples")
+    set(INSTALL_EXAMPLESDIR "examples")
 endif()
 
 set(INSTALL_EXAMPLEDIR "${INSTALL_EXAMPLESDIR}/multimedia/video/qmlvideo")
 
-find_package(Qt6 COMPONENTS Core)
-find_package(Qt6 COMPONENTS Gui)
-find_package(Qt6 COMPONENTS Quick)
-find_package(Qt6 COMPONENTS Multimedia)
-find_package(Qt6 COMPONENTS Qml)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Multimedia Qml Quick)
 
 qt_add_executable(qmlvideo
     frequencymonitor.cpp frequencymonitor.h
@@ -29,12 +19,11 @@ qt_add_executable(qmlvideo
     main.cpp
     trace.h
 )
+
 set_target_properties(qmlvideo PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in
-    XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS
-        "${CMAKE_CURRENT_LIST_DIR}/qmlvideo.entitlements"
 )
 
 target_compile_definitions(qmlvideo PUBLIC
@@ -50,17 +39,19 @@ target_link_libraries(qmlvideo PUBLIC
     Qt::Quick
 )
 
-
 # Resources:
 set_source_files_properties("images/folder.png"
     PROPERTIES QT_RESOURCE_ALIAS "folder.png"
 )
+
 set_source_files_properties("images/leaves.jpg"
     PROPERTIES QT_RESOURCE_ALIAS "leaves.jpg"
 )
+
 set_source_files_properties("images/up.png"
     PROPERTIES QT_RESOURCE_ALIAS "up.png"
 )
+
 set(qmlvideo_resource_files
     "images/folder.png"
     "images/leaves.jpg"
@@ -113,7 +104,7 @@ set(qmlvideo_resource_files
     "qml/qmlvideo/main.qml"
 )
 
-qt6_add_resources(qmlvideo "qmlvideo"
+qt_add_resources(qmlvideo "qmlvideo"
     PREFIX
         "/"
     FILES
@@ -125,12 +116,3 @@ install(TARGETS qmlvideo
     BUNDLE DESTINATION "${INSTALL_EXAMPLEDIR}"
     LIBRARY DESTINATION "${INSTALL_EXAMPLEDIR}"
 )
-
-if(APPLE AND NOT IOS)
-    if(NOT CMAKE_GENERATOR STREQUAL "Xcode")
-        add_custom_command(TARGET qmlvideo
-        POST_BUILD
-        COMMAND codesign --sign - --entitlements ${CMAKE_CURRENT_SOURCE_DIR}/qmlvideo.entitlements ${CMAKE_CURRENT_BINARY_DIR}/qmlvideo.app
-    )
-    endif()
-endif()

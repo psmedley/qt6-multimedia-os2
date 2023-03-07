@@ -6,7 +6,7 @@
 
 qt_internal_add_module(MultimediaWidgets
     SOURCES
-        qtmultimediawidgetdefs.h
+        qtmultimediawidgetsglobal.h
         qvideowidget.cpp qvideowidget.h qvideowidget_p.h
     LIBRARIES
         Qt::MultimediaPrivate
@@ -19,6 +19,7 @@ qt_internal_add_module(MultimediaWidgets
     PRIVATE_MODULE_INTERFACE
         Qt::MultimediaPrivate
         Qt::WidgetsPrivate
+    GENERATE_CPP_EXPORTS
 )
 
 ## Scopes:

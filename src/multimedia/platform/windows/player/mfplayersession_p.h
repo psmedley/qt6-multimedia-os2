@@ -148,6 +148,7 @@ public:
 public Q_SLOTS:
     void setVolume(float volume);
     void setMuted(bool muted);
+    void updateOutputRouting();
 
 Q_SIGNALS:
     void sessionEvent(IMFMediaEvent  *sessionEvent);
@@ -156,7 +157,6 @@ private Q_SLOTS:
     void handleMediaSourceReady();
     void handleSessionEvent(IMFMediaEvent *sessionEvent);
     void handleSourceError(long hr);
-    void updateOutputRouting();
     void timeout();
 
 private:
@@ -177,6 +177,7 @@ private:
     qint64 m_lastSeekPos = 0;
     MFTIME m_lastSeekSysTime = 0;
     bool m_altTiming = false;
+    bool m_updateRoutingOnStart = false;
 
     enum Command
     {
@@ -242,6 +243,7 @@ private:
         int currentIndex = -1;
         TOPOID sourceNodeId = -1;
         TOPOID outputNodeId = -1;
+        GUID format = GUID_NULL;
     };
     TrackInfo m_trackInfo[QPlatformMediaPlayer::NTrackTypes];
 
@@ -255,9 +257,9 @@ private:
 
     void setVolumeInternal(float volume);
 
-    void createSession();
+    bool createSession();
     void setupPlaybackTopology(IMFMediaSource *source, IMFPresentationDescriptor *sourcePD);
-    bool getStreamInfo(IMFStreamDescriptor *stream, MFPlayerSession::MediaType *type, QString *name, QString *language) const;
+    bool getStreamInfo(IMFStreamDescriptor *stream, MFPlayerSession::MediaType *type, QString *name, QString *language, GUID *format) const;
     IMFTopologyNode* addSourceNode(IMFTopology* topology, IMFMediaSource* source,
         IMFPresentationDescriptor* presentationDesc, IMFStreamDescriptor *streamDesc);
     IMFTopologyNode* addOutputNode(MediaType mediaType, IMFTopology* topology, DWORD sinkID);

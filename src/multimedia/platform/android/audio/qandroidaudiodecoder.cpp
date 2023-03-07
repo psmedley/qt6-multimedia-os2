@@ -53,8 +53,7 @@
 
 QT_BEGIN_NAMESPACE
 
-static const char tempFile[] = "encoded.tmp";
-static const char tempPath[] = "/storage/emulated/0/data/local/tmp/audiodecoder/";
+static const char tempFile[] = "encoded.wav";
 constexpr int dequeueTimeout = 5000;
 Q_LOGGING_CATEGORY(adLogger, "QAndroidAudioDecoder")
 
@@ -92,6 +91,20 @@ void Decoder::stop()
 
 void Decoder::setSource(const QUrl &source)
 {
+    const QJniObject path = QJniObject::callStaticObjectMethod(
+                "org/qtproject/qt/android/multimedia/QtMultimediaUtils",
+                "getMimeType",
+                "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                QNativeInterface::QAndroidApplication::context(),
+                QJniObject::fromString(source.path()).object());
+
+    const QString mime = path.isValid() ? path.toString() : "";
+
+    if (!mime.isEmpty() && !mime.contains("audio", Qt::CaseInsensitive)) {
+        m_formatError = tr("Cannot set source, invalid mime type for the provided source.");
+        return;
+    }
+
     if (!m_extractor)
         m_extractor = AMediaExtractor_new();
 
@@ -108,9 +121,9 @@ void Decoder::setSource(const QUrl &source)
     }
 
     if (fd < 0) {
-         emit error(QAudioDecoder::ResourceError, tr("Invalid fileDescriptor for source."));
-         return;
-     }
+        emit error(QAudioDecoder::ResourceError, tr("Invalid fileDescriptor for source."));
+        return;
+    }
     const int size = QFile(source.toString()).size();
     media_status_t status = AMediaExtractor_setDataSourceFd(m_extractor, fd, 0,
                                                             size > 0 ? size : LONG_MAX);
@@ -121,7 +134,7 @@ void Decoder::setSource(const QUrl &source)
             AMediaExtractor_delete(m_extractor);
             m_extractor = nullptr;
         }
-        emit error(QAudioDecoder::ResourceError, tr("Setting source for Audio Decoder failed."));
+        m_formatError = tr("Setting source for Audio Decoder failed.");
     }
 }
 
@@ -162,6 +175,11 @@ void Decoder::createDecoder()
 
 void Decoder::doDecode()
 {
+    if (!m_formatError.isEmpty()) {
+        emit error(QAudioDecoder::FormatError, m_formatError);
+        return;
+    }
+
     if (!m_extractor) {
         emit error(QAudioDecoder::ResourceError, tr("Cannot decode, source not set."));
         return;
@@ -190,6 +208,7 @@ void Decoder::doDecode()
 
     AMediaExtractor_selectTrack(m_extractor, 0);
 
+    emit decodingChanged(true);
     m_inputEOS = false;
     while (!m_inputEOS) {
         // handle input buffer
@@ -212,6 +231,15 @@ void Decoder::doDecode()
             // handle output buffer
             AMediaCodecBufferInfo info;
             ssize_t idx = AMediaCodec_dequeueOutputBuffer(m_codec, &info, dequeueTimeout);
+
+            while (idx == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED
+                   || idx == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED) {
+                if (idx == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED)
+                    qCWarning(adLogger) << "dequeueOutputBuffer() status: outputFormat changed";
+
+                idx = AMediaCodec_dequeueOutputBuffer(m_codec, &info, dequeueTimeout);
+            }
+
             if (idx >= 0) {
                 if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM)
                     break;
@@ -222,24 +250,17 @@ void Decoder::doDecode()
                                                                             &bufferSize);
                     const QByteArray data((const char*)(bufferData + info.offset), info.size);
                     auto audioBuffer = QAudioBuffer(data, m_outputFormat, presentationTimeUs);
-                    if (presentationTimeUs > 0)
+                    if (presentationTimeUs >= 0)
                         emit positionChanged(std::move(audioBuffer), presentationTimeUs / 1000);
+
                     AMediaCodec_releaseOutputBuffer(m_codec, idx, false);
                 }
+            } else if (idx == AMEDIACODEC_INFO_TRY_AGAIN_LATER) {
+                qCWarning(adLogger) << "dequeueOutputBuffer() status: try again later";
+                break;
             } else {
-                // The outputIndex doubles as a status return if its value is < 0
-                switch (idx) {
-                case AMEDIACODEC_INFO_TRY_AGAIN_LATER:
-                    qCWarning(adLogger) << "dequeueOutputBuffer() status: try again later";
-                    break;
-                case AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED:
-                    qCWarning(adLogger) << "dequeueOutputBuffer() status: output buffers changed";
-                    break;
-                case AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED:
-                    m_format = AMediaCodec_getOutputFormat(m_codec);
-                    qCWarning(adLogger) << "dequeueOutputBuffer() status: outputFormat changed";
-                    break;
-                }
+                qCWarning(adLogger) <<
+                "AMediaCodec_dequeueOutputBuffer() status: invalid buffer idx " << idx;
             }
         } else {
             qCWarning(adLogger) <<  "dequeueInputBuffer() status: invalid buffer idx " << bufferIdx;
@@ -257,12 +278,16 @@ QAndroidAudioDecoder::QAndroidAudioDecoder(QAudioDecoder *parent)
     connect(m_decoder, &Decoder::durationChanged, this, &QAndroidAudioDecoder::durationChanged);
     connect(m_decoder, &Decoder::error, this, &QAndroidAudioDecoder::error);
     connect(m_decoder, &Decoder::finished, this, &QAndroidAudioDecoder::finished);
+    connect(m_decoder, &Decoder::decodingChanged, this, &QPlatformAudioDecoder::setIsDecoding);
+    connect(this, &QAndroidAudioDecoder::setSourceUrl, m_decoder, & Decoder::setSource);
 }
 
 QAndroidAudioDecoder::~QAndroidAudioDecoder()
 {
-    m_decoder->thread()->exit();
-    m_decoder->deleteLater();
+    m_decoder->thread()->quit();
+    m_decoder->thread()->wait();
+    delete m_threadDecoder;
+    delete m_decoder;
 }
 
 void QAndroidAudioDecoder::setSource(const QUrl &fileName)
@@ -278,7 +303,7 @@ void QAndroidAudioDecoder::setSource(const QUrl &fileName)
 
     if (m_source != fileName) {
         m_source = fileName;
-        m_decoder->setSource(m_source);
+        emit setSourceUrl(m_source);
         sourceChanged();
     }
 }
@@ -304,38 +329,45 @@ void QAndroidAudioDecoder::start()
     if (isDecoding())
         return;
 
-    setIsDecoding(true);
     m_position = -1;
 
-    m_threadDecoder = new QThread(this);
-    m_decoder->moveToThread(m_threadDecoder);
-    m_threadDecoder->start();
+    if (m_device && (!m_device->isOpen() || !m_device->isReadable())) {
+        emit error(QAudioDecoder::ResourceError,
+                   QString::fromUtf8("Unable to read from the specified device"));
+        return;
+    }
+
+    if (!m_threadDecoder) {
+        m_threadDecoder = new QThread(this);
+        m_decoder->moveToThread(m_threadDecoder);
+        m_threadDecoder->start();
+    }
+
     decode();
 }
 
 void QAndroidAudioDecoder::stop()
 {
-    if (!isDecoding())
+    if (!isDecoding() && m_position < 0 && m_duration < 0)
         return;
 
     m_decoder->stop();
-
-    if (m_threadDecoder && m_threadDecoder->isRunning())
-        m_threadDecoder->exit();
-
-    QMutexLocker locker(&m_buffersMutex);
-    m_position = -1;
     m_audioBuffer.clear();
-    locker.unlock();
+    m_position = -1;
+    m_duration = -1;
     setIsDecoding(false);
+
+    emit bufferAvailableChanged(false);
+    emit QPlatformAudioDecoder::positionChanged(m_position);
 }
 
 QAudioBuffer QAndroidAudioDecoder::read()
 {
-    QMutexLocker locker(&m_buffersMutex);
-    if (m_buffersAvailable && !m_audioBuffer.isEmpty()) {
-        --m_buffersAvailable;
-        return m_audioBuffer.takeFirst();
+    if (!m_audioBuffer.isEmpty()) {
+        QPair<QAudioBuffer, int> buffer = m_audioBuffer.takeFirst();
+        m_position = buffer.second;
+        emit QPlatformAudioDecoder::positionChanged(buffer.second);
+        return buffer.first;
     }
 
     // no buffers available
@@ -344,38 +376,29 @@ QAudioBuffer QAndroidAudioDecoder::read()
 
 bool QAndroidAudioDecoder::bufferAvailable() const
 {
-    QMutexLocker locker(&m_buffersMutex);
-    return m_buffersAvailable;
+    return m_audioBuffer.size() > 0;
 }
 
 qint64 QAndroidAudioDecoder::position() const
 {
-    QMutexLocker locker(&m_buffersMutex);
     return m_position;
 }
 
 qint64 QAndroidAudioDecoder::duration() const
 {
-    QMutexLocker locker(&m_buffersMutex);
     return m_duration;
 }
 
 void QAndroidAudioDecoder::positionChanged(QAudioBuffer audioBuffer, qint64 position)
 {
-    QMutexLocker locker(&m_buffersMutex);
-    m_audioBuffer.append(audioBuffer);
+    m_audioBuffer.append(QPair<QAudioBuffer, int>(audioBuffer, position));
     m_position = position;
-    m_buffersAvailable++;
-    locker.unlock();
     emit bufferReady();
-    emit QPlatformAudioDecoder::positionChanged(position);
 }
 
 void QAndroidAudioDecoder::durationChanged(qint64 duration)
 {
-    QMutexLocker locker(&m_buffersMutex);
     m_duration = duration;
-    locker.unlock();
     emit QPlatformAudioDecoder::durationChanged(duration);
 }
 
@@ -387,9 +410,13 @@ void QAndroidAudioDecoder::error(const QAudioDecoder::Error err, const QString &
 
 void QAndroidAudioDecoder::finished()
 {
-    stop();
+    emit bufferAvailableChanged(m_audioBuffer.size() > 0);
+
+    if (m_duration != -1)
+        emit durationChanged(m_duration);
+
     // remove temp file when decoding is finished
-    QFile(QString::fromUtf8(tempPath).append(QString::fromUtf8(tempFile))).remove();
+    QFile(QString(QDir::tempPath()).append(QString::fromUtf8(tempFile))).remove();
     emit QPlatformAudioDecoder::finished();
 }
 
@@ -415,22 +442,22 @@ void QAndroidAudioDecoder::decode()
 
 bool QAndroidAudioDecoder::createTempFile()
 {
-    QFile file = QFile(QString::fromUtf8(tempPath).append(QString::fromUtf8(tempFile)));
-    if (!QDir().mkpath(QString::fromUtf8(tempPath)) || !file.open(QIODevice::WriteOnly)) {
-        emit error(QAudioDecoder::ResourceError,
-              QString::fromUtf8("Error while creating or opening tmp file"));
-        return false;
-    }
+    QFile file = QFile(QDir::tempPath().append(QString::fromUtf8(tempFile)), this);
 
-    QDataStream out;
-    out.setDevice(&file);
-    out << m_deviceBuffer;
+    bool success = file.open(QIODevice::QIODevice::ReadWrite);
+    if (!success)
+        emit error(QAudioDecoder::ResourceError, tr("Error while opening tmp file"));
+
+    success &= (file.write(m_deviceBuffer) == m_deviceBuffer.size());
+    if (!success)
+        emit error(QAudioDecoder::ResourceError, tr("Error while writing data to tmp file"));
+
     file.close();
-
     m_deviceBuffer.clear();
-    m_decoder->setSource(file.fileName());
+    if (success)
+        m_decoder->setSource(file.fileName());
 
-    return true;
+    return success;
 }
 
 void QAndroidAudioDecoder::readDevice() {

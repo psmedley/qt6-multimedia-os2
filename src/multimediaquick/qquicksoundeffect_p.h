@@ -54,7 +54,7 @@
 #include <QSoundEffect>
 #include <QtQml/qqml.h>
 #include <QtQml/qqmlcontext.h>
-#include <private/qtmultimediaquickglobal_p.h>
+#include <qtmultimediaquickexports.h>
 
 QT_BEGIN_NAMESPACE
 

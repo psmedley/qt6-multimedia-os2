@@ -121,6 +121,7 @@ public:
     void start() override;
     void stop() override;
     void reset() override;
+    void renderFrame();
 
     void setSubtitle(const QString &subtitle);
 private Q_SLOTS:
@@ -131,6 +132,8 @@ private:
     bool renderAndReadbackFrame();
     void ensureExternalTexture(QRhi *rhi);
 
+    bool moveToOpenGLContextThread();
+
     QMutex m_mutex;
     QReadWriteLock m_subtitleLock;
 
@@ -139,6 +142,7 @@ private:
     QVideoSink *m_sink = nullptr;
     QSize m_nativeSize;
     bool m_started = false;
+    bool m_renderFrame = false;
 
     AndroidSurfaceTexture *m_surfaceTexture = nullptr;
 
@@ -163,6 +167,8 @@ private:
     QPixmap m_subtitlePixmap;
 
     GraphicsResourceDeleter *m_graphicsDeleter = nullptr;
+
+    QThread *m_thread = QThread::currentThread();
 
     friend class AndroidTextureVideoBuffer;
 };

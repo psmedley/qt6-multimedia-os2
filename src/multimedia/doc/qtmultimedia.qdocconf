@@ -1,5 +1,6 @@
 include($QT_INSTALL_DOCS/global/qt-module-defaults.qdocconf)
 include($QT_INSTALL_DOCS/config/exampleurl-qtmultimedia.qdocconf)
+include(../../../examples/multimedia/video/mediaplayer/doc/qmlmediaplayer.qdocconf)
 
 project                 = QtMultimedia
 description             = Qt Multimedia Documentation
@@ -61,7 +62,7 @@ sourcedirs += ../..
 
 excludedirs += ../../gsttools
 
-depends                 += qtcore qtdoc qtgui qtquick qtqml qtwidgets qtnetwork qmake qtcmake
+depends                 += qtcore qtdoc qtgui qtquick qtqml qtwidgets qtnetwork qmake qtcmake qtquickcontrols
 
 # Ignore \since commands for versions earlier than 6.3
 ignoresince = 6.3

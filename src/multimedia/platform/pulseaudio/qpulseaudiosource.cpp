@@ -327,6 +327,12 @@ bool QPulseAudioSource::open()
         return false;
     }
 
+//    auto *ss = pa_stream_get_sample_spec(m_stream);
+//    qDebug() << "connected stream:";
+//    qDebug() << "    channels" << ss->channels << spec.channels;
+//    qDebug() << "    format" << ss->format << spec.format;
+//    qDebug() << "    rate" << ss->rate << spec.rate;
+
     while (pa_stream_get_state(m_stream) != PA_STREAM_READY)
         pa_threaded_mainloop_wait(pulseEngine->mainloop());
 
@@ -400,16 +406,20 @@ qsizetype QPulseAudioSource::bytesReady() const
 
 qint64 QPulseAudioSource::read(char *data, qint64 len)
 {
+    Q_ASSERT(data != nullptr || len == 0);
+
     m_bytesAvailable = checkBytesReady();
 
     setError(QAudio::NoError);
-    setState(QAudio::ActiveState);
+    if (state() == QAudio::IdleState)
+        setState(QAudio::ActiveState);
 
     int readBytes = 0;
 
     if (!m_pullMode && !m_tempBuffer.isEmpty()) {
         readBytes = qMin(static_cast<int>(len), m_tempBuffer.size());
-        memcpy(data, m_tempBuffer.constData(), readBytes);
+        if (readBytes)
+            memcpy(data, m_tempBuffer.constData(), readBytes);
         m_totalTimeValue += readBytes;
 
         if (readBytes < m_tempBuffer.size()) {
@@ -495,9 +505,10 @@ qint64 QPulseAudioSource::read(char *data, qint64 len)
 
 void QPulseAudioSource::applyVolume(const void *src, void *dest, int len)
 {
+    Q_ASSERT((src && dest) || len == 0);
     if (m_volume < 1.f)
         QAudioHelperInternal::qMultiplySamples(m_volume, m_format, src, dest, len);
-    else
+    else if (len)
         memcpy(dest, src, len);
 }
 
@@ -549,8 +560,9 @@ qint64 QPulseAudioSource::processedUSecs() const
 {
     pa_usec_t usecs = 0;
     int result = pa_stream_get_time(m_stream, &usecs);
-    if (result != 0)
-        qWarning() << "no timing info from pulse";
+    Q_UNUSED(result);
+//    if (result != 0)
+//        qWarning() << "no timing info from pulse";
 
     return usecs;
 }
