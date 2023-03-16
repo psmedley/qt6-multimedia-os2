@@ -15,18 +15,15 @@
 // We mean it.
 //
 
-#include "qobject.h"
+#include <qobject.h>
+#include <qpointer.h>
 #include <qrect.h>
 #include <mfapi.h>
 #include <mfidl.h>
 
-QT_USE_NAMESPACE
-
-class EVRCustomPresenterActivate;
-
 QT_BEGIN_NAMESPACE
+class EVRCustomPresenterActivate;
 class QVideoSink;
-QT_END_NAMESPACE
 
 class MFVideoRendererControl : public QObject
 {
@@ -52,11 +49,13 @@ private Q_SLOTS:
 private:
     void clear();
 
-    QVideoSink *m_sink = nullptr;
+    QPointer<QVideoSink> m_sink;
     IMFActivate *m_currentActivate = nullptr;
     IMFSampleGrabberSinkCallback *m_callback = nullptr;
 
     EVRCustomPresenterActivate *m_presenterActivate = nullptr;
 };
+
+QT_END_NAMESPACE
 
 #endif

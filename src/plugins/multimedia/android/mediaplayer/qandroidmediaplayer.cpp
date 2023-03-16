@@ -272,7 +272,8 @@ void QAndroidMediaPlayer::setMedia(const QUrl &mediaContent,
         if (mVideoSize.isValid() && mVideoOutput)
             mVideoOutput->setVideoSize(mVideoSize);
 
-        if ((mMediaPlayer->display() == 0) && mVideoOutput)
+        if (mVideoOutput &&
+                        (mMediaPlayer->display() == 0 || mVideoOutput->shouldTextureBeUpdated()))
             mMediaPlayer->setDisplay(mVideoOutput->surfaceTexture());
         mMediaPlayer->setDataSource(QNetworkRequest(mediaContent));
         mMediaPlayer->prepareAsync();
@@ -502,7 +503,9 @@ void QAndroidMediaPlayer::onError(qint32 what, qint32 extra)
         setMediaStatus(QMediaPlayer::InvalidMedia);
         break;
     case AndroidMediaPlayer::MEDIA_ERROR_BAD_THINGS_ARE_GOING_TO_HAPPEN:
-        errorString += QLatin1String(" (Unknown error/Insufficient resources)");
+        errorString += mMediaContent.scheme() == QLatin1String("rtsp")
+            ? QLatin1String(" (Unknown error/Insufficient resources or RTSP may not be supported)")
+            : QLatin1String(" (Unknown error/Insufficient resources)");
         error = QMediaPlayer::ResourceError;
         break;
     }
@@ -983,3 +986,5 @@ void QAndroidMediaPlayer::updateTrackInfo()
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qandroidmediaplayer_p.cpp"

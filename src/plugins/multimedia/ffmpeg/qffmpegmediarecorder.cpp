@@ -19,6 +19,8 @@
 
 Q_LOGGING_CATEGORY(qLcMediaEncoder, "qt.multimedia.encoder")
 
+QT_BEGIN_NAMESPACE
+
 QFFmpegMediaRecorder::QFFmpegMediaRecorder(QMediaRecorder *parent)
   : QPlatformMediaRecorder(parent)
 {
@@ -73,8 +75,12 @@ void QFFmpegMediaRecorder::record(QMediaEncoderSettings &settings)
     connect(encoder, &QFFmpeg::Encoder::error, this, &QFFmpegMediaRecorder::handleSessionError);
 
     auto *audioInput = m_session->audioInput();
-    if (audioInput)
-        encoder->addAudioInput(static_cast<QFFmpegAudioInput *>(audioInput));
+    if (audioInput) {
+        if (audioInput->device.isNull())
+            qWarning() << "Audio input device is null; cannot encode audio";
+        else
+            encoder->addAudioInput(static_cast<QFFmpegAudioInput *>(audioInput));
+    }
 
     auto *camera = m_session->camera();
     if (camera)
@@ -155,3 +161,7 @@ void QFFmpegMediaRecorder::setCaptureSession(QPlatformMediaCaptureSession *sessi
     if (!m_session)
         return;
 }
+
+QT_END_NAMESPACE
+
+#include "moc_qffmpegmediarecorder_p.cpp"

@@ -36,6 +36,7 @@
 
 //#define DEBUG_MEDIAFOUNDATION
 
+QT_BEGIN_NAMESPACE
 
 MFPlayerSession::MFPlayerSession(MFPlayerControl *playerControl)
     : m_cRef(1)
@@ -76,7 +77,7 @@ MFPlayerSession::MFPlayerSession(MFPlayerControl *playerControl)
     m_request.rate = 1.0f;
 
     m_audioSampleGrabber = new AudioSampleGrabberCallback;
-    m_videoRendererControl = new MFVideoRendererControl;
+    m_videoRendererControl = new MFVideoRendererControl(this);
 }
 
 void MFPlayerSession::timeout()
@@ -1062,9 +1063,6 @@ void MFPlayerSession::start()
         if (SUCCEEDED(m_session->Start(&GUID_NULL, &varStart))) {
             m_state.setCommand(CmdStart);
             m_pendingState = CmdPending;
-            m_lastSeekPos = m_position;
-            m_lastSeekSysTime = MFGetSystemTime();
-            m_altTiming = false;
         } else {
             emit error(QMediaPlayer::ResourceError, tr("failed to start playback"), true);
         }
@@ -1162,15 +1160,6 @@ qint64 MFPlayerSession::position()
         MFTIME time, sysTime;
         if (FAILED(m_presentationClock->GetCorrelatedTime(0, &time, &sysTime)))
             return m_position / 10000;
-
-        if (m_state.rate > 0) {
-            if (time > 0 && qint64(time) < m_lastSeekPos)
-                m_altTiming = true;
-
-            if (m_altTiming)
-                return (m_lastSeekPos + MFGetSystemTime() - m_lastSeekSysTime) / 10000;
-        }
-
         return qint64(time / 10000);
     }
     return m_position / 10000;
@@ -1211,12 +1200,7 @@ void MFPlayerSession::setPositionInternal(qint64 position, Command requestCmd)
     PROPVARIANT varStart;
     varStart.vt = VT_I8;
     varStart.hVal.QuadPart = LONGLONG(position * 10000);
-    if (SUCCEEDED(m_session->Start(NULL, &varStart)))
-    {
-        m_lastSeekPos = position * 10000;
-        m_lastSeekSysTime = MFGetSystemTime();
-        m_altTiming = false;
-
+    if (SUCCEEDED(m_session->Start(NULL, &varStart))) {
         PropVariantClear(&varStart);
         // Store the pending state.
         m_state.setCommand(CmdStart);
@@ -1531,8 +1515,13 @@ ULONG MFPlayerSession::AddRef(void)
 ULONG MFPlayerSession::Release(void)
 {
     LONG cRef = InterlockedDecrement(&m_cRef);
-    if (cRef == 0)
-        this->deleteLater();
+    if (cRef == 0) {
+        deleteLater();
+
+        // In rare cases the session has queued events to be run between deleteLater and deleting,
+        // so we set the parent control to nullptr in order to prevent crashes in the cases.
+        m_playerControl = nullptr;
+    }
     return cRef;
 }
 
@@ -2059,3 +2048,6 @@ QMediaMetaData MFPlayerSession::trackMetaData(QPlatformMediaPlayer::TrackType ty
     return m_trackInfo[type].metaData.at(trackNumber);
 }
 
+QT_END_NAMESPACE
+
+#include "moc_mfplayersession_p.cpp"

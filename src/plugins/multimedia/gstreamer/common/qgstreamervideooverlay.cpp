@@ -184,7 +184,7 @@ void QGstreamerVideoOverlay::applyRenderRect()
 
 void QGstreamerVideoOverlay::probeCaps(GstCaps *caps)
 {
-    QSize size = QGstCaps(caps).at(0).resolution();
+    QSize size = QGstCaps(caps, QGstCaps::NeedsRef).at(0).resolution();
     if (size != m_nativeVideoSize) {
         m_nativeVideoSize = size;
         m_gstreamerVideoSink->setNativeSize(m_nativeVideoSize);
@@ -215,3 +215,5 @@ bool QGstreamerVideoOverlay::processSyncMessage(const QGstreamerMessage &message
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qgstreamervideooverlay_p.cpp"

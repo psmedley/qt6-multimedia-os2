@@ -209,8 +209,7 @@ bool QCameraFormat::operator==(const QCameraFormat &other) const
     \snippet multimedia-snippets/camera.cpp Camera selection
 
     You can also use QCameraDevice to get general information about a camera
-    device such as description, physical position on the system, or camera sensor
-    orientation.
+    device such as description and physical position on the system.
 
     \snippet multimedia-snippets/camera.cpp Camera info
 
@@ -433,3 +432,5 @@ QDebug operator<<(QDebug d, const QCameraDevice &camera)
 #endif
 
 QT_END_NAMESPACE
+
+#include "moc_qcameradevice.cpp"

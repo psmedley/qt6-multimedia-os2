@@ -47,10 +47,8 @@ void QAndroidMediaCaptureSession::setCamera(QPlatformCamera *camera)
             m_cameraControl->setCaptureSession(nullptr);
 
         m_cameraControl = control;
-        if (m_cameraControl) {
+        if (m_cameraControl)
             m_cameraControl->setCaptureSession(this);
-            m_cameraControl->setActive(true);
-        }
 
         emit cameraChanged();
 }
@@ -113,3 +111,5 @@ void QAndroidMediaCaptureSession::setVideoPreview(QVideoSink *sink)
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qandroidmediacapturesession_p.cpp"

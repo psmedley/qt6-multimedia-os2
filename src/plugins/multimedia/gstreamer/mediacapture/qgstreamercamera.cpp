@@ -16,6 +16,8 @@
 
 #include <QtCore/qdebug.h>
 
+QT_BEGIN_NAMESPACE
+
 QGstreamerCamera::QGstreamerCamera(QCamera *camera)
         : QPlatformCamera(camera)
 {
@@ -79,7 +81,7 @@ void QGstreamerCamera::setCamera(const QCameraDevice &camera)
     }
 
     QCameraFormat f = findBestCameraFormat(camera);
-    auto caps = QGstMutableCaps::fromCameraFormat(f);
+    auto caps = QGstCaps::fromCameraFormat(f);
     auto gstNewDecode = QGstElement(f.pixelFormat() == QVideoFrameFormat::Format_Jpeg ? "jpegdec" : "identity");
 
     gstCamera.unlink(gstCapsFilter);
@@ -123,7 +125,7 @@ bool QGstreamerCamera::setCameraFormat(const QCameraFormat &format)
     if (f.isNull())
         f = findBestCameraFormat(m_cameraDevice);
 
-    auto caps = QGstMutableCaps::fromCameraFormat(f);
+    auto caps = QGstCaps::fromCameraFormat(f);
 
     auto newGstDecode = QGstElement(f.pixelFormat() == QVideoFrameFormat::Format_Jpeg ? "jpegdec" : "identity");
     gstCameraBin.add(newGstDecode);
@@ -699,3 +701,7 @@ int QGstreamerCamera::getV4L2Parameter(quint32 id) const
 }
 
 #endif
+
+QT_END_NAMESPACE
+
+#include "moc_qgstreamercamera_p.cpp"

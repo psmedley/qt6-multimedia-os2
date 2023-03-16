@@ -226,7 +226,7 @@ std::unique_ptr<QRhiTexture> TextureCopy::copyExternalTexture(QSize size, const 
     cb->setShaderResources(m_srb.get());
     cb->setVertexInput(0, 1, &vbufBinding);
     cb->draw(4);
-    cb->endPass(rub);
+    cb->endPass();
     m_rhi->endOffscreenFrame();
 
     QOpenGLContext *ctx = QOpenGLContext::currentContext();
@@ -267,12 +267,15 @@ public:
 public slots:
     void onFrameAvailable()
     {
-        m_surfaceTexture->updateTexImage();
-        auto matrix = extTransformMatrix(m_surfaceTexture.get());
-        auto tex = m_textureCopy->copyExternalTexture(m_size, matrix);
-        auto *buffer = new AndroidTextureVideoBuffer(m_rhi.get(), std::move(tex), m_size);
-        QVideoFrame frame(buffer, QVideoFrameFormat(m_size, QVideoFrameFormat::Format_RGBA8888));
-        emit newFrame(frame);
+        // Check if 'm_surfaceTexture' is not reset because there can be pending frames in queue.
+        if (m_surfaceTexture) {
+            m_surfaceTexture->updateTexImage();
+            auto matrix = extTransformMatrix(m_surfaceTexture.get());
+            auto tex = m_textureCopy->copyExternalTexture(m_size, matrix);
+            auto *buffer = new AndroidTextureVideoBuffer(m_rhi.get(), std::move(tex), m_size);
+            QVideoFrame frame(buffer, QVideoFrameFormat(m_size, QVideoFrameFormat::Format_RGBA8888));
+            emit newFrame(frame);
+        }
     }
 
     void clearFrame() { emit newFrame({}); }
@@ -284,6 +287,7 @@ public slots:
         m_surfaceTexture.reset();
         m_texture.reset();
         m_textureCopy.reset();
+        m_rhi.reset();
     }
 
     AndroidSurfaceTexture *createSurfaceTexture(QRhi *rhi)
@@ -328,6 +332,12 @@ QAndroidTextureVideoOutput::QAndroidTextureVideoOutput(QVideoSink *sink, QObject
     : QAndroidVideoOutput(parent)
     , m_sink(sink)
 {
+    if (!m_sink) {
+        qDebug() << "Cannot create QAndroidTextureVideoOutput without a sink.";
+        m_surfaceThread = nullptr;
+        return;
+    }
+
     m_surfaceThread = std::make_unique<AndroidTextureThread>();
     connect(m_surfaceThread.get(), &AndroidTextureThread::newFrame,
             this, &QAndroidTextureVideoOutput::newFrame);
@@ -338,6 +348,9 @@ QAndroidTextureVideoOutput::QAndroidTextureVideoOutput(QVideoSink *sink, QObject
 
 QAndroidTextureVideoOutput::~QAndroidTextureVideoOutput()
 {
+    QMetaObject::invokeMethod(m_surfaceThread.get(),
+            &AndroidTextureThread::clearSurfaceTexture, Qt::BlockingQueuedConnection);
+    m_surfaceThread->quit();
     m_surfaceThread->wait();
 }
 
@@ -350,14 +363,28 @@ void QAndroidTextureVideoOutput::setSubtitle(const QString &subtitle)
     }
 }
 
+bool QAndroidTextureVideoOutput::shouldTextureBeUpdated() const
+{
+    return m_sink->rhi() && m_surfaceCreatedWithoutRhi;
+}
+
 AndroidSurfaceTexture *QAndroidTextureVideoOutput::surfaceTexture()
 {
     if (!m_sink)
         return nullptr;
 
     AndroidSurfaceTexture *surface = nullptr;
-    QMetaObject::invokeMethod(m_surfaceThread.get(),
-            [&](){ surface = m_surfaceThread->createSurfaceTexture(m_sink->rhi()); },
+    QMetaObject::invokeMethod(m_surfaceThread.get(), [&]() {
+                auto rhi = m_sink->rhi();
+                if (!rhi) {
+                    m_surfaceCreatedWithoutRhi = true;
+                }
+                else if (m_surfaceCreatedWithoutRhi) {
+                    m_surfaceThread->clearSurfaceTexture();
+                    m_surfaceCreatedWithoutRhi = false;
+                }
+                surface = m_surfaceThread->createSurfaceTexture(rhi);
+            },
             Qt::BlockingQueuedConnection);
     return surface;
 }
@@ -368,7 +395,9 @@ void QAndroidTextureVideoOutput::setVideoSize(const QSize &size)
         return;
 
     m_nativeSize = size;
-    QMetaObject::invokeMethod(m_surfaceThread.get(), [&](){ m_surfaceThread->setFrameSize(size); });
+    QMetaObject::invokeMethod(m_surfaceThread.get(),
+            [&](){ m_surfaceThread->setFrameSize(size); },
+            Qt::BlockingQueuedConnection);
 }
 
 void QAndroidTextureVideoOutput::stop()
@@ -393,3 +422,4 @@ void QAndroidTextureVideoOutput::newFrame(const QVideoFrame &frame)
 QT_END_NAMESPACE
 
 #include "qandroidvideooutput.moc"
+#include "moc_qandroidvideooutput_p.cpp"

@@ -15,7 +15,7 @@
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcMediaCapture, "qt.multimedia.capture")
+Q_LOGGING_CATEGORY(qLcMediaCaptureGst, "qt.multimedia.capture")
 
 
 static void linkTeeToPad(QGstElement tee, QGstPad sink)
@@ -181,7 +181,7 @@ void QGstreamerMediaCapture::linkEncoder(QGstPad audioSink, QGstPad videoSink)
         auto caps = gst_pad_get_current_caps(gstVideoTee.sink().pad());
 
         encoderVideoCapsFilter = QGstElement("capsfilter", "encoderVideoCapsFilter");
-        encoderVideoCapsFilter.set("caps", QGstMutableCaps(caps));
+        encoderVideoCapsFilter.set("caps", QGstCaps(caps, QGstCaps::HasRef));
 
         gstPipeline.add(encoderVideoCapsFilter);
 
@@ -195,7 +195,7 @@ void QGstreamerMediaCapture::linkEncoder(QGstPad audioSink, QGstPad videoSink)
         auto caps = gst_pad_get_current_caps(gstAudioTee.sink().pad());
 
         encoderAudioCapsFilter = QGstElement("capsfilter", "encoderAudioCapsFilter");
-        encoderAudioCapsFilter.set("caps", QGstMutableCaps(caps));
+        encoderAudioCapsFilter.set("caps", QGstCaps(caps, QGstCaps::HasRef));
 
         gstPipeline.add(encoderAudioCapsFilter);
 
@@ -302,3 +302,5 @@ QGstreamerVideoSink *QGstreamerMediaCapture::gstreamerVideoSink() const
 
 
 QT_END_NAMESPACE
+
+#include "moc_qgstreamermediacapture_p.cpp"

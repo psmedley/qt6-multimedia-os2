@@ -651,8 +651,9 @@ void VideoRenderer::loop()
 
     AVStream *stream = frame.codec()->stream();
     qint64 startTime = frame.pts();
-    qint64 duration = (1000000*stream->avg_frame_rate.den + (stream->avg_frame_rate.num>>1))
-                      /stream->avg_frame_rate.num;
+    qint64 duration = stream->avg_frame_rate.num  == 0 ? 0 :
+                        (1000000*stream->avg_frame_rate.den + (stream->avg_frame_rate.num>>1))
+                                / stream->avg_frame_rate.num;
 
     if (sink) {
         qint64 startTime = frame.pts();
@@ -1266,3 +1267,5 @@ void Decoder::streamAtEnd()
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qffmpegdecoder_p.cpp"
