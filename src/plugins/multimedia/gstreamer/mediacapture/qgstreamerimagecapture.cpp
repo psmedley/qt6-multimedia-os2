@@ -12,17 +12,39 @@
 
 #include <QtCore/QDebug>
 #include <QtCore/QDir>
+#include <utility>
 #include <qstandardpaths.h>
 
 #include <qloggingcategory.h>
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcImageCaptureGst, "qt.multimedia.imageCapture")
+static Q_LOGGING_CATEGORY(qLcImageCaptureGst, "qt.multimedia.imageCapture")
 
-QGstreamerImageCapture::QGstreamerImageCapture(QImageCapture *parent)
-  : QPlatformImageCapture(parent),
-    QGstreamerBufferProbe(ProbeBuffers)
+QMaybe<QPlatformImageCapture *> QGstreamerImageCapture::create(QImageCapture *parent)
+{
+    QGstElement videoconvert("videoconvert", "imageCaptureConvert");
+    if (!videoconvert)
+        return errorMessageCannotFindElement("videoconvert");
+
+    QGstElement jpegenc("jpegenc", "jpegEncoder");
+    if (!jpegenc)
+        return errorMessageCannotFindElement("jpegenc");
+
+    QGstElement jifmux("jifmux", "jpegMuxer");
+    if (!jifmux)
+        return errorMessageCannotFindElement("jifmux");
+
+    return new QGstreamerImageCapture(videoconvert, jpegenc, jifmux, parent);
+}
+
+QGstreamerImageCapture::QGstreamerImageCapture(QGstElement videoconvert, QGstElement jpegenc,
+                                               QGstElement jifmux, QImageCapture *parent)
+    : QPlatformImageCapture(parent),
+      QGstreamerBufferProbe(ProbeBuffers),
+      videoConvert(std::move(videoconvert)),
+      encoder(std::move(jpegenc)),
+      muxer(std::move(jifmux))
 {
     bin = QGstBin("imageCaptureBin");
 
@@ -34,9 +56,6 @@ QGstreamerImageCapture::QGstreamerImageCapture(QImageCapture *parent)
     queue.set("max-size-bytes", uint(0));
     queue.set("max-size-time", quint64(0));
 
-    videoConvert = QGstElement("videoconvert", "imageCaptureConvert");
-    encoder = QGstElement("jpegenc", "jpegEncoder");
-    muxer = QGstElement("jifmux", "jpegMuxer");
     sink = QGstElement("fakesink","imageCaptureSink");
     filter = QGstElement("capsfilter", "filter");
     // imageCaptureSink do not wait for a preroll buffer when going READY -> PAUSED

@@ -8,6 +8,7 @@
 
 extern "C" {
 #include <libavcodec/mediacodec.h>
+#include <libavutil/hwcontext_mediacodec.h>
 }
 
 #if !defined(Q_OS_ANDROID)
@@ -33,6 +34,23 @@ void MediaCodecTextureConverter::setupDecoderSurface(AVCodecContext *avCodecCont
 {
     AVMediaCodecContext *mediacodecContext = av_mediacodec_alloc_context();
     av_mediacodec_default_init(avCodecContext, mediacodecContext, androidSurfaceTexture->surface());
+
+    if (!avCodecContext->hw_device_ctx || !avCodecContext->hw_device_ctx->data)
+        return;
+
+    AVHWDeviceContext *deviceContext =
+            reinterpret_cast<AVHWDeviceContext *>(avCodecContext->hw_device_ctx->data);
+
+    if (!deviceContext->hwctx)
+        return;
+
+    AVMediaCodecDeviceContext *mediaDeviceContext =
+            reinterpret_cast<AVMediaCodecDeviceContext *>(deviceContext->hwctx);
+
+    if (!mediaDeviceContext)
+        return;
+
+    mediaDeviceContext->surface = androidSurfaceTexture->surface();
 }
 
 TextureSet *MediaCodecTextureConverter::getTextures(AVFrame *frame)
@@ -57,8 +75,10 @@ TextureSet *MediaCodecTextureConverter::getTextures(AVFrame *frame)
 
     // release a MediaCodec buffer and render it to the surface
     AVMediaCodecBuffer *buffer = (AVMediaCodecBuffer *)frame->data[3];
-    int result = av_mediacodec_release_buffer(buffer, 1);
-    if (result < 0) {
+
+    if (!buffer) {
+        qWarning() << "Received a frame without AVMediaCodecBuffer.";
+    } else if (av_mediacodec_release_buffer(buffer, 1) < 0) {
         qWarning() << "Failed to render buffer to surface.";
         return {};
     }

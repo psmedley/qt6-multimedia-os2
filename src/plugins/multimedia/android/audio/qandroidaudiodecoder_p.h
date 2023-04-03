@@ -54,6 +54,7 @@ private:
     AMediaFormat *m_format = nullptr;
 
     QAudioFormat m_outputFormat;
+    QString m_formatError;
     bool m_inputEOS;
 };
 

@@ -6,8 +6,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 
-VideoWidget::VideoWidget(QWidget *parent)
-    : QVideoWidget(parent)
+VideoWidget::VideoWidget(QWidget *parent) : QVideoWidget(parent)
 {
     setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
 
@@ -44,3 +43,4 @@ void VideoWidget::mousePressEvent(QMouseEvent *event)
     QVideoWidget::mousePressEvent(event);
 }
 
+#include "moc_videowidget.cpp"

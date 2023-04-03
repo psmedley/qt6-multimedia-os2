@@ -30,11 +30,11 @@ public:
     static QFFmpegMediaIntegration *instance() { return static_cast<QFFmpegMediaIntegration *>(QPlatformMediaIntegration::instance()); }
     QPlatformMediaFormatInfo *formatInfo() override;
 
-
     QMaybe<QPlatformAudioDecoder *> createAudioDecoder(QAudioDecoder *decoder) override;
     QMaybe<QPlatformMediaCaptureSession *> createCaptureSession() override;
     QMaybe<QPlatformMediaPlayer *> createPlayer(QMediaPlayer *player) override;
     QMaybe<QPlatformCamera *> createCamera(QCamera *) override;
+    QPlatformScreenCapture *createScreenCapture(QScreenCapture *) override;
     QMaybe<QPlatformMediaRecorder *> createRecorder(QMediaRecorder *) override;
     QMaybe<QPlatformImageCapture *> createImageCapture(QImageCapture *) override;
 

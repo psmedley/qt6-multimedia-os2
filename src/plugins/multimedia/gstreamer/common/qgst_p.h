@@ -278,6 +278,8 @@ public:
             gst_object_unref(m_object);
     }
 
+    explicit operator bool() const { return bool(m_object); }
+
     friend bool operator==(const QGstObject &a, const QGstObject &b)
     { return a.m_object == b.m_object; }
     friend bool operator!=(const QGstObject &a, const QGstObject &b)
@@ -418,6 +420,10 @@ public:
     QGstElement(const char *factory, const char *name = nullptr)
         : QGstElement(gst_element_factory_make(factory, name), NeedsRef)
     {
+#ifndef QT_NO_DEBUG
+        if (!m_object)
+            qWarning() << "Failed to make element" << name << "from factory" << factory;
+#endif
     }
 
     bool link(const QGstElement &next)
@@ -579,6 +585,11 @@ inline QGstCaps QGValue::toCaps() const
     if (!value || !GST_VALUE_HOLDS_CAPS(value))
         return {};
     return QGstCaps(gst_caps_copy(gst_value_get_caps(value)), QGstCaps::HasRef);
+}
+
+inline QString errorMessageCannotFindElement(std::string_view element)
+{
+    return QStringLiteral("Could not find the %1 GStreamer element").arg(element.data());
 }
 
 QT_END_NAMESPACE

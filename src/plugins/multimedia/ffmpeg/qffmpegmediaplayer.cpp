@@ -2,24 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qffmpegmediaplayer_p.h"
-#include "qffmpegdecoder_p.h"
-#include "qffmpegmediaformatinfo_p.h"
-#include "qlocale.h"
-#include "qffmpeg_p.h"
-#include "qffmpegmediametadata_p.h"
-#include "qffmpegvideobuffer_p.h"
 #include "private/qplatformaudiooutput_p.h"
 #include "qvideosink.h"
-#include "qaudiosink.h"
 #include "qaudiooutput.h"
 
-#include <qlocale.h>
-#include <qthread.h>
-#include <qatomic.h>
-#include <qwaitcondition.h>
-#include <qmutex.h>
+#include "qffmpegplaybackengine_p.h"
+#include <qiodevice.h>
+#include <qvideosink.h>
 #include <qtimer.h>
-#include <qqueue.h>
 
 #include <qloggingcategory.h>
 
@@ -30,25 +20,22 @@ using namespace QFFmpeg;
 QFFmpegMediaPlayer::QFFmpegMediaPlayer(QMediaPlayer *player)
     : QPlatformMediaPlayer(player)
 {
-    positionUpdateTimer.setInterval(100);
-    positionUpdateTimer.setTimerType(Qt::PreciseTimer);
-    connect(&positionUpdateTimer, &QTimer::timeout, this, &QFFmpegMediaPlayer::updatePosition);
+    m_positionUpdateTimer.setInterval(50);
+    m_positionUpdateTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_positionUpdateTimer, &QTimer::timeout, this, &QFFmpegMediaPlayer::updatePosition);
 }
 
-QFFmpegMediaPlayer::~QFFmpegMediaPlayer()
-{
-    delete decoder;
-}
+QFFmpegMediaPlayer::~QFFmpegMediaPlayer() = default;
 
 qint64 QFFmpegMediaPlayer::duration() const
 {
-    return decoder ? decoder->m_duration/1000 : 0;
+    return m_playbackEngine ? m_playbackEngine->duration() / 1000 : 0;
 }
 
 void QFFmpegMediaPlayer::setPosition(qint64 position)
 {
-    if (decoder) {
-        decoder->seek(position * 1000);
+    if (m_playbackEngine) {
+        m_playbackEngine->seek(position * 1000);
         updatePosition();
     }
     if (state() == QMediaPlayer::StoppedState)
@@ -57,14 +44,24 @@ void QFFmpegMediaPlayer::setPosition(qint64 position)
 
 void QFFmpegMediaPlayer::updatePosition()
 {
-    positionChanged(decoder ? decoder->clockController.currentTime() / 1000 : 0);
+    positionChanged(m_playbackEngine ? m_playbackEngine->currentPosition() / 1000 : 0);
 }
 
 void QFFmpegMediaPlayer::endOfStream()
 {
+    // start update timer and report end position anyway
+    m_positionUpdateTimer.stop();
     positionChanged(duration());
-    stateChanged(QMediaPlayer::StoppedState);
-    mediaStatusChanged(QMediaPlayer::EndOfMedia);
+
+    if (doLoop()) {
+        m_playbackEngine->seek(0);
+        positionChanged(0);
+
+        runPlayback();
+    } else {
+        stateChanged(QMediaPlayer::StoppedState);
+        mediaStatusChanged(QMediaPlayer::EndOfMedia);
+    }
 }
 
 float QFFmpegMediaPlayer::bufferProgress() const
@@ -87,8 +84,8 @@ void QFFmpegMediaPlayer::setPlaybackRate(qreal rate)
     if (m_playbackRate == rate)
         return;
     m_playbackRate = rate;
-    if (decoder)
-        decoder->setPlaybackRate(rate);
+    if (m_playbackEngine)
+        m_playbackEngine->setPlaybackRate(rate);
 }
 
 QUrl QFFmpegMediaPlayer::media() const
@@ -105,76 +102,94 @@ void QFFmpegMediaPlayer::setMedia(const QUrl &media, QIODevice *stream)
 {
     m_url = media;
     m_device = stream;
-    if (decoder)
-        delete decoder;
-    decoder = nullptr;
+    m_playbackEngine = nullptr;
 
     positionChanged(0);
 
-    if (media.isEmpty() && !stream) {
+    auto handleIncorrectMedia = [this](QMediaPlayer::MediaStatus status) {
         seekableChanged(false);
         audioAvailableChanged(false);
         videoAvailableChanged(false);
         metaDataChanged();
-        mediaStatusChanged(QMediaPlayer::NoMedia);
+        mediaStatusChanged(status);
+    };
+
+    if (media.isEmpty() && !stream) {
+        handleIncorrectMedia(QMediaPlayer::NoMedia);
         return;
     }
 
     mediaStatusChanged(QMediaPlayer::LoadingMedia);
-    decoder = new Decoder;
-    connect(decoder, &Decoder::endOfStream, this, &QFFmpegMediaPlayer::endOfStream);
-    connect(decoder, &Decoder::errorOccured, this, &QFFmpegMediaPlayer::error);
-    decoder->setMedia(media, stream);
-    decoder->setAudioSink(m_audioOutput);
-    decoder->setVideoSink(m_videoSink);
+    m_playbackEngine = std::make_unique<PlaybackEngine>();
+    connect(m_playbackEngine.get(), &PlaybackEngine::endOfStream, this,
+            &QFFmpegMediaPlayer::endOfStream);
+    connect(m_playbackEngine.get(), &PlaybackEngine::errorOccured, this,
+            &QFFmpegMediaPlayer::error);
+
+    if (!m_playbackEngine->setMedia(media, stream)) {
+        m_playbackEngine.reset();
+        handleIncorrectMedia(QMediaPlayer::InvalidMedia);
+        return;
+    }
+
+    m_playbackEngine->setAudioSink(m_audioOutput);
+    m_playbackEngine->setVideoSink(m_videoSink);
 
     durationChanged(duration());
     tracksChanged();
     metaDataChanged();
-    seekableChanged(decoder->isSeekable());
+    seekableChanged(m_playbackEngine->isSeekable());
 
-    audioAvailableChanged(!decoder->m_streamMap[QPlatformMediaPlayer::AudioStream].isEmpty());
-    videoAvailableChanged(!decoder->m_streamMap[QPlatformMediaPlayer::VideoStream].isEmpty());
-
+    audioAvailableChanged(
+            !m_playbackEngine->streamInfo(QPlatformMediaPlayer::AudioStream).isEmpty());
+    videoAvailableChanged(
+            !m_playbackEngine->streamInfo(QPlatformMediaPlayer::VideoStream).isEmpty());
 
     QMetaObject::invokeMethod(this, "delayedLoadedStatus", Qt::QueuedConnection);
 }
 
 void QFFmpegMediaPlayer::play()
 {
-    if (!decoder)
+    if (!m_playbackEngine)
         return;
 
     if (mediaStatus() == QMediaPlayer::EndOfMedia && state() == QMediaPlayer::StoppedState) {
-        decoder->seek(0);
+        m_playbackEngine->seek(0);
         positionChanged(0);
+        resetCurrentLoop();
     }
-    decoder->play();
-    positionUpdateTimer.start();
+
+    runPlayback();
+}
+
+void QFFmpegMediaPlayer::runPlayback()
+{
+    m_playbackEngine->play();
+    m_positionUpdateTimer.start();
     stateChanged(QMediaPlayer::PlayingState);
     mediaStatusChanged(QMediaPlayer::BufferedMedia);
 }
 
 void QFFmpegMediaPlayer::pause()
 {
-    if (!decoder)
+    if (!m_playbackEngine)
         return;
     if (mediaStatus() == QMediaPlayer::EndOfMedia && state() == QMediaPlayer::StoppedState) {
-        decoder->seek(0);
+        m_playbackEngine->seek(0);
         positionChanged(0);
     }
-    decoder->pause();
-    positionUpdateTimer.stop();
+    m_playbackEngine->pause();
+    m_positionUpdateTimer.stop();
     stateChanged(QMediaPlayer::PausedState);
     mediaStatusChanged(QMediaPlayer::BufferedMedia);
 }
 
 void QFFmpegMediaPlayer::stop()
 {
-    if (!decoder)
+    if (!m_playbackEngine)
         return;
-    decoder->stop();
-    positionUpdateTimer.stop();
+    m_playbackEngine->stop();
+    m_positionUpdateTimer.stop();
     positionChanged(0);
     stateChanged(QMediaPlayer::StoppedState);
     mediaStatusChanged(QMediaPlayer::LoadedMedia);
@@ -186,13 +201,13 @@ void QFFmpegMediaPlayer::setAudioOutput(QPlatformAudioOutput *output)
         return;
 
     m_audioOutput = output;
-    if (decoder)
-        decoder->setAudioSink(output);
+    if (m_playbackEngine)
+        m_playbackEngine->setAudioSink(output);
 }
 
 QMediaMetaData QFFmpegMediaPlayer::metaData() const
 {
-    return decoder ? decoder->m_metaData : QMediaMetaData{};
+    return m_playbackEngine ? m_playbackEngine->metaData() : QMediaMetaData{};
 }
 
 void QFFmpegMediaPlayer::setVideoSink(QVideoSink *sink)
@@ -201,8 +216,8 @@ void QFFmpegMediaPlayer::setVideoSink(QVideoSink *sink)
         return;
 
     m_videoSink = sink;
-    if (decoder)
-        decoder->setVideoSink(sink);
+    if (m_playbackEngine)
+        m_playbackEngine->setVideoSink(sink);
 }
 
 QVideoSink *QFFmpegMediaPlayer::videoSink() const
@@ -212,25 +227,26 @@ QVideoSink *QFFmpegMediaPlayer::videoSink() const
 
 int QFFmpegMediaPlayer::trackCount(TrackType type)
 {
-    return decoder ? decoder->m_streamMap[type].count() : 0;
+    return m_playbackEngine ? m_playbackEngine->streamInfo(type).count() : 0;
 }
 
 QMediaMetaData QFFmpegMediaPlayer::trackMetaData(TrackType type, int streamNumber)
 {
-    if (!decoder || streamNumber < 0 || streamNumber >= decoder->m_streamMap[type].count())
+    if (!m_playbackEngine || streamNumber < 0
+        || streamNumber >= m_playbackEngine->streamInfo(type).count())
         return {};
-    return decoder->m_streamMap[type].at(streamNumber).metaData;
+    return m_playbackEngine->streamInfo(type).at(streamNumber).metaData;
 }
 
 int QFFmpegMediaPlayer::activeTrack(TrackType type)
 {
-    return decoder ? decoder->m_requestedStreams[type] : -1;
+    return m_playbackEngine ? m_playbackEngine->activeTrack(type) : -1;
 }
 
 void QFFmpegMediaPlayer::setActiveTrack(TrackType type, int streamNumber)
 {
-    if (decoder)
-        decoder->setActiveTrack(type, streamNumber);
+    if (m_playbackEngine)
+        m_playbackEngine->setActiveTrack(type, streamNumber);
 }
 
 QT_END_NAMESPACE

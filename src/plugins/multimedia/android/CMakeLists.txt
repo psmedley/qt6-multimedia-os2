@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 qt_internal_add_plugin(QAndroidMediaPlugin
     OUTPUT_NAME androidmediaplugin
     PLUGIN_TYPE multimedia
@@ -44,7 +47,7 @@ set_property(TARGET QAndroidMediaPlugin APPEND PROPERTY QT_ANDROID_BUNDLED_JAR_D
     jar/Qt${QtMultimedia_VERSION_MAJOR}AndroidMultimedia.jar:org.qtproject.qt.android.multimedia.QtMultimediaUtils
 )
 set_property(TARGET QAndroidMediaPlugin APPEND PROPERTY QT_ANDROID_LIB_DEPENDENCIES
-    plugins/multimedia/libplugins_multimedia_androidmediaplugin.so
+    ${INSTALL_PLUGINSDIR}/multimedia/libplugins_multimedia_androidmediaplugin.so
     lib/libQt6MultimediaQuick.so:Qt6Quick
 )
 set_property(TARGET QAndroidMediaPlugin APPEND PROPERTY QT_ANDROID_PERMISSIONS

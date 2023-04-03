@@ -17,24 +17,43 @@
 #include <qgstutils_p.h>
 #include <qgstreamermessage_p.h>
 
+#include <utility>
+
 QT_BEGIN_NAMESPACE
 
-QGStreamerAudioSink::QGStreamerAudioSink(const QAudioDevice &device, QObject *parent)
+QMaybe<QPlatformAudioSink *> QGStreamerAudioSink::create(const QAudioDevice &device, QObject *parent)
+{
+    auto maybeAppSrc = QGstAppSrc::create();
+    if (!maybeAppSrc)
+        return maybeAppSrc.error();
+
+    QGstElement audioconvert("audioconvert", "conv");
+    if (!audioconvert)
+        return errorMessageCannotFindElement("audioconvert");
+
+    QGstElement volume("volume", "volume");
+    if (!volume)
+        return errorMessageCannotFindElement("volume");
+
+    return new QGStreamerAudioSink(device, maybeAppSrc.value(), audioconvert, volume, parent);
+}
+
+QGStreamerAudioSink::QGStreamerAudioSink(const QAudioDevice &device, QGstAppSrc *appsrc,
+                                         QGstElement audioconvert, QGstElement volume, QObject *parent)
     : QPlatformAudioSink(parent),
-    m_device(device.id()),
-    gstPipeline("pipeline")
+      m_device(device.id()),
+      gstPipeline("pipeline"),
+      gstVolume(std::move(volume)),
+      m_appSrc(appsrc)
 {
     gstPipeline.installMessageFilter(this);
 
-    m_appSrc = new QGstAppSrc;
     connect(m_appSrc, &QGstAppSrc::bytesProcessed, this, &QGStreamerAudioSink::bytesProcessedByAppSrc);
     connect(m_appSrc, &QGstAppSrc::noMoreData, this, &QGStreamerAudioSink::needData);
     gstAppSrc = m_appSrc->element();
 
-    //    gstDecodeBin = gst_element_factory_make ("decodebin", "dec");
     QGstElement queue("queue", "queue");
-    QGstElement conv("audioconvert", "conv");
-    gstVolume = QGstElement("volume", "volume");
+
     if (m_volume != 1.)
         gstVolume.set("volume", m_volume);
 
@@ -44,8 +63,8 @@ QGStreamerAudioSink::QGStreamerAudioSink(const QAudioDevice &device, QObject *pa
     const auto *audioInfo = static_cast<const QGStreamerAudioDeviceInfo *>(device.handle());
     gstOutput = gst_device_create_element(audioInfo->gstDevice, nullptr);
 
-    gstPipeline.add(gstAppSrc, queue, /*gstDecodeBin, */ conv, gstVolume, gstOutput);
-    gstAppSrc.link(queue, conv, gstVolume, gstOutput);
+    gstPipeline.add(gstAppSrc, queue, /*gstDecodeBin, */ audioconvert, gstVolume, gstOutput);
+    gstAppSrc.link(queue, audioconvert, gstVolume, gstOutput);
 }
 
 QGStreamerAudioSink::~QGStreamerAudioSink()
@@ -275,7 +294,7 @@ void QGStreamerAudioSink::resume()
         m_appSrc->resume();
         gstPipeline.setState(GST_STATE_PLAYING);
 
-        setState(QAudio::ActiveState);
+        setState(m_suspendedInState);
         setError(QAudio::NoError);
     }
 }
@@ -293,6 +312,7 @@ QAudioFormat QGStreamerAudioSink::format() const
 void QGStreamerAudioSink::suspend()
 {
     if (m_deviceState == QAudio::ActiveState || m_deviceState == QAudio::IdleState) {
+        m_suspendedInState = m_deviceState;
         setError(QAudio::NoError);
         setState(QAudio::SuspendedState);
 

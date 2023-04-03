@@ -19,6 +19,7 @@
 #include "qffmpeghwaccel_p.h"
 
 #include <private/qplatformmediarecorder_p.h>
+#include <private/qplatformscreencapture_p.h>
 #include <qaudioformat.h>
 #include <qaudiobuffer.h>
 
@@ -58,7 +59,8 @@ public:
     ~Encoder();
 
     void addAudioInput(QFFmpegAudioInput *input);
-    void addVideoSource(QPlatformCamera *source);
+    void addCamera(QPlatformCamera *source);
+    void addScreenCapture(QPlatformScreenCapture *screenCapture);
 
     void start();
     void finalize();
@@ -69,7 +71,6 @@ public:
 
 public Q_SLOTS:
     void newAudioBuffer(const QAudioBuffer &buffer);
-    void newVideoFrame(const QVideoFrame &frame);
     void newTimeStamp(qint64 time);
 
 Q_SIGNALS:
@@ -86,7 +87,8 @@ public:
     bool isRecording = false;
 
     AudioEncoder *audioEncode = nullptr;
-    VideoEncoder *videoEncode = nullptr;
+    QList<VideoEncoder *> videoEncoders;
+    QList<QMetaObject::Connection> connections;
 
     QMutex timeMutex;
     qint64 timeRecorded = 0;
@@ -133,6 +135,7 @@ class AudioEncoder : public EncoderThread
 public:
     AudioEncoder(Encoder *encoder, QFFmpegAudioInput *input, const QMediaEncoderSettings &settings);
 
+    void open();
     void addBuffer(const QAudioBuffer &buffer);
 
     QFFmpegAudioInput *audioInput() const { return input; }
@@ -153,6 +156,8 @@ private:
 
     SwrContext *resampler = nullptr;
     qint64 samplesWritten = 0;
+    const AVCodec *avCodec = nullptr;
+    QMediaEncoderSettings settings;
 };
 
 
@@ -161,7 +166,8 @@ class VideoEncoder : public EncoderThread
     mutable QMutex queueMutex;
     QQueue<QVideoFrame> videoFrameQueue;
 public:
-    VideoEncoder(Encoder *encoder, QPlatformCamera *camera, const QMediaEncoderSettings &settings);
+    VideoEncoder(Encoder *encoder, const QMediaEncoderSettings &settings,
+                 const QVideoFrameFormat &format, std::optional<AVPixelFormat> hwFormat);
     ~VideoEncoder();
 
     void addFrame(const QVideoFrame &frame);
@@ -182,8 +188,6 @@ private:
     bool shouldWait() const override;
     void loop() override;
 
-    QMediaEncoderSettings m_encoderSettings;
-    QPlatformCamera *m_camera = nullptr;
     VideoFrameEncoder *frameEncoder = nullptr;
 
     QAtomicInteger<qint64> baseTime = -1;

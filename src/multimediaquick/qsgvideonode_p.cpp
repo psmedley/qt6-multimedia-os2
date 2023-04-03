@@ -5,7 +5,6 @@
 #include <QtQuick/qsgmaterial.h>
 #include "qsgvideotexture_p.h"
 #include <QtMultimedia/private/qvideotexturehelper_p.h>
-#include <private/qabstractvideobuffer_p.h>
 #include <private/qquicktextnode_p.h>
 #include <private/qquickvideooutput_p.h>
 #include <private/qabstractvideobuffer_p.h>

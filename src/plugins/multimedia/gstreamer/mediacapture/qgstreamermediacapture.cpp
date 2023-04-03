@@ -15,9 +15,6 @@
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcMediaCaptureGst, "qt.multimedia.capture")
-
-
 static void linkTeeToPad(QGstElement tee, QGstPad sink)
 {
     if (tee.isNull() || sink.isNull())
@@ -38,11 +35,19 @@ static void unlinkTeeFromPad(QGstElement tee, QGstPad sink)
     tee.releaseRequestPad(source);
 }
 
-
-QGstreamerMediaCapture::QGstreamerMediaCapture()
-    : gstPipeline("pipeline")
+QMaybe<QPlatformMediaCaptureSession *> QGstreamerMediaCapture::create()
 {
-    gstVideoOutput = new QGstreamerVideoOutput(this);
+    auto videoOutput = QGstreamerVideoOutput::create();
+    if (!videoOutput)
+        return videoOutput.error();
+
+    return new QGstreamerMediaCapture(videoOutput.value());
+}
+
+QGstreamerMediaCapture::QGstreamerMediaCapture(QGstreamerVideoOutput *videoOutput)
+    : gstPipeline("pipeline"), gstVideoOutput(videoOutput)
+{
+    gstVideoOutput->setParent(this);
     gstVideoOutput->setIsPreview();
     gstVideoOutput->setPipeline(gstPipeline);
 
@@ -181,6 +186,7 @@ void QGstreamerMediaCapture::linkEncoder(QGstPad audioSink, QGstPad videoSink)
         auto caps = gst_pad_get_current_caps(gstVideoTee.sink().pad());
 
         encoderVideoCapsFilter = QGstElement("capsfilter", "encoderVideoCapsFilter");
+        Q_ASSERT(encoderVideoCapsFilter);
         encoderVideoCapsFilter.set("caps", QGstCaps(caps, QGstCaps::HasRef));
 
         gstPipeline.add(encoderVideoCapsFilter);
@@ -195,6 +201,7 @@ void QGstreamerMediaCapture::linkEncoder(QGstPad audioSink, QGstPad videoSink)
         auto caps = gst_pad_get_current_caps(gstAudioTee.sink().pad());
 
         encoderAudioCapsFilter = QGstElement("capsfilter", "encoderAudioCapsFilter");
+        Q_ASSERT(encoderAudioCapsFilter);
         encoderAudioCapsFilter.set("caps", QGstCaps(caps, QGstCaps::HasRef));
 
         gstPipeline.add(encoderAudioCapsFilter);

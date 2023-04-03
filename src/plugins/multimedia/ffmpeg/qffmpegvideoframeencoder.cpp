@@ -17,7 +17,7 @@ extern "C" {
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcVideoFrameEncoder, "qt.multimedia.ffmpeg.videoencoder")
+static Q_LOGGING_CATEGORY(qLcVideoFrameEncoder, "qt.multimedia.ffmpeg.videoencoder")
 
 namespace QFFmpeg {
 
@@ -25,7 +25,6 @@ VideoFrameEncoder::Data::~Data()
 {
     if (converter)
         sws_freeContext(converter);
-    avcodec_free_context(&codecContext);
 }
 
 VideoFrameEncoder::VideoFrameEncoder(const QMediaEncoderSettings &encoderSettings,
@@ -150,7 +149,7 @@ VideoFrameEncoder::VideoFrameEncoder(const QMediaEncoderSettings &encoderSetting
                     if (desc->comp[0].depth == sourceDepth)
                         s += 100;
                     else if (desc->comp[0].depth < sourceDepth)
-                        s -= 100;
+                        s -= 100 + (sourceDepth - desc->comp[0].depth);
                     if (desc->log2_chroma_h == 1)
                         s += 1;
                     if (desc->log2_chroma_w == 1)
@@ -185,7 +184,7 @@ VideoFrameEncoder::VideoFrameEncoder(const QMediaEncoderSettings &encoderSetting
 
             av_hwframe_constraints_free(&constraints);
             // need to create a frames context to convert the input data
-            d->accel->createFramesContext(d->targetSWFormat, sourceSize);
+            d->accel->createFramesContext(d->targetSWFormat, d->settings.videoResolution());
         }
     } else {
         d->targetSWFormat = d->targetFormat;
@@ -194,10 +193,19 @@ VideoFrameEncoder::VideoFrameEncoder(const QMediaEncoderSettings &encoderSetting
     if (d->sourceSWFormat != d->targetSWFormat || needToScale) {
         auto resolution = d->settings.videoResolution();
         qCDebug(qLcVideoFrameEncoder) << "camera and encoder use different formats:" << d->sourceSWFormat << d->targetSWFormat;
+
         d->converter = sws_getContext(d->sourceSize.width(), d->sourceSize.height(), d->sourceSWFormat,
                                    resolution.width(), resolution.height(), d->targetSWFormat,
                                    SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
     }
+
+    qCDebug(qLcVideoFrameEncoder) << "VideoFrameEncoder conversions initialized:"
+                                  << "sourceFormat:" << d->sourceFormat
+                                  << (d->sourceFormatIsHWFormat ? "(hw)" : "(sw)")
+                                  << "targetFormat:" << d->targetFormat
+                                  << (d->targetFormatIsHWFormat ? "(hw)" : "(sw)")
+                                  << "sourceSWFormat:" << d->sourceSWFormat
+                                  << "targetSWFormat:" << d->targetSWFormat;
 }
 
 VideoFrameEncoder::~VideoFrameEncoder()
@@ -246,14 +254,14 @@ void QFFmpeg::VideoFrameEncoder::initWithFormatContext(AVFormatContext *formatCo
     }
 
     Q_ASSERT(d->codec);
-    d->codecContext = avcodec_alloc_context3(d->codec);
+    d->codecContext.reset(avcodec_alloc_context3(d->codec));
     if (!d->codecContext) {
         qWarning() << "Could not allocate codec context";
         d = {};
         return;
     }
 
-    avcodec_parameters_to_context(d->codecContext, d->stream->codecpar);
+    avcodec_parameters_to_context(d->codecContext.get(), d->stream->codecpar);
     d->codecContext->time_base = d->stream->time_base;
     qCDebug(qLcVideoFrameEncoder) << "requesting time base" << d->codecContext->time_base.num << d->codecContext->time_base.den;
     auto [num, den] = qRealToFraction(requestedRate);
@@ -271,10 +279,10 @@ void QFFmpeg::VideoFrameEncoder::initWithFormatContext(AVFormatContext *formatCo
 bool VideoFrameEncoder::open()
 {
     AVDictionary *opts = nullptr;
-    applyVideoEncoderOptions(d->settings, d->codec->name, d->codecContext, &opts);
-    int res = avcodec_open2(d->codecContext, d->codec, &opts);
+    applyVideoEncoderOptions(d->settings, d->codec->name, d->codecContext.get(), &opts);
+    int res = avcodec_open2(d->codecContext.get(), d->codec, &opts);
     if (res < 0) {
-        avcodec_free_context(&d->codecContext);
+        d->codecContext.reset();
         qWarning() << "Couldn't open codec for writing" << err2str(res);
         return false;
     }
@@ -298,13 +306,12 @@ int VideoFrameEncoder::sendFrame(AVFrameUPtr frame)
     }
 
     if (!frame)
-        return avcodec_send_frame(d->codecContext, frame.get());
+        return avcodec_send_frame(d->codecContext.get(), frame.get());
     auto pts = frame->pts;
 
     if (d->downloadFromHW) {
         auto f = makeAVFrame();
 
-        f->format = d->sourceSWFormat;
         int err = av_hwframe_transfer_data(f.get(), frame.get(), 0);
         if (err < 0) {
             qCDebug(qLcVideoFrameEncoder) << "Error transferring frame data to surface." << err2str(err);
@@ -320,8 +327,14 @@ int VideoFrameEncoder::sendFrame(AVFrameUPtr frame)
         f->format = d->targetSWFormat;
         f->width = d->settings.videoResolution().width();
         f->height = d->settings.videoResolution().height();
+
         av_frame_get_buffer(f.get(), 0);
-        sws_scale(d->converter, frame->data, frame->linesize, 0, f->height, f->data, f->linesize);
+        const auto scaledHeight = sws_scale(d->converter, frame->data, frame->linesize, 0,
+                                            frame->height, f->data, f->linesize);
+
+        if (scaledHeight != f->height)
+            qCWarning(qLcVideoFrameEncoder) << "Scaled height" << scaledHeight << "!=" << f->height;
+
         frame = std::move(f);
     }
 
@@ -353,7 +366,7 @@ int VideoFrameEncoder::sendFrame(AVFrameUPtr frame)
 
     qCDebug(qLcVideoFrameEncoder) << "sending frame" << pts;
     frame->pts = pts;
-    return avcodec_send_frame(d->codecContext, frame.get());
+    return avcodec_send_frame(d->codecContext.get(), frame.get());
 }
 
 AVPacket *VideoFrameEncoder::retrievePacket()
@@ -361,7 +374,7 @@ AVPacket *VideoFrameEncoder::retrievePacket()
     if (!d || !d->codecContext)
         return nullptr;
     AVPacket *packet = av_packet_alloc();
-    int ret = avcodec_receive_packet(d->codecContext, packet);
+    int ret = avcodec_receive_packet(d->codecContext.get(), packet);
     if (ret < 0) {
         av_packet_free(&packet);
         if (ret != AVERROR(EOF) && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)

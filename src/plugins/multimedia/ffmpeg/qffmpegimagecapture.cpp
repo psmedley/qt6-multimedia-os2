@@ -17,11 +17,12 @@
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcImageCapture, "qt.multimedia.imageCapture")
+static Q_LOGGING_CATEGORY(qLcImageCapture, "qt.multimedia.imageCapture")
 
 QFFmpegImageCapture::QFFmpegImageCapture(QImageCapture *parent)
   : QPlatformImageCapture(parent)
 {
+    qRegisterMetaType<QVideoFrame>();
 }
 
 QFFmpegImageCapture::~QFFmpegImageCapture()

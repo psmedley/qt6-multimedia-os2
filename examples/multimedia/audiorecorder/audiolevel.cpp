@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 #include "audiolevel.h"
+
 #include <QPainter>
 
-AudioLevel::AudioLevel(QWidget *parent)
-  : QWidget(parent)
+AudioLevel::AudioLevel(QWidget *parent) : QWidget(parent)
 {
     setMinimumHeight(15);
     setMaximumHeight(50);
@@ -30,3 +30,5 @@ void AudioLevel::paintEvent(QPaintEvent *event)
     // clear the rest of the control
     painter.fillRect(widthLevel, 0, width(), height(), Qt::black);
 }
+
+#include "moc_audiolevel.cpp"

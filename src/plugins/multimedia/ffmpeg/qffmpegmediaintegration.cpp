@@ -12,6 +12,7 @@
 #include "qffmpegimagecapture_p.h"
 #include "qffmpegaudioinput_p.h"
 #include "qffmpegaudiodecoder_p.h"
+#include "qffmpegscreencapture_p.h"
 
 #ifdef Q_OS_MACOS
 #include <VideoToolbox/VideoToolbox.h>
@@ -19,13 +20,17 @@
 
 #ifdef Q_OS_DARWIN
 #include "qavfcamera_p.h"
+#include "qavfscreencapture_p.h"
 #elif defined(Q_OS_WINDOWS)
 #include "qwindowscamera_p.h"
 #include "qwindowsvideodevices_p.h"
+#include "qffmpegscreencapture_dxgi_p.h"
 #endif
 
 #ifdef Q_OS_ANDROID
 #    include "jni.h"
+#    include "qandroidvideodevices_p.h"
+#    include "qandroidcamera_p.h"
 extern "C" {
 #    include <libavcodec/jni.h>
 }
@@ -33,6 +38,14 @@ extern "C" {
 
 #if QT_CONFIG(linux_v4l)
 #include "qv4l2camera_p.h"
+#endif
+
+#if QT_CONFIG(cpp_winrt)
+#include "qffmpegscreencapture_uwp_p.h"
+#endif
+
+#if QT_CONFIG(xlib)
+#include "qx11screencapture_p.h"
 #endif
 
 QT_BEGIN_NAMESPACE
@@ -60,13 +73,18 @@ QFFmpegMediaIntegration::QFFmpegMediaIntegration()
     m_formatsInfo = new QFFmpegMediaFormatInfo();
 
 #if QT_CONFIG(linux_v4l)
-    m_videoDevices = new QV4L2CameraDevices(this);
+    m_videoDevices = std::make_unique<QV4L2CameraDevices>(this);
 #endif
 #ifdef Q_OS_DARWIN
-    m_videoDevices = new QAVFVideoDevices(this);
+    m_videoDevices = std::make_unique<QAVFVideoDevices>(this);
+#elif defined(Q_OS_ANDROID)
+    m_videoDevices = std::make_unique<QAndroidVideoDevices>(this);
 #elif defined(Q_OS_WINDOWS)
-    m_videoDevices = new QWindowsVideoDevices(this);
+    m_videoDevices = std::make_unique<QWindowsVideoDevices>(this);
 #endif
+
+    if (qgetenv("QT_FFMPEG_DEBUG").toInt())
+        av_log_set_level(AV_LOG_DEBUG);
 
 #ifndef QT_NO_DEBUG
     qDebug() << "Available HW decoding frameworks:";
@@ -105,6 +123,8 @@ QMaybe<QPlatformCamera *> QFFmpegMediaIntegration::createCamera(QCamera *camera)
 {
 #ifdef Q_OS_DARWIN
     return new QAVFCamera(camera);
+#elif defined(Q_OS_ANDROID)
+    return new QAndroidCamera(camera);
 #elif QT_CONFIG(linux_v4l)
     return new QV4L2Camera(camera);
 #elif defined(Q_OS_WINDOWS)
@@ -112,6 +132,27 @@ QMaybe<QPlatformCamera *> QFFmpegMediaIntegration::createCamera(QCamera *camera)
 #else
     Q_UNUSED(camera);
     return nullptr;//new QFFmpegCamera(camera);
+#endif
+}
+
+QPlatformScreenCapture *QFFmpegMediaIntegration::createScreenCapture(QScreenCapture *screenCapture)
+{
+#if QT_CONFIG(cpp_winrt)
+    if (QFFmpegScreenCaptureUwp::isSupported())
+        return new QFFmpegScreenCaptureUwp(screenCapture);
+#endif
+
+#if QT_CONFIG(xlib)
+    if (QX11ScreenCapture::isSupported())
+        return new QX11ScreenCapture(screenCapture);
+#endif
+
+#if defined(Q_OS_WINDOWS)
+    return new QFFmpegScreenCaptureDxgi(screenCapture);
+#elif defined(Q_OS_MACOS) // TODO: probably use it for iOS as well
+    return new QAVFScreenCapture(screenCapture);
+#else
+    return new QFFmpegScreenCapture(screenCapture);
 #endif
 }
 
@@ -150,6 +191,9 @@ Q_DECL_EXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void * /*reserved*/)
 
     // setting our javavm into ffmpeg.
     if (av_jni_set_java_vm(vm, nullptr))
+        return JNI_ERR;
+
+    if (!QAndroidCamera::registerNativeMethods())
         return JNI_ERR;
 
     return JNI_VERSION_1_6;

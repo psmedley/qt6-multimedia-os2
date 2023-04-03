@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Generated from multimedia.pro.
 
 #####################################################################
@@ -36,6 +39,7 @@ qt_internal_add_module(Multimedia
         platform/qplatformaudioinput_p.h
         platform/qplatformaudiooutput_p.h
         platform/qplatformcamera.cpp platform/qplatformcamera_p.h
+        platform/qplatformscreencapture.cpp platform/qplatformscreencapture_p.h
         platform/qplatformimagecapture.cpp platform/qplatformimagecapture_p.h
         platform/qplatformmediacapture.cpp platform/qplatformmediacapture_p.h
         platform/qplatformmediadevices.cpp platform/qplatformmediadevices_p.h
@@ -57,6 +61,7 @@ qt_internal_add_module(Multimedia
         qtmultimediaglobal.h qtmultimediaglobal_p.h
         recording/qmediacapturesession.cpp recording/qmediacapturesession.h
         recording/qmediarecorder.cpp recording/qmediarecorder.h recording/qmediarecorder_p.h
+        recording/qscreencapture.cpp recording/qscreencapture.h
         video/qabstractvideobuffer.cpp video/qabstractvideobuffer_p.h
         video/qmemoryvideobuffer.cpp video/qmemoryvideobuffer_p.h
         video/qvideoframe.cpp video/qvideoframe.h
@@ -314,3 +319,8 @@ qt_internal_add_shaders(Multimedia "shaders_gl_macos_linear"
     OUTPUTS
         "shaders/rectsampler_bgra_linear.frag.qsb"
 )
+
+if (DEFINED QT_DEFAULT_MEDIA_BACKEND)
+    target_compile_definitions(Multimedia
+        PRIVATE QT_DEFAULT_MEDIA_BACKEND="${QT_DEFAULT_MEDIA_BACKEND}")
+endif()

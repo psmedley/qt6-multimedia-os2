@@ -26,6 +26,7 @@
 #include "qaudio.h"
 #include "qaudiodevice.h"
 #include <private/qaudiosystem_p.h>
+#include <private/qmultimediautils_p.h>
 
 #include <qgst_p.h>
 #include <qgstpipeline_p.h>
@@ -42,7 +43,7 @@ class QGStreamerAudioSink
     Q_OBJECT
 
 public:
-    QGStreamerAudioSink(const QAudioDevice &device, QObject *parent);
+    static QMaybe<QPlatformAudioSink *> create(const QAudioDevice &device, QObject *parent);
     ~QGStreamerAudioSink();
 
     void start(QIODevice *device) override;
@@ -68,6 +69,9 @@ private Q_SLOTS:
     void needData();
 
 private:
+    QGStreamerAudioSink(const QAudioDevice &device, QGstAppSrc *appsrc, QGstElement audioconvert,
+                        QGstElement volume, QObject *parent);
+
     void setState(QAudio::State state);
     void setError(QAudio::Error error);
 
@@ -82,6 +86,7 @@ private:
     QAudioFormat m_format;
     QAudio::Error m_errorState = QAudio::NoError;
     QAudio::State m_deviceState = QAudio::StoppedState;
+    QAudio::State m_suspendedInState = QAudio::SuspendedState;
     bool m_pullMode = true;
     bool m_opened = false;
     QIODevice *m_audioSource = nullptr;

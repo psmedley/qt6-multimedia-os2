@@ -1,7 +1,7 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "qmockintegration_p.h"
+#include "qmockintegration.h"
 #include "qmockmediaplayer.h"
 #include "qmockaudiodecoder.h"
 #include "qmockcamera.h"
@@ -9,6 +9,7 @@
 #include "qmockvideosink.h"
 #include "qmockimagecapture.h"
 #include "qmockaudiooutput.h"
+#include "qmockscreencapture.h"
 #include <private/qcameradevice_p.h>
 #include <private/qplatformvideodevices_p.h>
 
@@ -67,7 +68,7 @@ private:
 QMockIntegration::QMockIntegration()
 {
     setIntegration(this);
-    m_videoDevices = new QMockVideoDevices(this);
+    m_videoDevices = std::make_unique<QMockVideoDevices>(this);
 }
 
 QMockIntegration::~QMockIntegration()
@@ -110,6 +111,16 @@ QMaybe<QPlatformImageCapture *> QMockIntegration::createImageCapture(QImageCaptu
 QMaybe<QPlatformMediaRecorder *> QMockIntegration::createRecorder(QMediaRecorder *recorder)
 {
     return new QMockMediaEncoder(recorder);
+}
+
+QPlatformScreenCapture *QMockIntegration::createScreenCapture(QScreenCapture *capture)
+{
+    if (m_flags & NoCaptureInterface)
+        m_lastScreenCapture = nullptr;
+    else
+        m_lastScreenCapture = new QMockScreenCapture(capture);
+
+    return m_lastScreenCapture;
 }
 
 QMaybe<QPlatformMediaCaptureSession *> QMockIntegration::createCaptureSession()

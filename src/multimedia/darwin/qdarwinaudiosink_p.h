@@ -133,6 +133,7 @@ private:
     void audioThreadStart();
     void audioThreadStop();
     void audioThreadDrain();
+    void audioDeviceStart();
     void audioDeviceStop();
     void audioDeviceIdle();
     void audioDeviceError();
@@ -169,6 +170,7 @@ private:
 
     QAudio::Error m_errorCode = QAudio::NoError;
     QAudio::State m_stateCode = QAudio::StoppedState;
+    QAudio::State m_suspendedInStateCode = QAudio::SuspendedState;
 };
 
 QT_END_NAMESPACE

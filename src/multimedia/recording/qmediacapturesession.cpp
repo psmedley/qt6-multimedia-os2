@@ -1,4 +1,4 @@
-// Copyright (C) 2016 The Qt Company Ltd.
+// Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmediacapturesession.h"
@@ -7,6 +7,7 @@
 #include "qmediarecorder.h"
 #include "qimagecapture.h"
 #include "qvideosink.h"
+#include "qscreencapture.h"
 
 #include <qpointer.h>
 
@@ -25,6 +26,7 @@ public:
     QAudioInput *audioInput = nullptr;
     QAudioOutput *audioOutput = nullptr;
     QCamera *camera = nullptr;
+    QScreenCapture *screenCapture = nullptr;
     QImageCapture *imageCapture = nullptr;
     QMediaRecorder *recorder = nullptr;
     QVideoSink *videoSink = nullptr;
@@ -82,6 +84,9 @@ public:
 
     Connect a camera and a microphone to a CaptureSession by assigning Camera
     and AudioInput objects to the relevant properties.
+
+    Capture a screen or window view by connecting a ScreenCapture object to
+    the screenCapture property.
 
     Enable a preview of the captured media by assigning a VideoOutput element to
     the videoOutput property.
@@ -152,6 +157,8 @@ QMediaCaptureSession::~QMediaCaptureSession()
 */
 
 /*!
+    \property QMediaCaptureSession::audioInput
+
     Returns the device that is being used to capture audio.
 */
 QAudioInput *QMediaCaptureSession::audioInput() const
@@ -225,6 +232,53 @@ void QMediaCaptureSession::setCamera(QCamera *camera)
         camera->setCaptureSession(this);
     }
     emit cameraChanged();
+}
+
+/*!
+    \qmlproperty ScreenCapture QtMultimedia::CaptureSession::screenCapture
+    \since 6.5
+
+    \brief The object used to capture a window or screen view.
+
+    Record a screen or window view by adding a screen capture objet
+    to the capture session using this property.
+*/
+
+/*!
+    \property QMediaCaptureSession::screenCapture
+    \since 6.5
+
+    \brief The object used to capture a window or screen view.
+
+    Record a screen or window view by adding a screen capture objet
+    to the capture session using this property.
+*/
+QScreenCapture *QMediaCaptureSession::screenCapture()
+{
+    return d_ptr ? d_ptr->screenCapture : nullptr;
+}
+
+void QMediaCaptureSession::setScreenCapture(QScreenCapture *screenCapture)
+{
+    QScreenCapture *oldScreenCapture = d_ptr->screenCapture;
+    if (oldScreenCapture == screenCapture)
+        return;
+    d_ptr->screenCapture = screenCapture;
+    if (d_ptr->captureSession)
+        d_ptr->captureSession->setScreenCapture(nullptr);
+    if (oldScreenCapture) {
+        if (oldScreenCapture->captureSession() && oldScreenCapture->captureSession() != this)
+            oldScreenCapture->captureSession()->setScreenCapture(nullptr);
+        oldScreenCapture->setCaptureSession(nullptr);
+    }
+    if (screenCapture) {
+        if (screenCapture->captureSession())
+            screenCapture->captureSession()->setScreenCapture(nullptr);
+        if (d_ptr->captureSession)
+            d_ptr->captureSession->setScreenCapture(screenCapture->platformScreenCapture());
+        screenCapture->setCaptureSession(this);
+    }
+    emit screenCaptureChanged();
 }
 /*!
     \qmlproperty ImageCapture QtMultimedia::CaptureSession::imageCapture
@@ -324,6 +378,11 @@ void QMediaCaptureSession::setRecorder(QMediaRecorder *recorder)
     The previously set preview is detached.
 
 */
+/*!
+    \property QMediaCaptureSession::videoOutput
+
+    Returns the video output for the session.
+*/
 QObject *QMediaCaptureSession::videoOutput() const
 {
     Q_D(const QMediaCaptureSession);
@@ -365,6 +424,10 @@ void QMediaCaptureSession::setVideoSink(QVideoSink *sink)
     d->videoOutput = nullptr;
     d->setVideoSink(sink);
 }
+
+/*!
+    Returns the QVideoSink for the session.
+*/
 QVideoSink *QMediaCaptureSession::videoSink() const
 {
     Q_D(const QMediaCaptureSession);
@@ -393,6 +456,11 @@ void QMediaCaptureSession::setAudioOutput(QAudioOutput *output)
 /*!
     \qmlproperty AudioOutput QtMultimedia::CaptureSession::audioOutput
     \brief The audio output device for the capture session.
+*/
+/*!
+    \property QMediaCaptureSession::audioOutput
+
+    Returns the audio output for the session.
 */
 QAudioOutput *QMediaCaptureSession::audioOutput() const
 {

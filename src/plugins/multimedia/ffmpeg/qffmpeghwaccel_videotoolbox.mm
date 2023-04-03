@@ -59,7 +59,6 @@ VideoToolBoxTextureConverter::VideoToolBoxTextureConverter(QRhi *rhi)
         return;
 
     if (rhi->backend() == QRhi::Metal) {
-        qDebug() << "    using metal backend";
         const auto *metal = static_cast<const QRhiMetalNativeHandles *>(rhi->nativeHandles());
 
         // Create a Metal Core Video texture cache from the pixel buffer.
@@ -170,7 +169,7 @@ TextureSet *VideoToolBoxTextureConverter::getTextures(AVFrame *frame)
     bool needsConversion = false;
     QVideoFrameFormat::PixelFormat pixelFormat = QFFmpegVideoBuffer::toQtPixelFormat(HWAccel::format(frame), &needsConversion);
     if (needsConversion) {
-        qDebug() << "XXXXXXXXXXXX pixel format needs conversion" << pixelFormat << HWAccel::format(frame);
+        // qDebug() << "XXXXXXXXXXXX pixel format needs conversion" << pixelFormat << HWAccel::format(frame);
         return nullptr;
     }
 

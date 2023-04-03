@@ -158,24 +158,6 @@ void AVFVideoRendererControl::updateVideoFrame(const CVTimeStamp &ts)
     m_sink->setVideoFrame(frame);
 }
 
-static NSDictionary* const AVF_OUTPUT_SETTINGS = @{
-        (NSString *)kCVPixelBufferPixelFormatTypeKey: @[
-            @(kCVPixelFormatType_32BGRA),
-            @(kCVPixelFormatType_32RGBA),
-            @(kCVPixelFormatType_422YpCbCr8),
-            @(kCVPixelFormatType_422YpCbCr8_yuvs),
-            @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
-            @(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange),
-            @(kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange),
-            @(kCVPixelFormatType_420YpCbCr10BiPlanarFullRange),
-            @(kCVPixelFormatType_OneComponent8),
-            @(q_kCVPixelFormatType_OneComponent16),
-            @(kCVPixelFormatType_420YpCbCr8Planar),
-            @(kCVPixelFormatType_420YpCbCr8PlanarFullRange)
-        ],
-        (NSString *)kCVPixelBufferMetalCompatibilityKey: @true
-};
-
 CVPixelBufferRef AVFVideoRendererControl::copyPixelBufferFromLayer(size_t& width, size_t& height)
 {
     AVPlayerLayer *layer = playerLayer();
@@ -191,7 +173,7 @@ CVPixelBufferRef AVFVideoRendererControl::copyPixelBufferFromLayer(size_t& width
 
     if (!m_videoOutput) {
         if (!m_outputSettings)
-            m_outputSettings = AVF_OUTPUT_SETTINGS;
+            setOutputSettings();
         m_videoOutput = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:m_outputSettings];
         [m_videoOutput setDelegate:nil queue:nil];
     }

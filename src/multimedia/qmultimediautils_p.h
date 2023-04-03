@@ -30,10 +30,12 @@ public:
     QMaybe(const Value &v) : m_value(v) { }
     QMaybe(Value &&v) : m_value(std::move(v)) { }
     QMaybe(QString error) : m_error(std::move(error)) { }
+
     constexpr explicit operator bool() const { return bool(m_value); }
     constexpr Value &value() { return *m_value; }
     constexpr const Value &value() const { return *m_value; }
     constexpr const QString &error() const { return m_error; }
+
 private:
     std::optional<Value> m_value;
     const QString m_error;
@@ -45,14 +47,17 @@ class QMaybe<Value *>
 public:
     QMaybe(Value *v) : m_value(v) { }
     QMaybe(QString error) : m_error(std::move(error)) { }
+
     constexpr explicit operator bool() const { return bool(m_value); }
     constexpr Value *value() { return m_value; }
     constexpr const Value *value() const { return m_value; }
     constexpr const QString &error() const { return m_error; }
+
 private:
     Value *m_value = nullptr;
     const QString m_error;
 };
+
 
 struct Fraction {
     int numerator;

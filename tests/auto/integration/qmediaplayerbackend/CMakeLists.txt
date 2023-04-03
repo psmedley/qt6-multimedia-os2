@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Generated from qmediaplayerbackend.pro.
 
 #####################################################################
@@ -14,9 +17,14 @@ qt_internal_add_test(tst_qmediaplayerbackend
     SOURCES
         ../shared/mediafileselector.h
         tst_qmediaplayerbackend.cpp
-    PUBLIC_LIBRARIES
+    LIBRARIES
         Qt::Gui
         Qt::MultimediaPrivate
+        Qt::MultimediaPrivate
+        Qt::MultimediaQuickPrivate
+        Qt::Qml
+        Qt::Quick
+        Qt::QuickPrivate
     TESTDATA ${testdata_resource_files}
 )
 
@@ -25,6 +33,7 @@ qt_internal_add_resource(tst_qmediaplayerbackend "testdata"
         "/"
     FILES
         ${testdata_resource_files}
+        "LazyLoad.qml"
 )
 
 ## Scopes:

@@ -37,7 +37,7 @@ public:
     decltype(&::MFCreateSample) mfCreateSample = nullptr;
 
 private:
-    QWindowsMediaFoundation() : m_mfplat(QStringLiteral("Mfplat")) {}
+    QWindowsMediaFoundation() : m_mfplat(QStringLiteral("Mfplat.dll")) {}
 
     QSystemLibrary m_mfplat;
 };

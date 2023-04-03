@@ -5,6 +5,7 @@
 
 #include "private/qplatformaudioinput_p.h"
 #include "private/qplatformaudiooutput_p.h"
+#include "private/qplatformscreencapture_p.h"
 #include "qffmpegimagecapture_p.h"
 #include "qffmpegmediarecorder_p.h"
 #include "private/qplatformcamera_p.h"
@@ -13,10 +14,6 @@
 #include <qloggingcategory.h>
 
 QT_BEGIN_NAMESPACE
-
-Q_LOGGING_CATEGORY(qLcMediaCapture, "qt.multimedia.capture")
-
-
 
 QFFmpegMediaCaptureSession::QFFmpegMediaCaptureSession()
 {
@@ -43,11 +40,31 @@ void QFFmpegMediaCaptureSession::setCamera(QPlatformCamera *camera)
     m_camera = camera;
 
     if (m_camera) {
-        connect(m_camera, &QPlatformCamera::newVideoFrame, this, &QFFmpegMediaCaptureSession::newVideoFrame);
+        connect(m_camera, &QPlatformCamera::newVideoFrame, this, &QFFmpegMediaCaptureSession::newCameraVideoFrame);
         m_camera->setCaptureSession(this);
     }
 
     emit cameraChanged();
+}
+
+QPlatformScreenCapture *QFFmpegMediaCaptureSession::screenCapture()
+{
+    return m_screenCapture;
+}
+
+void QFFmpegMediaCaptureSession::setScreenCapture(QPlatformScreenCapture *screenCapture)
+{
+    if (m_screenCapture == screenCapture)
+        return;
+    if (m_screenCapture)
+        m_screenCapture->disconnect(this);
+
+    m_screenCapture = screenCapture;
+
+    if (m_screenCapture)
+        connect(m_screenCapture, &QPlatformScreenCapture::newVideoFrame, this, &QFFmpegMediaCaptureSession::newScreenCaptureVideoFrame);
+
+    emit screenCaptureChanged();
 }
 
 QPlatformImageCapture *QFFmpegMediaCaptureSession::imageCapture()
@@ -115,9 +132,15 @@ void QFFmpegMediaCaptureSession::setAudioOutput(QPlatformAudioOutput *output)
     m_audioOutput = output;
 }
 
-void QFFmpegMediaCaptureSession::newVideoFrame(const QVideoFrame &frame)
+void QFFmpegMediaCaptureSession::newCameraVideoFrame(const QVideoFrame &frame)
 {
     if (m_videoSink)
+        m_videoSink->setVideoFrame(frame);
+}
+
+void QFFmpegMediaCaptureSession::newScreenCaptureVideoFrame(const QVideoFrame &frame)
+{
+    if (m_videoSink && !(m_camera && m_camera->isActive()))
         m_videoSink->setVideoFrame(frame);
 }
 

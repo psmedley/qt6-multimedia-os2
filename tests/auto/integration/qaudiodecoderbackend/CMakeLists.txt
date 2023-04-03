@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Generated from qaudiodecoderbackend.pro.
 
 #####################################################################
@@ -16,7 +19,7 @@ qt_internal_add_test(tst_qaudiodecoderbackend
         tst_qaudiodecoderbackend.cpp
     INCLUDE_DIRECTORIES
         ../../../../src/multimedia/audio
-    PUBLIC_LIBRARIES
+    LIBRARIES
         Qt::Gui
         Qt::Multimedia
         Qt::MultimediaPrivate

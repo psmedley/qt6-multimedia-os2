@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Generated from qdeclarativevideooutput.pro.
 
 #####################################################################
@@ -9,7 +12,7 @@ qt_internal_add_test(tst_qquickvideooutput
         tst_qquickvideooutput.cpp
     INCLUDE_DIRECTORIES
         ../../../../src/imports/multimedia
-    PUBLIC_LIBRARIES
+    LIBRARIES
         Qt::Gui
         Qt::MultimediaPrivate
         Qt::MultimediaQuickPrivate

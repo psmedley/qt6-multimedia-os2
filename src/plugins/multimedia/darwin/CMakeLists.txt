@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 
 qt_internal_find_apple_system_framework(FWCoreMedia CoreMedia) # special case
 qt_internal_find_apple_system_framework(FWCoreAudio CoreAudio) # special case

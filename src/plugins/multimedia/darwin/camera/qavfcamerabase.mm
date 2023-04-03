@@ -92,22 +92,6 @@ bool qt_convert_exposure_mode(AVCaptureDevice *captureDevice, QCamera::ExposureM
 
 #endif // defined(Q_OS_IOS)
 
-bool isFlashAvailable(AVCaptureDevice* captureDevice) {
-    if (@available(macOS 10.15, *)) {
-        return [captureDevice isFlashAvailable];
-    }
-
-    return true;
-}
-
-bool isTorchAvailable(AVCaptureDevice* captureDevice) {
-    if (@available(macOS 10.15, *)) {
-        return [captureDevice isTorchAvailable];
-    }
-
-    return true;
-}
-
 } // Unnamed namespace.
 
 
@@ -649,7 +633,7 @@ bool QAVFCameraBase::isFlashReady() const
     // AVCaptureDevice's docs:
     // "The flash may become unavailable if, for example,
     //  the device overheats and needs to cool off."
-    return isFlashAvailable(captureDevice);
+    return [captureDevice isFlashAvailable];
 }
 
 void QAVFCameraBase::setTorchMode(QCamera::TorchMode mode)
@@ -756,7 +740,7 @@ void QAVFCameraBase::applyFlashSettings()
         if (mode == QCamera::FlashOff) {
             setAvFlashModeSafe(AVCaptureFlashModeOff);
         } else {
-            if (isFlashAvailable(captureDevice)) {
+            if ([captureDevice isFlashAvailable]) {
                 if (mode == QCamera::FlashOn)
                     setAvFlashModeSafe(AVCaptureFlashModeOn);
                 else if (mode == QCamera::FlashAuto)
@@ -780,7 +764,7 @@ void QAVFCameraBase::applyFlashSettings()
         if (mode == QCamera::TorchOff) {
             setAvTorchModeSafe(AVCaptureTorchModeOff);
         } else {
-            if (isTorchAvailable(captureDevice)) {
+            if ([captureDevice isTorchAvailable]) {
                 if (mode == QCamera::TorchOn)
                     setAvTorchModeSafe(AVCaptureTorchModeOn);
                 else if (mode == QCamera::TorchAuto)

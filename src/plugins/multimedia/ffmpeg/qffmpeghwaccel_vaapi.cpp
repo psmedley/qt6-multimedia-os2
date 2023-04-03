@@ -58,7 +58,11 @@ extern "C" {
 
 #include <unistd.h>
 
-#include <qdebug.h>
+#include <qloggingcategory.h>
+
+QT_BEGIN_NAMESPACE
+
+static Q_LOGGING_CATEGORY(qLHWAccelVAAPI, "qt.multimedia.ffmpeg.hwaccelvaapi");
 
 namespace QFFmpeg {
 
@@ -74,7 +78,7 @@ static const quint32 *fourccFromPixelFormat(const QVideoFrameFormat::PixelFormat
     const quint32 rg16_fourcc = DRM_FORMAT_RG1616;
 #endif
 
-//    qDebug() << "Getting DRM fourcc for pixel format" << format;
+//    qCDebug(qLHWAccelVAAPI) << "Getting DRM fourcc for pixel format" << format;
 
     switch (format) {
     case QVideoFrameFormat::Format_Invalid:
@@ -165,7 +169,7 @@ public:
 VAAPITextureConverter::VAAPITextureConverter(QRhi *rhi)
     : TextureConverterBackend(nullptr)
 {
-    qDebug() << ">>>> Creating VAAPI HW accelerator";
+    qCDebug(qLHWAccelVAAPI) << ">>>> Creating VAAPI HW accelerator";
 
     if (!rhi || rhi->backend() != QRhi::OpenGLES2) {
         qWarning() << "VAAPITextureConverter: No rhi or non openGL based RHI";
@@ -176,21 +180,21 @@ VAAPITextureConverter::VAAPITextureConverter(QRhi *rhi)
     auto *nativeHandles = static_cast<const QRhiGles2NativeHandles *>(rhi->nativeHandles());
     glContext = nativeHandles->context;
     if (!glContext) {
-        qDebug() << "    no GL context, disabling";
+        qCDebug(qLHWAccelVAAPI) << "    no GL context, disabling";
         return;
     }
     const QString platform = QGuiApplication::platformName();
     QPlatformNativeInterface *pni = QGuiApplication::platformNativeInterface();
     eglDisplay = pni->nativeResourceForIntegration("egldisplay");
-    qDebug() << "     platform is" << platform << eglDisplay;
+    qCDebug(qLHWAccelVAAPI) << "     platform is" << platform << eglDisplay;
 
     if (!eglDisplay) {
-        qDebug() << "    no egl display, disabling";
+        qCDebug(qLHWAccelVAAPI) << "    no egl display, disabling";
         return;
     }
     eglImageTargetTexture2D = eglGetProcAddress("glEGLImageTargetTexture2DOES");
     if (!eglDisplay) {
-        qDebug() << "    no eglImageTargetTexture2D, disabling";
+        qCDebug(qLHWAccelVAAPI) << "    no eglImageTargetTexture2D, disabling";
         return;
     }
 
@@ -205,9 +209,9 @@ VAAPITextureConverter::~VAAPITextureConverter()
 //#define VA_EXPORT_USE_LAYERS
 TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
 {
-//        qDebug() << "VAAPIAccel::getTextures";
+//        qCDebug(qLHWAccelVAAPI) << "VAAPIAccel::getTextures";
     if (frame->format != AV_PIX_FMT_VAAPI || !eglDisplay) {
-        qDebug() << "format/egl error" << frame->format << eglDisplay;
+        qCDebug(qLHWAccelVAAPI) << "format/egl error" << frame->format << eglDisplay;
         return nullptr;
     }
 
@@ -222,7 +226,7 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
     auto *vaCtx = (AVVAAPIDeviceContext *)ctx->hwctx;
     auto vaDisplay = vaCtx->display;
     if (!vaDisplay) {
-        qDebug() << "    no VADisplay, disabling";
+        qCDebug(qLHWAccelVAAPI) << "    no VADisplay, disabling";
         return nullptr;
     }
 
@@ -245,7 +249,7 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
     // ### Check that prime.fourcc is what we expect
     vaSyncSurface(vaDisplay, vaSurface);
 
-//        qDebug() << "VAAPIAccel: vaSufraceDesc: width/height" << prime.width << prime.height << "num objects"
+//        qCDebug(qLHWAccelVAAPI) << "VAAPIAccel: vaSufraceDesc: width/height" << prime.width << prime.height << "num objects"
 //                 << prime.num_objects << "num layers" << prime.num_layers;
 
     QOpenGLFunctions functions(glContext);
@@ -267,7 +271,7 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
     }
     Q_ASSERT(nPlanes == desc->nplanes);
     nPlanes = desc->nplanes;
-//        qDebug() << "VAAPIAccel: nPlanes" << nPlanes;
+//        qCDebug(qLHWAccelVAAPI) << "VAAPIAccel: nPlanes" << nPlanes;
 
     rhi->makeThreadLocalNativeContextCurrent();
 
@@ -327,7 +331,7 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
 
     for (int i = 0; i < 4; ++i)
         textureSet->textures[i] = glTextures[i];
-//        qDebug() << "VAAPIAccel: got textures" << textures[0] << textures[1] << textures[2] << textures[3];
+//        qCDebug(qLHWAccelVAAPI) << "VAAPIAccel: got textures" << textures[0] << textures[1] << textures[2] << textures[3];
 
     return textureSet;
 }

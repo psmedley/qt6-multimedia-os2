@@ -19,11 +19,14 @@
 #include <qmediarecorder.h>
 #include <qstring.h>
 
+#include <memory>
+
 QT_BEGIN_NAMESPACE
 
 class QMediaPlayer;
 class QAudioDecoder;
 class QCamera;
+class QScreenCapture;
 class QMediaRecorder;
 class QImageCapture;
 class QMediaDevices;
@@ -32,6 +35,7 @@ class QPlatformMediaCaptureSession;
 class QPlatformMediaPlayer;
 class QPlatformAudioDecoder;
 class QPlatformCamera;
+class QPlatformScreenCapture;
 class QPlatformMediaRecorder;
 class QPlatformImageCapture;
 class QPlatformMediaFormatInfo;
@@ -53,11 +57,13 @@ public:
     // API to be able to test with a mock backend
     static void setIntegration(QPlatformMediaIntegration *);
 
+    QPlatformMediaIntegration();
     virtual ~QPlatformMediaIntegration();
     virtual QPlatformMediaFormatInfo *formatInfo() = 0;
 
     virtual QList<QCameraDevice> videoInputs();
     virtual QMaybe<QPlatformCamera *> createCamera(QCamera *) { return notAvailable; }
+    virtual QPlatformScreenCapture *createScreenCapture(QScreenCapture *) { return nullptr; }
 
     virtual QMaybe<QPlatformAudioDecoder *> createAudioDecoder(QAudioDecoder *) { return notAvailable; }
     virtual QMaybe<QPlatformMediaCaptureSession *> createCaptureSession() { return notAvailable; }
@@ -71,7 +77,7 @@ public:
     virtual QMaybe<QPlatformVideoSink *> createVideoSink(QVideoSink *) { return notAvailable; }
 
 protected:
-    QPlatformVideoDevices *m_videoDevices = nullptr;
+    std::unique_ptr<QPlatformVideoDevices> m_videoDevices;
 };
 
 QT_END_NAMESPACE

@@ -35,6 +35,9 @@ public:
     QPlatformCamera *camera() override;
     void setCamera(QPlatformCamera *camera) override;
 
+    QPlatformScreenCapture *screenCapture() override;
+    void setScreenCapture(QPlatformScreenCapture *) override;
+
     QPlatformImageCapture *imageCapture() override;
     void setImageCapture(QPlatformImageCapture *imageCapture) override;
 
@@ -48,10 +51,12 @@ public:
     void setAudioOutput(QPlatformAudioOutput *output) override;
 
 public Q_SLOTS:
-    void newVideoFrame(const QVideoFrame &frame);
+    void newCameraVideoFrame(const QVideoFrame &frame);
+    void newScreenCaptureVideoFrame(const QVideoFrame &frame);
 
 private:
     QPlatformCamera *m_camera = nullptr;
+    QPlatformScreenCapture *m_screenCapture = nullptr;
     QPlatformAudioInput *m_audioInput = nullptr;
     QFFmpegImageCapture *m_imageCapture = nullptr;
     QFFmpegMediaRecorder *m_mediaRecorder = nullptr;

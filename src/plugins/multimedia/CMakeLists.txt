@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 if (QT_FEATURE_ffmpeg)
     add_subdirectory(ffmpeg)
 endif ()
@@ -6,6 +9,9 @@ if (QT_FEATURE_gstreamer)
 endif ()
 if (ANDROID)
     add_subdirectory(android)
+endif ()
+if (WASM)
+    add_subdirectory(wasm)
 endif ()
 if (APPLE AND NOT WATCHOS)
     add_subdirectory(darwin)

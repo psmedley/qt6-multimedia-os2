@@ -18,11 +18,14 @@
 #include "qffmpegvideobuffer_p.h"
 
 #include <private/qrhi_p.h>
-#include <qdebug.h>
+#include <qloggingcategory.h>
+
 
 /* Infrastructure for HW acceleration goes into this file. */
 
 QT_BEGIN_NAMESPACE
+
+static Q_LOGGING_CATEGORY(qLHWAccel, "qt.multimedia.ffmpeg.hwaccel");
 
 namespace QFFmpeg {
 
@@ -43,18 +46,18 @@ static AVBufferRef *loadHWContext(const AVHWDeviceType type)
 {
     AVBufferRef *hwContext = nullptr;
     int ret = av_hwdevice_ctx_create(&hwContext, type, nullptr, nullptr, 0);
-    qDebug() << "    Checking HW context:" << av_hwdevice_get_type_name(type);
+    qCDebug(qLHWAccel) << "    Checking HW context:" << av_hwdevice_get_type_name(type);
     if (ret == 0) {
-        qDebug() << "    Using above hw context.";
+        qCDebug(qLHWAccel) << "    Using above hw context.";
         return hwContext;
     }
-    qDebug() << "    Could not create hw context:" << ret << strerror(-ret);
+    qCDebug(qLHWAccel) << "    Could not create hw context:" << ret << strerror(-ret);
     return nullptr;
 }
 
 static AVBufferRef *hardwareContextForCodec(const AVCodec *codec)
 {
-    qDebug() << "Checking HW acceleration for decoder" << codec->name;
+    qCDebug(qLHWAccel) << "Checking HW acceleration for decoder" << codec->name;
 
     // First try our preferred accelerators. Those are the ones where we can
     // set up a zero copy pipeline
@@ -83,7 +86,7 @@ static AVBufferRef *hardwareContextForCodec(const AVCodec *codec)
         if (hwContext)
             return hwContext;
     }
-    qDebug() << "    No HW accelerators found, using SW decoding.";
+    qCDebug(qLHWAccel) << "    No HW accelerators found, using SW decoding.";
     return nullptr;
 
 }
@@ -132,13 +135,7 @@ TextureConverter::Data::~Data()
     delete backend;
 }
 
-HWAccel::~HWAccel()
-{
-    if (m_hwDeviceContext)
-        av_buffer_unref(&m_hwDeviceContext);
-    if (m_hwFramesContext)
-        av_buffer_unref(&m_hwFramesContext);
-}
+HWAccel::~HWAccel() = default;
 
 std::unique_ptr<HWAccel> HWAccel::create(const AVCodec *codec)
 {
@@ -277,7 +274,7 @@ const AVCodec *HWAccel::hardwareEncoderForCodecId(AVCodecID id) const
     if (!codec)
         return nullptr;
     const AVCodec *c = avcodec_find_encoder_by_name(codec);
-    qDebug() << "searching for HW codec" << codec << "got" << c;
+    qCDebug(qLHWAccel) << "searching for HW codec" << codec << "got" << c;
     return c;
 }
 
@@ -306,18 +303,18 @@ void HWAccel::createFramesContext(AVPixelFormat swFormat, const QSize &size)
     if (!m_hwDeviceContext)
         return;
 
-    m_hwFramesContext = av_hwframe_ctx_alloc(m_hwDeviceContext);
+    m_hwFramesContext.reset(av_hwframe_ctx_alloc(m_hwDeviceContext.get()));
     auto *c = (AVHWFramesContext *)m_hwFramesContext->data;
     c->format = hwFormat();
     c->sw_format = swFormat;
     c->width = size.width();
     c->height = size.height();
-    qDebug() << "init frames context";
-    int err = av_hwframe_ctx_init(m_hwFramesContext);
+    qCDebug(qLHWAccel) << "init frames context";
+    int err = av_hwframe_ctx_init(m_hwFramesContext.get());
     if (err < 0)
         qWarning() << "failed to init HW frame context" << err << err2str(err);
     else
-        qDebug() << "Initialized frames context" << size << c->format << c->sw_format;
+        qCDebug(qLHWAccel) << "Initialized frames context" << size << c->format << c->sw_format;
 }
 
 AVHWFramesContext *HWAccel::hwFramesContext() const

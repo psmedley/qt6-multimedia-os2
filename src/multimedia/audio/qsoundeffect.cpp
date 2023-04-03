@@ -9,7 +9,7 @@
 #include "qmediadevices.h"
 #include <QtCore/qloggingcategory.h>
 
-Q_LOGGING_CATEGORY(qLcSoundEffect, "qt.multimedia.soundeffect")
+static Q_LOGGING_CATEGORY(qLcSoundEffect, "qt.multimedia.soundeffect")
 
 QT_BEGIN_NAMESPACE
 
@@ -112,7 +112,7 @@ void QSoundEffectPrivate::stateChanged(QAudio::State state)
 {
     qCDebug(qLcSoundEffect) << this << "stateChanged " << state;
     if ((state == QAudio::IdleState && m_runningCount == 0) || state == QAudio::StoppedState)
-        emit q_ptr->stop();
+        q_ptr->stop();
 }
 
 qint64 QSoundEffectPrivate::readData(char *data, qint64 len)

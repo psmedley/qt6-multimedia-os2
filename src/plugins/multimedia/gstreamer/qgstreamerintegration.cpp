@@ -40,7 +40,7 @@ public:
 QGstreamerIntegration::QGstreamerIntegration()
 {
     gst_init(nullptr, nullptr);
-    m_videoDevices = new QGstreamerVideoDevices(this);
+    m_videoDevices = std::make_unique<QGstreamerVideoDevices>(this);
     m_formatsInfo = new QGstreamerFormatInfo();
 }
 
@@ -61,22 +61,22 @@ const QGstreamerFormatInfo *QGstreamerIntegration::gstFormatsInfo() const
 
 QMaybe<QPlatformAudioDecoder *> QGstreamerIntegration::createAudioDecoder(QAudioDecoder *decoder)
 {
-    return new QGstreamerAudioDecoder(decoder);
+    return QGstreamerAudioDecoder::create(decoder);
 }
 
 QMaybe<QPlatformMediaCaptureSession *> QGstreamerIntegration::createCaptureSession()
 {
-    return new QGstreamerMediaCapture();
+    return QGstreamerMediaCapture::create();
 }
 
 QMaybe<QPlatformMediaPlayer *> QGstreamerIntegration::createPlayer(QMediaPlayer *player)
 {
-    return new QGstreamerMediaPlayer(player);
+    return QGstreamerMediaPlayer::create(player);
 }
 
 QMaybe<QPlatformCamera *> QGstreamerIntegration::createCamera(QCamera *camera)
 {
-    return new QGstreamerCamera(camera);
+    return QGstreamerCamera::create(camera);
 }
 
 QMaybe<QPlatformMediaRecorder *> QGstreamerIntegration::createRecorder(QMediaRecorder *recorder)
@@ -86,7 +86,7 @@ QMaybe<QPlatformMediaRecorder *> QGstreamerIntegration::createRecorder(QMediaRec
 
 QMaybe<QPlatformImageCapture *> QGstreamerIntegration::createImageCapture(QImageCapture *imageCapture)
 {
-    return new QGstreamerImageCapture(imageCapture);
+    return QGstreamerImageCapture::create(imageCapture);
 }
 
 QMaybe<QPlatformVideoSink *> QGstreamerIntegration::createVideoSink(QVideoSink *sink)
@@ -96,17 +96,19 @@ QMaybe<QPlatformVideoSink *> QGstreamerIntegration::createVideoSink(QVideoSink *
 
 QMaybe<QPlatformAudioInput *> QGstreamerIntegration::createAudioInput(QAudioInput *q)
 {
-    return new QGstreamerAudioInput(q);
+    return QGstreamerAudioInput::create(q);
 }
 
 QMaybe<QPlatformAudioOutput *> QGstreamerIntegration::createAudioOutput(QAudioOutput *q)
 {
-    return new QGstreamerAudioOutput(q);
+    return QGstreamerAudioOutput::create(q);
 }
 
 GstDevice *QGstreamerIntegration::videoDevice(const QByteArray &id) const
 {
-    return m_videoDevices ? static_cast<QGstreamerVideoDevices*>(m_videoDevices)->videoDevice(id) : nullptr;
+    return m_videoDevices
+        ? static_cast<QGstreamerVideoDevices *>(m_videoDevices.get())->videoDevice(id)
+        : nullptr;
 }
 
 QT_END_NAMESPACE

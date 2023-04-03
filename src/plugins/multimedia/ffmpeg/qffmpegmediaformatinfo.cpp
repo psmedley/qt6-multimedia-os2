@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qffmpegmediaformatinfo_p.h"
-#include "qffmpeg_p.h"
 #include "qaudioformat.h"
 #include "qimagewriter.h"
 
+#include <qloggingcategory.h>
+
 QT_BEGIN_NAMESPACE
+
+static Q_LOGGING_CATEGORY(qLcMediaFormatInfo, "qt.multimedia.ffmpeg.mediaformatinfo")
 
 static struct {
     AVCodecID id;
@@ -126,7 +129,7 @@ static const AVOutputFormat *avFormatForFormat(QMediaFormat::FileFormat format)
 
 QFFmpegMediaFormatInfo::QFFmpegMediaFormatInfo()
 {
-    qDebug() << ">>>> listing codecs";
+    qCDebug(qLcMediaFormatInfo) << ">>>> listing codecs";
 
     QList<QMediaFormat::AudioCodec> audioEncoders;
     QList<QMediaFormat::AudioCodec> extraAudioDecoders;
@@ -161,14 +164,14 @@ QFFmpegMediaFormatInfo::QFFmpegMediaFormatInfo()
     }
 
     // get demuxers
-//    qDebug() << ">>>> Muxers";
+//    qCDebug(qLcMediaFormatInfo) << ">>>> Muxers";
     void *opaque = nullptr;
     const AVOutputFormat *outputFormat = nullptr;
     while ((outputFormat = av_muxer_iterate(&opaque))) {
         auto mediaFormat = formatForAVFormat(outputFormat);
         if (mediaFormat == QMediaFormat::UnspecifiedFormat)
             continue;
-//        qDebug() << "    mux:" << outputFormat->name << outputFormat->long_name << outputFormat->mime_type << outputFormat->extensions << mediaFormat;
+//        qCDebug(qLcMediaFormatInfo) << "    mux:" << outputFormat->name << outputFormat->long_name << outputFormat->mime_type << outputFormat->extensions << mediaFormat;
 
         CodecMap encoder;
         encoder.format = mediaFormat;
@@ -178,7 +181,7 @@ QFFmpegMediaFormatInfo::QFFmpegMediaFormatInfo()
             // only add the codec if it can be used with this container
             if (avformat_query_codec(outputFormat, id, FF_COMPLIANCE_NORMAL) == 1) {
                 // add codec for container
-//                qDebug() << "        " << codec << Qt::hex << av_codec_get_tag(outputFormat->codec_tag, id);
+//                qCDebug(qLcMediaFormatInfo) << "        " << codec << Qt::hex << av_codec_get_tag(outputFormat->codec_tag, id);
                 encoder.audio.append(codec);
             }
         }
@@ -187,7 +190,7 @@ QFFmpegMediaFormatInfo::QFFmpegMediaFormatInfo()
             // only add the codec if it can be used with this container
             if (avformat_query_codec(outputFormat, id, FF_COMPLIANCE_NORMAL) == 1) {
                 // add codec for container
-//                qDebug() << "        " << codec << Qt::hex << av_codec_get_tag(outputFormat->codec_tag, id);
+//                qCDebug(qLcMediaFormatInfo) << "        " << codec << Qt::hex << av_codec_get_tag(outputFormat->codec_tag, id);
                 encoder.video.append(codec);
             }
         }
@@ -222,7 +225,16 @@ QFFmpegMediaFormatInfo::QFFmpegMediaFormatInfo()
     // can encode. That's a safe subset.
     decoders = encoders;
 
-//    qDebug() << "extraDecoders:" << extraAudioDecoders << extraVideoDecoders;
+#ifdef Q_OS_WINDOWS
+    // MediaFoundation HVEC encoder fails when processing frames
+    for (auto &encoder : encoders) {
+        auto h265index = encoder.video.indexOf(QMediaFormat::VideoCodec::H265);
+        if (h265index >= 0)
+            encoder.video.removeAt(h265index);
+    }
+#endif
+
+//    qCDebug(qLcMediaFormatInfo) << "extraDecoders:" << extraAudioDecoders << extraVideoDecoders;
     // FFmpeg can currently only decode WMA and WMV, not encode
     if (extraAudioDecoders.contains(QMediaFormat::AudioCodec::WMA)) {
         decoders[QMediaFormat::WMA].audio.append(QMediaFormat::AudioCodec::WMA);

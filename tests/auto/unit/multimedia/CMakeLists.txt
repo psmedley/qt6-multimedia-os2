@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 # Generated from multimedia.pro.
 
 add_subdirectory(qabstractvideobuffer)
@@ -18,3 +21,4 @@ add_subdirectory(qvideoframeformat)
 add_subdirectory(qaudiobuffer)
 add_subdirectory(qaudiodecoder)
 add_subdirectory(qsamplecache)
+add_subdirectory(qscreencapture)

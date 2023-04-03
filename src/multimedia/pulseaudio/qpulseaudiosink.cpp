@@ -13,11 +13,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-Q_DECLARE_LOGGING_CATEGORY(qLcPulseAudio)
 
 QT_BEGIN_NAMESPACE
 
-const int PeriodTimeMs = 20;
+const int SinkPeriodTimeMs = 20;
 
 #define LOW_LATENCY_CATEGORY_NAME "game"
 
@@ -339,7 +338,7 @@ bool QPulseAudioSink::open()
         pa_threaded_mainloop_wait(pulseEngine->mainloop());
 
     const pa_buffer_attr *buffer = pa_stream_get_buffer_attr(m_stream);
-    m_periodTime = PeriodTimeMs;
+    m_periodTime = SinkPeriodTimeMs;
     m_periodSize = pa_usec_to_bytes(m_periodTime * 1000, &m_spec);
     m_bufferSize = buffer->tlength;
     m_maxBufferSize = buffer->maxlength;
@@ -646,7 +645,7 @@ void QPulseAudioSink::resume()
 
         m_tickTimer.start(m_periodTime, this);
 
-        setState(m_pullMode ? QAudio::ActiveState : QAudio::IdleState);
+        setState(m_suspendedInState);
         setError(QAudio::NoError);
     }
 }
@@ -664,6 +663,7 @@ QAudioFormat QPulseAudioSink::format() const
 void QPulseAudioSink::suspend()
 {
     if (m_deviceState == QAudio::ActiveState || m_deviceState == QAudio::IdleState) {
+        m_suspendedInState = m_deviceState;
         setError(QAudio::NoError);
         setState(QAudio::SuspendedState);
 

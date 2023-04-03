@@ -21,7 +21,7 @@
 #include <gst/video/video.h>
 #include <gst/pbutils/encoding-profile.h>
 
-Q_LOGGING_CATEGORY(qLcMediaEncoderGst, "qt.multimedia.encoder")
+static Q_LOGGING_CATEGORY(qLcMediaEncoderGst, "qt.multimedia.encoder")
 
 QT_BEGIN_NAMESPACE
 
@@ -263,11 +263,13 @@ void QGstreamerMediaEncoder::record(QMediaEncoderSettings &settings)
     Q_ASSERT(!actualSink.isEmpty());
 
     gstEncoder = QGstElement("encodebin", "encodebin");
+    Q_ASSERT(gstEncoder);
     auto *encodingProfile = createEncodingProfile(settings);
     g_object_set (gstEncoder.object(), "profile", encodingProfile, nullptr);
     gst_encoding_profile_unref(encodingProfile);
 
     gstFileSink = QGstElement("filesink", "filesink");
+    Q_ASSERT(gstFileSink);
     gstFileSink.set("location", QFile::encodeName(actualSink.toLocalFile()).constData());
     gstFileSink.set("async", false);
 

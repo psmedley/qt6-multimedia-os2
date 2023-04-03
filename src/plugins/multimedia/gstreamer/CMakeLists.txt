@@ -1,3 +1,6 @@
+# Copyright (C) 2022 The Qt Company Ltd.
+# SPDX-License-Identifier: BSD-3-Clause
+
 qt_find_package(EGL)
 
 qt_internal_add_plugin(QGstreamerMediaPlugin
@@ -43,6 +46,9 @@ qt_internal_add_plugin(QGstreamerMediaPlugin
         GStreamer::GStreamer
         GStreamer::App
 )
+
+set_source_files_properties(common/qgstreamervideosink.cpp # X headers
+                            PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 
 qt_internal_extend_target(QGstreamerMediaPlugin CONDITION QT_FEATURE_gstreamer_photography
     LIBRARIES
