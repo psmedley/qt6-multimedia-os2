@@ -15,22 +15,17 @@
 // We mean it.
 //
 
-#include <QtCore/qobject.h>
-#include <QtMultimedia/qtmultimediaglobal.h>
+#include "qplatformvideosource_p.h"
 
 #include <QtMultimedia/qcamera.h>
-#include <QtCore/private/qglobal_p.h>
 
 QT_BEGIN_NAMESPACE
 
-class Q_MULTIMEDIA_EXPORT QPlatformCamera : public QObject
+class Q_MULTIMEDIA_EXPORT QPlatformCamera : public QPlatformVideoSource
 {
     Q_OBJECT
 
 public:
-    virtual bool isActive() const = 0;
-    virtual void setActive(bool active) = 0;
-
     virtual void setCamera(const QCameraDevice &camera) = 0;
     virtual bool setCameraFormat(const QCameraFormat &/*format*/) { return false; }
     QCameraFormat cameraFormat() const { return m_cameraFormat; }
@@ -65,6 +60,8 @@ public:
     virtual bool isWhiteBalanceModeSupported(QCamera::WhiteBalanceMode mode) const { return mode == QCamera::WhiteBalanceAuto; }
     virtual void setWhiteBalanceMode(QCamera::WhiteBalanceMode /*mode*/) {}
     virtual void setColorTemperature(int /*temperature*/) {}
+
+    QVideoFrameFormat frameFormat() const override;
 
     QCamera::Features supportedFeatures() const { return m_supportedFeatures; }
 
@@ -115,19 +112,19 @@ public:
 
     static int colorTemperatureForWhiteBalance(QCamera::WhiteBalanceMode mode);
 
-    // Can't use FFmpeg specific struct here, use void * for now.
-    virtual std::optional<int> ffmpegHWPixelFormat() const { return {}; }
-
 Q_SIGNALS:
     void activeChanged(bool);
     void error(int error, const QString &errorString);
-    void newVideoFrame(const QVideoFrame &); // only used by FFmpeg
 
 protected:
     explicit QPlatformCamera(QCamera *parent);
 
-    static QCameraFormat findBestCameraFormat(const QCameraDevice &camera);
+    virtual int cameraPixelFormatScore(QVideoFrameFormat::PixelFormat /*format*/) const { return 0; }
+
+    QCameraFormat findBestCameraFormat(const QCameraDevice &camera) const;
     QCameraFormat m_cameraFormat;
+    QVideoFrameFormat::PixelFormat m_framePixelFormat = QVideoFrameFormat::Format_Invalid;
+
 private:
     QCamera *m_camera = nullptr;
     QCamera::Features m_supportedFeatures = {};

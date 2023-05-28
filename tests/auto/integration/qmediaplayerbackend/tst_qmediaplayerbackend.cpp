@@ -74,8 +74,11 @@ private slots:
     void playbackRateChanging();
     void durationDetectionIssues();
     void finiteLoops();
-    void infiteLoops();
+    void infiniteLoops();
+    void seekOnLoops();
+    void changeLoopsOnTheFly();
     void lazyLoadVideo();
+    void videoSinkSignals();
 
 private:
     QUrl selectVideoFile(const QStringList& mediaCandidates);
@@ -110,11 +113,12 @@ public:
         : m_storeFrames(storeFrames)
     {
         connect(this, &QVideoSink::videoFrameChanged, this, &TestVideoSink::addVideoFrame);
+        connect(this, &QVideoSink::videoFrameChanged, this, &TestVideoSink::videoFrameChangedSync);
     }
 
     QVideoFrame waitForFrame()
     {
-        QSignalSpy spy(this, &TestVideoSink::videoFrameChanged);
+        QSignalSpy spy(this, &TestVideoSink::videoFrameChangedSync);
         return spy.wait() ? spy.at(0).at(0).value<QVideoFrame>() : QVideoFrame{};
     }
 
@@ -132,6 +136,9 @@ public Q_SLOTS:
             m_frameList.append(frame);
         ++m_totalFrames;
     }
+
+signals:
+    void videoFrameChangedSync(const QVideoFrame &frame);
 
 public:
     QList<QVideoFrame> m_frameList;
@@ -844,6 +851,9 @@ void tst_QMediaPlayerBackend::initialVolume()
 
 void tst_QMediaPlayerBackend::seekPauseSeek()
 {
+#ifdef Q_OS_ANDROID
+    QSKIP("frame.toImage will return null image because of QTBUG-108446");
+#endif
     if (localVideoFile.isEmpty())
         QSKIP("No supported video file");
 
@@ -853,13 +863,13 @@ void tst_QMediaPlayerBackend::seekPauseSeek()
 
     QSignalSpy positionSpy(&player, SIGNAL(positionChanged(qint64)));
 
-    TestVideoSink *surface = new TestVideoSink;
-    player.setVideoOutput(surface);
+    TestVideoSink surface;
+    player.setVideoOutput(&surface);
 
     player.setSource(localVideoFile);
     QCOMPARE(player.playbackState(), QMediaPlayer::StoppedState);
     QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::LoadedMedia);
-    QVERIFY(surface->m_frameList.isEmpty()); // frame must not appear until we call pause() or play()
+    QVERIFY(surface.m_frameList.isEmpty()); // frame must not appear until we call pause() or play()
 
     positionSpy.clear();
     qint64 position = 7000;
@@ -868,18 +878,19 @@ void tst_QMediaPlayerBackend::seekPauseSeek()
     QTRY_COMPARE(player.position(), position);
     QCOMPARE(player.playbackState(), QMediaPlayer::StoppedState);
     QTest::qWait(250); // wait a bit to ensure the frame is not rendered
-    QVERIFY(surface->m_frameList.isEmpty()); // still no frame, we must call pause() or play() to see a frame
+    QVERIFY(surface.m_frameList
+                    .isEmpty()); // still no frame, we must call pause() or play() to see a frame
 
     player.pause();
     QTRY_COMPARE(player.playbackState(), QMediaPlayer::PausedState); // it might take some time for the operation to be completed
-    QTRY_VERIFY(!surface->m_frameList.isEmpty()); // we must see a frame at position 7000 here
+    QTRY_VERIFY(!surface.m_frameList.isEmpty()); // we must see a frame at position 7000 here
 
     // Make sure that the frame has a timestamp before testing - not all backends provides this
-    if (!surface->m_frameList.back().isValid() || surface->m_frameList.back().startTime() < 0)
+    if (!surface.m_frameList.back().isValid() || surface.m_frameList.back().startTime() < 0)
         QSKIP("No timestamp");
 
     {
-        QVideoFrame frame = surface->m_frameList.back();
+        QVideoFrame frame = surface.m_frameList.back();
         const qint64 elapsed = (frame.startTime() / 1000) - position; // frame.startTime() is microsecond, position is milliseconds.
         QVERIFY2(qAbs(elapsed) < (qint64)500, QByteArray::number(elapsed).constData());
         QCOMPARE(frame.width(), 160);
@@ -893,16 +904,16 @@ void tst_QMediaPlayerBackend::seekPauseSeek()
         QVERIFY(qBlue(image.pixel(0, 0)) < 20);
     }
 
-    surface->m_frameList.clear();
+    surface.m_frameList.clear();
     positionSpy.clear();
     position = 12000;
     player.setPosition(position);
     QTRY_VERIFY(!positionSpy.isEmpty() && qAbs(player.position() - position) < (qint64)500);
     QCOMPARE(player.playbackState(), QMediaPlayer::PausedState);
-    QTRY_VERIFY(!surface->m_frameList.isEmpty());
+    QTRY_VERIFY(!surface.m_frameList.isEmpty());
 
     {
-        QVideoFrame frame = surface->m_frameList.back();
+        QVideoFrame frame = surface.m_frameList.back();
         const qint64 elapsed = (frame.startTime() / 1000) - position;
         QVERIFY2(qAbs(elapsed) < (qint64)500, QByteArray::number(elapsed).constData());
         QCOMPARE(frame.width(), 160);
@@ -1209,6 +1220,9 @@ It findSimilarColor(It it, It end, QRgb color)
 
 void tst_QMediaPlayerBackend::multipleSeekStressTest()
 {
+#ifdef Q_OS_ANDROID
+    QSKIP("frame.toImage will return null image because of QTBUG-108446");
+#endif
     if (localVideoFile3ColorsWithSound.isEmpty())
         QSKIP("Video format is not supported");
 
@@ -1305,13 +1319,16 @@ void tst_QMediaPlayerBackend::multipleSeekStressTest()
 
 void tst_QMediaPlayerBackend::playbackRateChanging()
 {
+#ifdef Q_OS_ANDROID
+    QSKIP("frame.toImage will return null image because of QTBUG-108446");
+#endif
     if (localVideoFile3ColorsWithSound.isEmpty())
         QSKIP("Video format is not supported");
 
 #ifdef Q_OS_MACOS
     if (qEnvironmentVariable("QTEST_ENVIRONMENT").toLower() == "ci")
         QSKIP("SKIP on macOS CI since multiple fake drawing on macOS CI platform causes UB. To be "
-              "investigated.");
+              "investigated: QTBUG-111744");
 #endif
 
     TestVideoSink surface(false);
@@ -1322,15 +1339,16 @@ void tst_QMediaPlayerBackend::playbackRateChanging()
     player.setVideoOutput(&surface);
     player.setSource(localVideoFile3ColorsWithSound);
 
-    QImage frameImage;
-    connect(&surface, &QVideoSink::videoFrameChanged, [&frameImage](const QVideoFrame& frame) {
-        frameImage = frame.toImage();
+    std::optional<QRgb> color;
+    connect(&surface, &QVideoSink::videoFrameChanged, [&](const QVideoFrame& frame) {
+        auto image = frame.toImage();
+        color = image.isNull() ? std::optional<QRgb>{} : image.pixel(1, 1);
     });
 
     auto checkColorAndPosition = [&](int colorIndex, QString errorTag) {
-        QVERIFY(!frameImage.isNull());
+        QVERIFY(color);
         const auto expectedColor = video3Colors[colorIndex];
-        const auto actualColor = frameImage.pixel(1, 1);
+        const auto actualColor = *color;
 
         auto errorPrintingGuard = qScopeGuard([&]() {
             qDebug() << "Error Tag:" << errorTag;
@@ -1517,9 +1535,6 @@ void tst_QMediaPlayerBackend::isSeekable()
     TestVideoSink surface(false);
     QMediaPlayer player;
     player.setVideoOutput(&surface);
-#ifdef Q_OS_ANDROID
-    QEXPECT_FAIL("", "On Android isSeekable() is always set to true due to QTBUG-96952", Continue);
-#endif
     QVERIFY(!player.isSeekable());
     player.setSource(localVideoFile);
     QTRY_VERIFY(player.isSeekable());
@@ -1533,9 +1548,6 @@ void tst_QMediaPlayerBackend::positionAfterSeek()
     TestVideoSink surface(false);
     QMediaPlayer player;
     player.setVideoOutput(&surface);
-#ifdef Q_OS_ANDROID
-    QEXPECT_FAIL("", "On Android isSeekable() is always set to true due to QTBUG-96952", Continue);
-#endif
     QVERIFY(!player.isSeekable());
     player.setSource(localVideoFile);
     QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::LoadedMedia);
@@ -1560,9 +1572,6 @@ void tst_QMediaPlayerBackend::videoDimensions()
     TestVideoSink surface(true);
     QMediaPlayer player;
     player.setVideoOutput(&surface);
-#ifdef Q_OS_ANDROID
-    QEXPECT_FAIL("", "On Android isSeekable() is always set to true due to QTBUG-96952", Continue);
-#endif
     QVERIFY(!player.isSeekable());
     player.setSource(videoDimensionTestFile);
     QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::LoadedMedia);
@@ -1582,9 +1591,6 @@ void tst_QMediaPlayerBackend::position()
     TestVideoSink surface(true);
     QMediaPlayer player;
     player.setVideoOutput(&surface);
-#ifdef Q_OS_ANDROID
-    QEXPECT_FAIL("", "On Android isSeekable() is always set to true due to QTBUG-96952", Continue);
-#endif
     QVERIFY(!player.isSeekable());
     player.setSource(localVideoFile);
     QTRY_VERIFY(player.isSeekable());
@@ -1686,13 +1692,11 @@ void tst_QMediaPlayerBackend::finiteLoops()
 
     auto intervals = positionChangingIntervals(positionSpy);
 
-    QCOMPARE(intervals.size(), 3);
+    QCOMPARE(intervals.size(), 3u);
     QCOMPARE_GT(intervals[0].first, 0);
     QCOMPARE(intervals[0].second, player.duration());
-    QCOMPARE(intervals[1].first, 0);
-    QCOMPARE(intervals[1].second, player.duration());
-    QCOMPARE(intervals[2].first, 0);
-    QCOMPARE(intervals[2].second, player.duration());
+    QCOMPARE(intervals[1], std::make_pair(qint64(0), player.duration()));
+    QCOMPARE(intervals[2], std::make_pair(qint64(0), player.duration()));
 
     QCOMPARE(player.mediaStatus(), QMediaPlayer::EndOfMedia);
 
@@ -1709,7 +1713,7 @@ void tst_QMediaPlayerBackend::finiteLoops()
     }
 }
 
-void tst_QMediaPlayerBackend::infiteLoops()
+void tst_QMediaPlayerBackend::infiniteLoops()
 {
     if (localVideoFile2.isEmpty())
         QSKIP("Video format is not supported");
@@ -1754,6 +1758,100 @@ void tst_QMediaPlayerBackend::infiteLoops()
     QCOMPARE(player.playbackState(), QMediaPlayer::StoppedState);
 }
 
+void tst_QMediaPlayerBackend::seekOnLoops()
+{
+    if (localVideoFile3ColorsWithSound.isEmpty())
+        QSKIP("Video format is not supported");
+
+#ifdef Q_OS_MACOS
+    if (qEnvironmentVariable("QTEST_ENVIRONMENT").toLower() == "ci")
+        QSKIP("The test accidently gets crashed on macOS CI, not reproduced locally. To be "
+              "investigated: QTBUG-111744");
+#endif
+
+    TestVideoSink surface(false);
+    QMediaPlayer player;
+
+    QSignalSpy positionSpy(&player, &QMediaPlayer::positionChanged);
+
+    player.setVideoOutput(&surface);
+    player.setLoops(3);
+    player.setPlaybackRate(2);
+
+    player.setSource(localVideoFile3ColorsWithSound);
+
+    player.play();
+    surface.waitForFrame();
+
+    // seek in the 1st loop
+    player.setPosition(player.duration() * 4 / 5);
+
+    // wait for the 2nd loop and seek
+    surface.waitForFrame();
+    QTRY_VERIFY(player.position() < player.duration() / 2);
+    player.setPosition(player.duration() * 8 / 9);
+
+    // wait for the 3rd loop and seek
+    surface.waitForFrame();
+    QTRY_VERIFY(player.position() < player.duration() / 2);
+    player.setPosition(player.duration() * 4 / 5);
+
+    QTRY_COMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+
+    auto intervals = positionChangingIntervals(positionSpy);
+
+    QCOMPARE(intervals.size(), 3);
+    QCOMPARE_GT(intervals[0].first, 0);
+    QCOMPARE(intervals[0].second, player.duration());
+    QCOMPARE(intervals[1], std::make_pair(qint64(0), player.duration()));
+    QCOMPARE(intervals[2], std::make_pair(qint64(0), player.duration()));
+
+    QCOMPARE(player.mediaStatus(), QMediaPlayer::EndOfMedia);
+}
+
+void tst_QMediaPlayerBackend::changeLoopsOnTheFly()
+{
+    if (localVideoFile3ColorsWithSound.isEmpty())
+        QSKIP("Video format is not supported");
+
+#ifdef Q_OS_MACOS
+    if (qEnvironmentVariable("QTEST_ENVIRONMENT").toLower() == "ci")
+        QSKIP("The test accidently gets crashed on macOS CI, not reproduced locally. To be "
+              "investigated: QTBUG-111744");
+#endif
+
+    TestVideoSink surface(false);
+    QMediaPlayer player;
+
+    QSignalSpy positionSpy(&player, &QMediaPlayer::positionChanged);
+
+    player.setVideoOutput(&surface);
+    player.setLoops(4);
+    player.setPlaybackRate(5);
+
+    player.setSource(localVideoFile3ColorsWithSound);
+
+    player.play();
+    surface.waitForFrame();
+
+    player.setPosition(player.duration() * 4 / 5);
+
+    // wait for the 2nd loop
+    surface.waitForFrame();
+    QTRY_VERIFY(player.position() < player.duration() / 2);
+    player.setPosition(player.duration() * 8 / 9);
+
+    player.setLoops(1);
+
+    QTRY_COMPARE(player.playbackState(), QMediaPlayer::StoppedState);
+    QCOMPARE(player.mediaStatus(), QMediaPlayer::EndOfMedia);
+
+    auto intervals = positionChangingIntervals(positionSpy);
+    QCOMPARE(intervals.size(), 2);
+
+    QCOMPARE(intervals[1], std::make_pair(qint64(0), player.duration()));
+}
+
 void tst_QMediaPlayerBackend::lazyLoadVideo()
 {
     QQmlEngine engine;
@@ -1788,6 +1886,40 @@ void tst_QMediaPlayerBackend::lazyLoadVideo()
 
     QVideoFrame frame = spy.at(0).at(0).value<QVideoFrame>();
     QVERIFY(frame.isValid());
+}
+
+void tst_QMediaPlayerBackend::videoSinkSignals()
+{
+    // TODO: come up with custom frames source,
+    // create the test target tst_QVideoSinkBackend,
+    // and move the test there
+
+    if (localVideoFile2.isEmpty())
+        QSKIP("Video format is not supported");
+
+    QVideoSink sink;
+    QMediaPlayer player;
+    player.setVideoSink(&sink);
+
+    std::atomic<int> videoFrameCounter = 0;
+    std::atomic<int> videoSizeCounter = 0;
+
+    connect(&sink, &QVideoSink::videoFrameChanged, [&](const QVideoFrame &frame) {
+        QCOMPARE(sink.videoFrame(), frame);
+        QCOMPARE(sink.videoSize(), frame.size());
+        ++videoFrameCounter;
+    });
+
+    connect(&sink, &QVideoSink::videoSizeChanged, [&]() {
+        QCOMPARE(sink.videoSize(), sink.videoFrame().size());
+        ++videoSizeCounter;
+    });
+
+    player.setSource(localVideoFile2);
+    player.play();
+
+    QTRY_COMPARE_GE(videoFrameCounter, 2);
+    QCOMPARE(videoSizeCounter, 1);
 }
 
 QTEST_MAIN(tst_QMediaPlayerBackend)

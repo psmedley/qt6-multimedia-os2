@@ -8,7 +8,7 @@
 QT_BEGIN_NAMESPACE
 
 QPlatformScreenCapture::QPlatformScreenCapture(QScreenCapture *screenCapture)
-    : QObject(screenCapture), m_screenCapture(screenCapture)
+    : QPlatformVideoSource(screenCapture), m_screenCapture(screenCapture)
 {
     qRegisterMetaType<QVideoFrame>();
 }
@@ -53,24 +53,21 @@ QScreenCapture *QPlatformScreenCapture::screenCapture() const
     return m_screenCapture;
 }
 
-std::optional<int> QPlatformScreenCapture::ffmpegHWPixelFormat() const
-{
-    return {};
-}
-
 void QPlatformScreenCapture::updateError(QScreenCapture::Error error, const QString &errorString)
 {
     bool changed = error != m_error || errorString != m_errorString;
     m_error = error;
     m_errorString = errorString;
     if (changed) {
-        if (m_error != QScreenCapture::NoError)
+        if (m_error != QScreenCapture::NoError) {
             emit m_screenCapture->errorOccurred(error, errorString);
-        else
             qWarning() << "Screen capture fail:" << error << "," << errorString;
+        }
 
         emit m_screenCapture->errorChanged();
     }
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qplatformscreencapture_p.cpp"

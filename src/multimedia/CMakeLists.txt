@@ -39,6 +39,7 @@ qt_internal_add_module(Multimedia
         platform/qplatformaudioinput_p.h
         platform/qplatformaudiooutput_p.h
         platform/qplatformcamera.cpp platform/qplatformcamera_p.h
+        platform/qplatformvideosource.cpp platform/qplatformvideosource_p.h
         platform/qplatformscreencapture.cpp platform/qplatformscreencapture_p.h
         platform/qplatformimagecapture.cpp platform/qplatformimagecapture_p.h
         platform/qplatformmediacapture.cpp platform/qplatformmediacapture_p.h
@@ -220,6 +221,22 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_wmf
         ksuser
 )
 
+# Only on Windows' MinGW/LLVM build, symbols from `strmif.h` and `ddraw.h` conflicts
+# with symbols defined in `ksmedia.h`.
+qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_wmf AND MINGW
+    NO_UNITY_BUILD_SOURCES
+        windows/qwindowsaudiodevice.cpp windows/qwindowsaudiodevice_p.h
+        windows/qwindowsaudiosource.cpp windows/qwindowsaudiosource_p.h
+        windows/qwindowsaudiosink.cpp windows/qwindowsaudiosink_p.h
+        windows/qwindowsaudioutils.cpp windows/qwindowsaudioutils_p.h
+        windows/qwindowsmediadevices.cpp windows/qwindowsmediadevices_p.h
+        windows/qwindowsmediafoundation.cpp windows/qwindowsmediafoundation_p.h
+        windows/qwindowsresampler.cpp windows/qwindowsresampler_p.h
+        windows/qwindowsmultimediautils.cpp windows/qwindowsmultimediautils_p.h
+        windows/qwindowsmfdefs.cpp windows/qwindowsmfdefs_p.h
+        windows/qwindowsiupointer_p.h
+)
+
 qt_internal_extend_target(Multimedia CONDITION WASM
     SOURCES
         wasm/qwasmmediadevices.cpp wasm/qwasmmediadevices_p.h
@@ -230,6 +247,9 @@ qt_internal_extend_target(Multimedia CONDITION WASM
         wasm
     PUBLIC_LIBRARIES
         openal
+    NO_UNITY_BUILD_SOURCES
+        wasm/qwasmaudiosink.cpp
+        # To avoid collision between symbols defined in wasm/qwasmaudiosource.cpp.
 )
 
 set(VIDEO_VERTEX_SHADERS

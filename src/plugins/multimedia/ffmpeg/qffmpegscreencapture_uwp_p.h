@@ -29,12 +29,9 @@ public:
     explicit QFFmpegScreenCaptureUwp(QScreenCapture *screenCapture);
     ~QFFmpegScreenCaptureUwp();
 
-    QVideoFrameFormat format() const override;
+    QVideoFrameFormat frameFormat() const override;
 
     static bool isSupported();
-
-private:
-    void resetGrabber();
 
 private:
     friend ScreenGrabberActiveUwp;
@@ -43,8 +40,8 @@ private:
 
     bool setActiveInternal(bool active) override;
 
-    std::unique_ptr<ScreenGrabberActiveUwp> m_screenGrabber;
     QVideoFrameFormat m_format;
+    std::unique_ptr<ScreenGrabberActiveUwp> m_screenGrabber;
 };
 
 QT_END_NAMESPACE

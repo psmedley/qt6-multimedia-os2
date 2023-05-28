@@ -96,7 +96,7 @@ static void apply_libvpx(const QMediaEncoderSettings &settings, AVCodecContext *
 }
 
 #ifdef Q_OS_DARWIN
-static void apply_videotoolbox(const QMediaEncoderSettings &settings, AVCodecContext *codec, AVDictionary **)
+static void apply_videotoolbox(const QMediaEncoderSettings &settings, AVCodecContext *codec, AVDictionary **opts)
 {
     if (settings.encodingMode() == QMediaRecorder::ConstantBitRateEncoding || settings.encodingMode() == QMediaRecorder::AverageBitRateEncoding) {
         codec->bit_rate = settings.videoBitRate();
@@ -116,6 +116,13 @@ static void apply_videotoolbox(const QMediaEncoderSettings &settings, AVCodecCon
         codec->bit_rate = bitrateForSettings(settings);
 #endif
     }
+
+    // Videotooldox hw acceleration fails of some hardwares,
+    // allow_sw makes sw encoding available if hw encoding failed.
+    // Under the hood, ffmpeg sets
+    // kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder instead of
+    // kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder
+    av_dict_set(opts, "allow_sw", "1", 0);
 }
 #endif
 
@@ -176,6 +183,18 @@ static void apply_vaapi(const QMediaEncoderSettings &settings, AVCodecContext *c
 }
 #endif
 
+static void apply_nvenc(const QMediaEncoderSettings &settings, AVCodecContext *codec,
+                        AVDictionary ** /*opts*/)
+{
+    if (settings.encodingMode() == QMediaRecorder::ConstantBitRateEncoding
+        || settings.encodingMode() == QMediaRecorder::AverageBitRateEncoding) {
+        codec->bit_rate = settings.videoBitRate();
+    } else {
+        static const int q[] = { 51, 48, 35, 15, 1 };
+        codec->global_quality = q[settings.quality()];
+    }
+}
+
 #ifdef Q_OS_WINDOWS
 static void apply_mf(const QMediaEncoderSettings &settings, AVCodecContext *codec, AVDictionary **opts)
 {
@@ -192,6 +211,49 @@ static void apply_mf(const QMediaEncoderSettings &settings, AVCodecContext *code
 }
 #endif
 
+#ifdef Q_OS_ANDROID
+static void apply_mediacodec(const QMediaEncoderSettings &settings, AVCodecContext *codec,
+                             AVDictionary **opts)
+{
+    codec->bit_rate = settings.videoBitRate();
+
+    const int quality[] = { 25, 50, 75, 90, 100 };
+    codec->global_quality = quality[settings.quality()];
+
+    switch (settings.encodingMode()) {
+    case QMediaRecorder::EncodingMode::AverageBitRateEncoding:
+        av_dict_set(opts, "bitrate_mode", "vbr", 1);
+        break;
+    case QMediaRecorder::EncodingMode::ConstantBitRateEncoding:
+        av_dict_set(opts, "bitrate_mode", "cbr", 1);
+        break;
+    case QMediaRecorder::EncodingMode::ConstantQualityEncoding:
+        //        av_dict_set(opts, "bitrate_mode", "cq", 1);
+        av_dict_set(opts, "bitrate_mode", "cbr", 1);
+        break;
+    default:
+        break;
+    }
+
+    switch (settings.videoCodec()) {
+    case QMediaFormat::VideoCodec::H264: {
+        const char *levels[] = { "2.2", "3.2", "4.2", "5.2", "6.2" };
+        av_dict_set(opts, "level", levels[settings.quality()], 1);
+        codec->profile = FF_PROFILE_H264_HIGH;
+        break;
+    }
+    case QMediaFormat::VideoCodec::H265: {
+        const char *levels[] = { "h2.1", "h3.1", "h4.1", "h5.1", "h6.1" };
+        av_dict_set(opts, "level", levels[settings.quality()], 1);
+        codec->profile = FF_PROFILE_HEVC_MAIN;
+        break;
+    }
+    default:
+        break;
+    }
+}
+#endif
+
 namespace QFFmpeg {
 
 using ApplyOptions = void (*)(const QMediaEncoderSettings &settings, AVCodecContext *codec, AVDictionary **opts);
@@ -199,31 +261,35 @@ using ApplyOptions = void (*)(const QMediaEncoderSettings &settings, AVCodecCont
 const struct {
     const char *name;
     ApplyOptions apply;
-} videoCodecOptionTable[] = {
-    { "libx264", apply_x264 },
-    { "libx265xx", apply_x265 },
-    { "libvpx", apply_libvpx },
-    { "libvpx_vp9", apply_libvpx },
+} videoCodecOptionTable[] = { { "libx264", apply_x264 },
+                              { "libx265xx", apply_x265 },
+                              { "libvpx", apply_libvpx },
+                              { "libvpx_vp9", apply_libvpx },
+                              { "h264_nvenc", apply_nvenc },
+                              { "hevc_nvenc", apply_nvenc },
 #ifdef Q_OS_DARWIN
-    { "h264_videotoolbox", apply_videotoolbox },
-    { "hevc_videotoolbox", apply_videotoolbox },
-    { "prores_videotoolbox", apply_videotoolbox },
-    { "vp9_videotoolbox", apply_videotoolbox },
+                              { "h264_videotoolbox", apply_videotoolbox },
+                              { "hevc_videotoolbox", apply_videotoolbox },
+                              { "prores_videotoolbox", apply_videotoolbox },
+                              { "vp9_videotoolbox", apply_videotoolbox },
 #endif
 #if QT_CONFIG(vaapi)
-    { "mpeg2_vaapi", apply_vaapi },
-    { "mjpeg_vaapi", apply_vaapi },
-    { "h264_vaapi", apply_vaapi },
-    { "hevc_vaapi", apply_vaapi },
-    { "vp8_vaapi", apply_vaapi },
-    { "vp9_vaapi", apply_vaapi },
+                              { "mpeg2_vaapi", apply_vaapi },
+                              { "mjpeg_vaapi", apply_vaapi },
+                              { "h264_vaapi", apply_vaapi },
+                              { "hevc_vaapi", apply_vaapi },
+                              { "vp8_vaapi", apply_vaapi },
+                              { "vp9_vaapi", apply_vaapi },
 #endif
 #ifdef Q_OS_WINDOWS
-    { "hevc_mf", apply_mf },
-    { "h264_mf", apply_mf },
+                              { "hevc_mf", apply_mf },
+                              { "h264_mf", apply_mf },
 #endif
-    { nullptr, nullptr }
-};
+#ifdef Q_OS_ANDROID
+                              { "hevc_mediacodec", apply_mediacodec},
+                              { "h264_mediacodec", apply_mediacodec },
+#endif
+    { nullptr, nullptr } };
 
 const struct {
     const char *name;

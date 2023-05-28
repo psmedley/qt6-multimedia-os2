@@ -239,6 +239,7 @@ void QWasmVideoOutput::addSourceElement(const QString &urlString)
 
 void QWasmVideoOutput::addCameraSourceElement(const std::string &id)
 {
+    m_cameraIsReady = false;
     emscripten::val navigator = emscripten::val::global("navigator");
     emscripten::val mediaDevices = navigator["mediaDevices"];
 
@@ -254,44 +255,7 @@ void QWasmVideoOutput::addCameraSourceElement(const std::string &id)
             qCDebug(qWasmMediaVideoOutput) << "getUserMediaSuccess";
 
             m_video.set("srcObject", stream);
-
-            emscripten::val videoTracksObject = stream.call<emscripten::val>("getVideoTracks");
-            if (videoTracksObject.isNull() || videoTracksObject.isUndefined()) {
-                emit errorOccured(QMediaPlayer::ResourceError, QStringLiteral("Resource error"));
-                return;
-            }
-
-            if (videoTracksObject.call<emscripten::val>("length").as<int>() == 0)  {
-                emit errorOccured(QMediaPlayer::ResourceError, QStringLiteral("Resource error"));
-                return;
-            }
-            emscripten::val tracks = stream.call<emscripten::val>("getVideoTracks");
-            if (tracks.isNull() || tracks.isUndefined())
-                return;
-            if (tracks["length"].as<int>() == 0)
-                return;
-            emscripten::val videoTrack = tracks[0];
-            if (videoTrack.isNull() || videoTrack.isUndefined()) {
-                emit errorOccured(QMediaPlayer::ResourceError, QStringLiteral("Resource error"));
-                return;
-            }
-
-            emscripten::val currentVideoCapabilities = videoTrack.call<emscripten::val>("getCapabilities");
-            if (currentVideoCapabilities.isNull() || currentVideoCapabilities.isUndefined()) {
-                emit errorOccured(QMediaPlayer::ResourceError, QStringLiteral("Resource error"));
-                return;
-            }
-
-            emscripten::val videoSettings = videoTrack.call<emscripten::val>("getSettings");
-            if (videoSettings.isNull() || videoSettings.isUndefined()) {
-                emit errorOccured(QMediaPlayer::ResourceError, QStringLiteral("Resource error"));
-                return;
-            }
-
-            // TODO double fRate = videoSettings["frameRate"].as<double>();
-            // const int width = videoSettings["width"].as<int>();
-            // const int height = videoSettings["height"].as<int>();
-
+            m_cameraIsReady = true;
         },
         .catchFunc =
                 [](emscripten::val error) {
@@ -375,9 +339,9 @@ void QWasmVideoOutput::seekTo(qint64 positionMSecs)
             if (seekableTimeRange["length"].as<int>() < 1)
                 return;
             if (positionToSetInSeconds
-                        >= seekableTimeRange.call<emscripten::val>("start", 0).as<int>()
+                        >= seekableTimeRange.call<emscripten::val>("start", 0).as<double>()
                 && positionToSetInSeconds
-                        <= seekableTimeRange.call<emscripten::val>("end", 0).as<int>()) {
+                        <= seekableTimeRange.call<emscripten::val>("end", 0).as<double>()) {
                 m_requestedPosition = positionToSetInSeconds;
 
                 m_video.set("currentTime", m_requestedPosition);
@@ -399,8 +363,8 @@ bool QWasmVideoOutput::isVideoSeekable()
     if (seekableTimeRange["length"].as<int>() < 1)
         return false;
     if (!seekableTimeRange.isNull() || !seekableTimeRange.isUndefined()) {
-        bool isit = !qFuzzyCompare(seekableTimeRange.call<emscripten::val>("start", 0).as<float>(),
-                                   seekableTimeRange.call<emscripten::val>("end", 0).as<float>());
+        bool isit = !qFuzzyCompare(seekableTimeRange.call<emscripten::val>("start", 0).as<double>(),
+                                   seekableTimeRange.call<emscripten::val>("end", 0).as<double>());
         return isit;
     }
     return false;
@@ -616,7 +580,7 @@ void QWasmVideoOutput::doElementCallbacks()
             if ((!timeRanges.isNull() || !timeRanges.isUndefined())
                     && timeRanges["length"].as<int>() == 1) {
                 double buffered = m_video["buffered"].call<emscripten::val>("end", 0).as<double>();
-                float duration = m_video["duration"].as<float>();
+                const double duration = m_video["duration"].as<double>();
 
                 if (duration == buffered) {
                     m_currentBufferedValue = 100;
@@ -669,7 +633,7 @@ void QWasmVideoOutput::doElementCallbacks()
         m_currentMediaStatus = QMediaPlayer::StalledMedia;
         emit statusChanged(m_currentMediaStatus);
     };
-    m_stalledChangeEvent.reset(new qstdweb::EventCallback(m_video, "waiting", stalledCallback));
+    m_stalledChangeEvent.reset(new qstdweb::EventCallback(m_video, "stalled", stalledCallback));
 
     // waiting
     auto waitingCallback = [=](emscripten::val event) {
@@ -702,7 +666,7 @@ void QWasmVideoOutput::doElementCallbacks()
         if (event.isUndefined() || event.isNull())
             return;
 
-        float duration = event["target"]["duration"].as<int>();
+        const double duration = event["target"]["duration"].as<double>();
         if (duration < 0) // track not exactly ready yet
             return;
 
@@ -715,7 +679,7 @@ void QWasmVideoOutput::doElementCallbacks()
                 double bufferedEnd = dVal.as<double>();
 
                 if (duration > 0 && bufferedEnd > 0) {
-                    float bufferedValue = (bufferedEnd / duration * 100);
+                    const double bufferedValue = (bufferedEnd / duration * 100);
                     qCDebug(qWasmMediaVideoOutput) << "progress buffered";
                     m_currentBufferedValue = bufferedValue;
                     emit bufferingChanged(m_currentBufferedValue);
@@ -735,8 +699,8 @@ void QWasmVideoOutput::doElementCallbacks()
         Q_UNUSED(event)
         qCDebug(qWasmMediaVideoOutput) << "pause";
 
-        int currentTime = m_video["currentTime"].as<int>(); // in seconds
-        int duration = m_video["duration"].as<int>(); // in seconds
+        const double currentTime = m_video["currentTime"].as<double>(); // in seconds
+        const double duration = m_video["duration"].as<double>(); // in seconds
         if ((currentTime > 0 && currentTime < duration) && (!m_shouldStop && m_toBePaused)) {
             emit stateChanged(QWasmMediaPlayer::Paused);
         } else {
@@ -778,7 +742,7 @@ qint64 QWasmVideoOutput::getDuration()
 
     if (m_video.isUndefined() || m_video.isNull())
         return 0;
-    return m_video["duration"].as<int>() * 1000;
+    return m_video["duration"].as<double>() * 1000;
 }
 
 void QWasmVideoOutput::newFrame(const QVideoFrame &frame)

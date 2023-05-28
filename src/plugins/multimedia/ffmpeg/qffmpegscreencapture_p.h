@@ -30,15 +30,12 @@ public:
     explicit QFFmpegScreenCapture(QScreenCapture *screenCapture);
     ~QFFmpegScreenCapture() override;
 
-    QVideoFrameFormat format() const override;
+    QVideoFrameFormat frameFormat() const override;
 
 protected:
     bool setActiveInternal(bool active) override;
 
     void updateError(QScreenCapture::Error error, const QString &description);
-
-private:
-    void resetGrabber();
 
 private:
     std::unique_ptr<Grabber> m_grabber;

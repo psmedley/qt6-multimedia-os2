@@ -4,17 +4,18 @@
 qt_find_package(EGL)
 qt_find_package(VAAPI COMPONENTS VA DRM PROVIDED_TARGETS VAAPI::VA VAAPI::DRM MODULE_NAME multimedia QMAKE_LIB vaapi)
 
-qt_internal_find_apple_system_framework(FWCoreMedia CoreMedia) # special case
-qt_internal_find_apple_system_framework(FWCoreAudio CoreAudio) # special case
-qt_internal_find_apple_system_framework(FWAudioUnit AudioUnit) # special case
-qt_internal_find_apple_system_framework(FWVideoToolbox VideoToolbox) # special case
-qt_internal_find_apple_system_framework(FWAVFoundation AVFoundation) # special case
+qt_internal_find_apple_system_framework(FWCoreMedia CoreMedia)
+qt_internal_find_apple_system_framework(FWCoreAudio CoreAudio)
+qt_internal_find_apple_system_framework(FWAudioUnit AudioUnit)
+qt_internal_find_apple_system_framework(FWVideoToolbox VideoToolbox)
+qt_internal_find_apple_system_framework(FWAVFoundation AVFoundation)
+qt_internal_find_apple_system_framework(FWSecurity Security)
 
 qt_internal_add_plugin(QFFmpegMediaPlugin
     OUTPUT_NAME ffmpegmediaplugin
     PLUGIN_TYPE multimedia
     SOURCES
-        qffmpeg_p.h
+        qffmpeg.cpp qffmpeg_p.h
         qffmpegaudiodecoder.cpp qffmpegaudiodecoder_p.h
         qffmpegaudioinput.cpp qffmpegaudioinput_p.h
         qffmpegclock.cpp qffmpegclock_p.h
@@ -33,8 +34,10 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
         qffmpegthread.cpp qffmpegthread_p.h
         qffmpegresampler.cpp qffmpegresampler_p.h
         qffmpegvideoframeencoder.cpp qffmpegvideoframeencoder_p.h
+        qffmpegvideoencoderutils.cpp qffmpegvideoencoderutils_p.h
         qffmpegscreencapturebase.cpp qffmpegscreencapturebase_p.h
         qffmpegscreencapture.cpp qffmpegscreencapture_p.h
+        qffmpegscreencapturethread.cpp qffmpegscreencapturethread_p.h
 
         qffmpegplaybackengine.cpp qffmpegplaybackengine_p.h
         playbackengine/qffmpegplaybackengineobject.cpp playbackengine/qffmpegplaybackengineobject_p.h
@@ -49,6 +52,7 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
         playbackengine/qffmpegcodec.cpp playbackengine/qffmpegcodec_p.h
         playbackengine/qffmpegpacket_p.h
         playbackengine/qffmpegframe_p.h
+        playbackengine/qffmpegpositionwithoffset_p.h
     DEFINES
         QT_COMPILING_FFMPEG
     LIBRARIES
@@ -60,6 +64,9 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_ffmpeg AND QT_FEATURE_vaapi
     SOURCES
         qffmpeghwaccel_vaapi.cpp qffmpeghwaccel_vaapi_p.h
+    NO_UNITY_BUILD_SOURCES
+        # Conflicts with macros defined in X11.h, and Xlib.h
+        qffmpeghwaccel_vaapi.cpp
     LIBRARIES
         VAAPI::VAAPI
         EGL::EGL
@@ -85,6 +92,7 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION APPLE
         ${FWCoreMedia}
         ${FWCoreVideo}
         ${FWVideoToolbox}
+        ${FWSecurity}
         AVFoundation::AVFoundation
 )
 
@@ -136,6 +144,7 @@ if (ANDROID)
             qffmpeghwaccel_mediacodec.cpp qffmpeghwaccel_mediacodec_p.h
             qandroidcamera_p.h qandroidcamera.cpp
             qandroidvideodevices.cpp qandroidvideodevices_p.h
+            qandroidcameraframe_p.h  qandroidcameraframe.cpp
             ../android/wrappers/jni/androidsurfacetexture_p.h
             ../android/wrappers/jni/androidsurfacetexture.cpp
         INCLUDE_DIRECTORIES

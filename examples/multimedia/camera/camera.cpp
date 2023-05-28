@@ -12,23 +12,26 @@
 #include "metadatadialog.h"
 #include "videosettings.h"
 
-#include <QAction>
-#include <QActionGroup>
 #include <QAudioDevice>
 #include <QAudioInput>
 #include <QCameraDevice>
-#include <QDir>
-#include <QImage>
-#include <QKeyEvent>
-#include <QLineEdit>
 #include <QMediaDevices>
 #include <QMediaFormat>
 #include <QMediaMetaData>
 #include <QMediaRecorder>
-#include <QMessageBox>
-#include <QPalette>
-#include <QTimer>
 #include <QVideoWidget>
+
+#include <QLineEdit>
+#include <QMessageBox>
+
+#include <QAction>
+#include <QActionGroup>
+#include <QImage>
+#include <QKeyEvent>
+#include <QPalette>
+
+#include <QDir>
+#include <QTimer>
 
 Camera::Camera() : ui(new Ui::Camera)
 {
@@ -93,27 +96,6 @@ void Camera::setCamera(const QCameraDevice &cameraDevice)
 
     updateCaptureMode();
 
-    if (m_camera->cameraFormat().isNull()) {
-        auto formats = cameraDevice.videoFormats();
-        if (!formats.isEmpty()) {
-            // Choose a decent camera format: Maximum resolution at at least 30 FPS
-            // we use 29 FPS to compare against as some cameras report 29.97 FPS...
-            QCameraFormat bestFormat;
-            for (const auto &fmt : formats) {
-                if (bestFormat.maxFrameRate() < 29
-                    && fmt.maxFrameRate() > bestFormat.maxFrameRate())
-                    bestFormat = fmt;
-                else if (bestFormat.maxFrameRate() == fmt.maxFrameRate()
-                         && bestFormat.resolution().width() * bestFormat.resolution().height()
-                                 < fmt.resolution().width() * fmt.resolution().height())
-                    bestFormat = fmt;
-            }
-
-            m_camera->setCameraFormat(bestFormat);
-            m_mediaRecorder->setVideoFrameRate(bestFormat.maxFrameRate());
-        }
-    }
-
     m_camera->start();
 }
 
@@ -145,7 +127,7 @@ void Camera::keyPressEvent(QKeyEvent *event)
 
 void Camera::updateRecordTime()
 {
-    QString str = QString("Recorded %1 sec").arg(m_mediaRecorder->duration() / 1000);
+    QString str = tr("Recorded %1 sec").arg(m_mediaRecorder->duration() / 1000);
     ui->statusbar->showMessage(str);
 }
 
@@ -173,7 +155,6 @@ void Camera::configureCaptureSettings()
 void Camera::configureVideoSettings()
 {
     VideoSettings settingsDialog(m_mediaRecorder.data());
-    settingsDialog.setWindowFlags(settingsDialog.windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
     if (settingsDialog.exec())
         settingsDialog.applySettings();
@@ -182,11 +163,9 @@ void Camera::configureVideoSettings()
 void Camera::configureImageSettings()
 {
     ImageSettings settingsDialog(m_imageCapture.get());
-    settingsDialog.setWindowFlags(settingsDialog.windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
-    if (settingsDialog.exec()) {
+    if (settingsDialog.exec() == QDialog::Accepted)
         settingsDialog.applyImageSettings();
-    }
 }
 
 void Camera::record()
