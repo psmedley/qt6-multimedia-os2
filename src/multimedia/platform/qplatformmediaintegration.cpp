@@ -65,6 +65,9 @@ using PlatformIntegration = QAndroidIntegration;
 #elif defined(Q_OS_WASM)
 #include <private/qwasmmediaintegration_p.h>
 using PlatformIntegration = QWasmMediaIntegration;
+#elif defined(Q_OS_OS2)
+#include <private/qos2integration_p.h>
+using PlatformIntegration = QOS2Integration;
 #else
 class QDummyIntegration : public QPlatformMediaIntegration
 {

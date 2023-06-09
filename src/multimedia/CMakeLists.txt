@@ -344,6 +344,17 @@ qt_internal_extend_target(Multimedia CONDITION WASM
         openal
 )
 
+qt_internal_extend_target(Multimedia CONDITION OS2
+    SOURCES
+        platform/os2/qos2audiodevice.cpp platform/os2/qos2audiodevice_p.h
+        platform/os2/qos2audiosource.cpp platform/os2/qos2audiosource_p.h
+        platform/os2/qos2audiosink.cpp platform/os2/qos2audiosink_p.h
+        platform/os2/qos2mediadevices.cpp platform/os2/qos2mediadevices_p.h
+        platform/os2/qos2integration.cpp platform/os2/qos2integration_p.h
+    LIBRARIES
+        kai
+)
+
 qt_internal_extend_target(Multimedia CONDITION WIN32
     LIBRARIES
         gdi32
