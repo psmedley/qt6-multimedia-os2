@@ -19,7 +19,7 @@
 #include <qbytearray.h>
 #include <qbytearrayview.h>
 #include <qaudioformat.h>
-#include <private/qwindowsiupointer_p.h>
+#include <private/qcomptr_p.h>
 #include <qt_windows.h>
 #include <mftransform.h>
 
@@ -54,7 +54,7 @@ private:
     HRESULT processInput(const QByteArrayView &in);
     HRESULT processOutput(QByteArray &out);
 
-    QWindowsIUPointer<IMFTransform> m_resampler;
+    ComPtr<IMFTransform> m_resampler;
     QWindowsMediaFoundation *m_wmf = nullptr;
 
     bool m_resamplerNeedsSampleBuffer = false;

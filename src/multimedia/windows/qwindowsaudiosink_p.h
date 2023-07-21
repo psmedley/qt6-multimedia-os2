@@ -23,11 +23,12 @@
 #include <QtCore/qdatetime.h>
 #include <QtCore/qmutex.h>
 #include <QtCore/qtimer.h>
+#include <QtCore/qpointer.h>
 
 #include <QtMultimedia/qaudio.h>
 #include <QtMultimedia/qaudiodevice.h>
 #include <private/qaudiosystem_p.h>
-#include <qwindowsiupointer_p.h>
+#include <qcomptr_p.h>
 #include <qwindowsresampler_p.h>
 
 #include <audioclient.h>
@@ -41,14 +42,14 @@ class QWindowsAudioSink : public QPlatformAudioSink
 {
     Q_OBJECT
 public:
-    QWindowsAudioSink(QWindowsIUPointer<IMMDevice> device, QObject *parent);
+    QWindowsAudioSink(ComPtr<IMMDevice> device, QObject *parent);
     ~QWindowsAudioSink();
 
     void setFormat(const QAudioFormat& fmt) override;
     QAudioFormat format() const override;
     QIODevice* start() override;
     void start(QIODevice* device) override;
-    void stop() override { close(); }
+    void stop() override;
     void reset() override;
     void suspend() override;
     void resume() override;
@@ -83,10 +84,10 @@ private:
     qreal m_volume = 1.0;
     QTimer *m_timer = nullptr;
     QScopedPointer<QIODevice> m_pushSource;
-    QIODevice *m_pullSource = nullptr;
-    QWindowsIUPointer<IMMDevice> m_device;
-    QWindowsIUPointer<IAudioClient> m_audioClient;
-    QWindowsIUPointer<IAudioRenderClient> m_renderClient;
+    QPointer<QIODevice> m_pullSource;
+    ComPtr<IMMDevice> m_device;
+    ComPtr<IAudioClient> m_audioClient;
+    ComPtr<IAudioRenderClient> m_renderClient;
     QWindowsResampler m_resampler;
 };
 

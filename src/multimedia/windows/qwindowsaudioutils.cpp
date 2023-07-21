@@ -157,14 +157,14 @@ QAudioFormat QWindowsAudioUtils::mediaTypeToFormat(IMFMediaType *mediaType)
     return format;
 }
 
-QWindowsIUPointer<IMFMediaType> QWindowsAudioUtils::formatToMediaType(QWindowsMediaFoundation &wmf, const QAudioFormat &format)
+ComPtr<IMFMediaType> QWindowsAudioUtils::formatToMediaType(QWindowsMediaFoundation &wmf, const QAudioFormat &format)
 {
-    QWindowsIUPointer<IMFMediaType> mediaType;
+    ComPtr<IMFMediaType> mediaType;
 
     if (!format.isValid())
         return mediaType;
 
-    wmf.mfCreateMediaType(mediaType.address());
+    wmf.mfCreateMediaType(mediaType.GetAddressOf());
 
     mediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
     if (format.sampleFormat() == QAudioFormat::Float) {

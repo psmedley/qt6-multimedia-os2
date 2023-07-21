@@ -93,16 +93,16 @@ int sensorOrientation(QString cameraId)
 
 QAndroidCamera::QAndroidCamera(QCamera *camera) : QPlatformCamera(camera)
 {
-    if (camera) {
-        m_cameraDevice = camera->cameraDevice();
-        m_cameraFormat = !camera->cameraFormat().isNull() ? camera->cameraFormat()
-                                                          : getDefaultCameraFormat();
-    }
-
     m_jniCamera = QJniObject(QtJniTypes::className<QtJniTypes::QtCamera2>(),
                              QNativeInterface::QAndroidApplication::context());
 
     m_hwAccel = QFFmpeg::HWAccel::create(AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC);
+    if (camera) {
+        m_cameraDevice = camera->cameraDevice();
+        m_cameraFormat = !camera->cameraFormat().isNull() ? camera->cameraFormat()
+                                                          : getDefaultCameraFormat();
+        updateCameraCharacteristics();
+    }
 };
 
 QAndroidCamera::~QAndroidCamera()
@@ -120,6 +120,7 @@ void QAndroidCamera::setCamera(const QCameraDevice &camera)
     setActive(false);
 
     m_cameraDevice = camera;
+    updateCameraCharacteristics();
     m_cameraFormat = getDefaultCameraFormat();
 
     setActive(true);
@@ -330,6 +331,72 @@ bool QAndroidCamera::setCameraFormat(const QCameraFormat &format)
     m_cameraFormat = format.isNull() ? getDefaultCameraFormat() : format;
 
     return true;
+}
+
+void QAndroidCamera::updateCameraCharacteristics()
+{
+    if (m_cameraDevice.id().isEmpty()) {
+        cleanCameraCharacteristics();
+        return;
+    }
+
+    QJniObject deviceManager(QtJniTypes::className<QtJniTypes::QtVideoDeviceManager>(),
+                             QNativeInterface::QAndroidApplication::context());
+
+    if (!deviceManager.isValid()) {
+        qCWarning(qLCAndroidCamera) << "Failed to connect to Qt Video Device Manager.";
+        cleanCameraCharacteristics();
+        return;
+    }
+
+    const float maxZoom = deviceManager.callMethod<jfloat>(
+                "getMaxZoom", QJniObject::fromString(m_cameraDevice.id()).object<jstring>());
+    maximumZoomFactorChanged(maxZoom);
+
+    m_TorchModeSupported = deviceManager.callMethod<jboolean>(
+            "isTorchModeSupported", QJniObject::fromString(m_cameraDevice.id()).object<jstring>());
+}
+
+void QAndroidCamera::cleanCameraCharacteristics()
+{
+    maximumZoomFactorChanged(1.0);
+    if (!m_TorchModeSupported) {
+        setTorchMode(QCamera::TorchOff);
+        m_TorchModeSupported = false;
+    }
+    torchModeChanged(QCamera::TorchOff);
+}
+
+bool QAndroidCamera::isTorchModeSupported(QCamera::TorchMode mode) const
+{
+    if (mode == QCamera::TorchOff)
+        return true;
+    else if (mode == QCamera::TorchOn)
+        return m_TorchModeSupported;
+
+    return false;
+}
+
+void QAndroidCamera::setTorchMode(QCamera::TorchMode mode)
+{
+    bool torchMode;
+    if (mode == QCamera::TorchOff) {
+        torchMode = false;
+    } else if (mode == QCamera::TorchOn) {
+        torchMode = true;
+    } else {
+        qWarning() << "Unknown Torch mode";
+        return;
+    }
+    m_jniCamera.callMethod<void>("setTorchMode", jboolean(torchMode));
+    torchModeChanged(mode);
+}
+
+void QAndroidCamera::zoomTo(float factor, float rate)
+{
+    Q_UNUSED(rate);
+    m_jniCamera.callMethod<void>("zoomTo", factor);
+    zoomFactorChanged(factor);
 }
 
 void QAndroidCamera::onCaptureSessionConfigured()

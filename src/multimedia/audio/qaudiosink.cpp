@@ -58,8 +58,9 @@ QT_BEGIN_NAMESPACE
 
     If an error occurs, you can fetch the \l{QAudio::Error}{error
     type} with the error() function. Please see the QAudio::Error enum
-    for a description of the possible errors that are reported.  When
-    an error is encountered, the state changes to QAudio::StoppedState.
+    for a description of the possible errors that are reported. When
+    QAudio::UnderrunError is encountered, the state changes to QAudio::IdleState,
+    when another error is encountered, the state changes to QAudio::StoppedState.
     You can check for errors by connecting to the stateChanged()
     signal:
 
@@ -88,7 +89,12 @@ QAudioSink::QAudioSink(const QAudioDevice &audioDevice, const QAudioFormat &form
 {
     d = QPlatformMediaDevices::instance()->audioOutputDevice(format, audioDevice, parent);
     if (d)
-        connect(d, SIGNAL(stateChanged(QAudio::State)), SIGNAL(stateChanged(QAudio::State)));
+        connect(d, &QPlatformAudioSink::stateChanged, this, [this](QAudio::State state) {
+            // if the signal has been emitted from another thread,
+            // the state may be already changed by main one
+            if (state == d->state())
+                emit stateChanged(state);
+        });
     else
         qWarning() << ("No audio device detected");
 }

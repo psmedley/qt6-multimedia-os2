@@ -17,10 +17,10 @@
 
 #include <private/qtmultimediaglobal_p.h>
 #include <qlist.h>
+#include <qobject.h>
 
 QT_BEGIN_NAMESPACE
 
-class QObject;
 class QMediaDevices;
 class QAudioDevice;
 class QCameraDevice;
@@ -29,11 +29,12 @@ class QPlatformAudioSink;
 class QAudioFormat;
 class QPlatformMediaIntegration;
 
-class Q_MULTIMEDIA_EXPORT QPlatformMediaDevices
+class Q_MULTIMEDIA_EXPORT QPlatformMediaDevices : public QObject
 {
+    Q_OBJECT
 public:
     QPlatformMediaDevices();
-    virtual ~QPlatformMediaDevices();
+    ~QPlatformMediaDevices() override;
 
     static void setDevices(QPlatformMediaDevices *);
     static QPlatformMediaDevices *instance();
@@ -49,24 +50,12 @@ public:
     QPlatformAudioSink *audioOutputDevice(const QAudioFormat &format,
                                           const QAudioDevice &deviceInfo, QObject *parent);
 
-    void addMediaDevices(QMediaDevices *m)
-    {
-        m_devices.append(m);
-    }
-    void removeMediaDevices(QMediaDevices *m)
-    {
-        m_devices.removeAll(m);
-    }
+    virtual void prepareAudio();
 
-    QList<QMediaDevices *> allMediaDevices() const { return m_devices; }
-
-    void videoInputsChanged() const;
-
-protected:
-    void audioInputsChanged() const;
-    void audioOutputsChanged() const;
-
-    QList<QMediaDevices *> m_devices;
+Q_SIGNALS:
+    void audioInputsChanged();
+    void audioOutputsChanged();
+    void videoInputsChanged();
 };
 
 QT_END_NAMESPACE

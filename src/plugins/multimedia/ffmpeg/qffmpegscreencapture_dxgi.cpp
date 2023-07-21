@@ -3,6 +3,7 @@
 // GPL-3.0-only
 
 #include "qffmpegscreencapture_dxgi_p.h"
+#include "qffmpegscreencapturethread_p.h"
 #include <private/qabstractvideobuffer_p.h>
 #include <private/qmultimediautils_p.h>
 #include <private/qwindowsmultimediautils_p.h>
@@ -31,8 +32,8 @@ using namespace QWindowsMultimediaUtils;
 class QD3D11TextureVideoBuffer : public QAbstractVideoBuffer
 {
 public:
-    QD3D11TextureVideoBuffer(QWindowsIUPointer<ID3D11Device> &device, std::shared_ptr<QMutex> &mutex,
-                             QWindowsIUPointer<ID3D11Texture2D> &texture, QSize size)
+    QD3D11TextureVideoBuffer(ComPtr<ID3D11Device> &device, std::shared_ptr<QMutex> &mutex,
+                             ComPtr<ID3D11Texture2D> &texture, QSize size)
         : QAbstractVideoBuffer(QVideoFrame::NoHandle)
         , m_device(device)
         , m_texture(texture)
@@ -61,7 +62,7 @@ public:
             texDesc.MiscFlags = 0;
             texDesc.BindFlags = 0;
 
-            HRESULT hr = m_device->CreateTexture2D(&texDesc, nullptr, m_cpuTexture.address());
+            HRESULT hr = m_device->CreateTexture2D(&texDesc, nullptr, m_cpuTexture.GetAddressOf());
             if (FAILED(hr)) {
                 qCDebug(qLcScreenCaptureDxgi) << "Failed to create texture with CPU access"
                                               << std::system_category().message(hr).c_str();
@@ -69,15 +70,15 @@ public:
                 return {};
             }
 
-            m_device->GetImmediateContext(m_ctx.address());
+            m_device->GetImmediateContext(m_ctx.GetAddressOf());
             m_ctxMutex->lock();
-            m_ctx->CopyResource(m_cpuTexture.get(), m_texture.get());
+            m_ctx->CopyResource(m_cpuTexture.Get(), m_texture.Get());
 
             D3D11_MAPPED_SUBRESOURCE resource = {};
-            hr = m_ctx->Map(m_cpuTexture.get(), 0, D3D11_MAP_READ, 0, &resource);
+            hr = m_ctx->Map(m_cpuTexture.Get(), 0, D3D11_MAP_READ, 0, &resource);
             m_ctxMutex->unlock();
             if (FAILED(hr)) {
-                qCDebug(qLcScreenCaptureDxgi) << "Failed to map texture" << m_cpuTexture.get()
+                qCDebug(qLcScreenCaptureDxgi) << "Failed to map texture" << m_cpuTexture.Get()
                                               << std::system_category().message(hr).c_str();
                 return {};
             }
@@ -98,118 +99,60 @@ public:
             return;
         if (m_ctx) {
             m_ctxMutex->lock();
-            m_ctx->Unmap(m_cpuTexture.get(), 0);
+            m_ctx->Unmap(m_cpuTexture.Get(), 0);
             m_ctxMutex->unlock();
-            m_ctx.reset();
+            m_ctx.Reset();
         }
-        m_cpuTexture.reset();
+        m_cpuTexture.Reset();
         m_mapMode = QVideoFrame::NotMapped;
     }
 
 private:
-    QWindowsIUPointer<ID3D11Device> m_device;
-    QWindowsIUPointer<ID3D11Texture2D> m_texture;
-    QWindowsIUPointer<ID3D11Texture2D> m_cpuTexture;
-    QWindowsIUPointer<ID3D11DeviceContext> m_ctx;
+    ComPtr<ID3D11Device> m_device;
+    ComPtr<ID3D11Texture2D> m_texture;
+    ComPtr<ID3D11Texture2D> m_cpuTexture;
+    ComPtr<ID3D11DeviceContext> m_ctx;
     std::shared_ptr<QMutex> m_ctxMutex;
     QSize m_size;
     QVideoFrame::MapMode m_mapMode = QVideoFrame::NotMapped;
 };
 
-static QMaybe<QWindowsIUPointer<ID3D11Texture2D>> getNextFrame(ID3D11Device *dev, IDXGIOutputDuplication *dup)
-{
-    QWindowsIUPointer<IDXGIResource> frame;
-    DXGI_OUTDUPL_FRAME_INFO info;
-    HRESULT hr = dup->AcquireNextFrame(0, &info, frame.address());
-    if (FAILED(hr))
-        return hr == DXGI_ERROR_WAIT_TIMEOUT ? QString{}
-                                             : "Failed to grab the screen content" + errorString(hr);
-
-    QWindowsIUPointer<ID3D11Texture2D> tex;
-    hr = frame->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void **>(tex.address()));
-    if (FAILED(hr)) {
-        dup->ReleaseFrame();
-        return "Failed to obtain D3D11 texture" + errorString(hr);
-    }
-
-    D3D11_TEXTURE2D_DESC texDesc = {};
-    tex->GetDesc(&texDesc);
-    texDesc.MiscFlags = 0;
-    texDesc.BindFlags = 0;
-    QWindowsIUPointer<ID3D11Texture2D> texCopy;
-    hr = dev->CreateTexture2D(&texDesc, nullptr, texCopy.address());
-    if (FAILED(hr)) {
-        dup->ReleaseFrame();
-        return "Failed to create texture with CPU access" + errorString(hr);
-    }
-
-    QWindowsIUPointer<ID3D11DeviceContext> ctx;
-    dev->GetImmediateContext(ctx.address());
-    ctx->CopyResource(texCopy.get(), tex.get());
-
-    dup->ReleaseFrame();
-
-    return texCopy;
-}
-
-class DxgiScreenGrabberActive : public QThread
+class QFFmpegScreenCaptureDxgi::Grabber : public QFFmpegScreenCaptureThread
 {
 public:
-    DxgiScreenGrabberActive(QPlatformScreenCapture &screenCapture, QWindowsIUPointer<ID3D11Device> &device,
-                        QWindowsIUPointer<IDXGIOutputDuplication> &duplication, qreal maxFrameRate)
-        : QThread()
-        , m_screenCapture(screenCapture)
+    Grabber(QFFmpegScreenCaptureDxgi &screenCapture, QScreen *screen, ComPtr<ID3D11Device> &device,
+            ComPtr<IDXGIOutputDuplication> &duplication)
+        : QFFmpegScreenCaptureThread()
         , m_duplication(duplication)
         , m_device(device)
-        , m_maxFrameRate(maxFrameRate)
-    {}
+        , m_ctxMutex(std::make_shared<QMutex>())
+    {
+        setFrameRate(screen->refreshRate());
+        addFrameCallback(screenCapture, &QFFmpegScreenCaptureDxgi::newVideoFrame);
+        connect(this, &Grabber::errorUpdated, &screenCapture, &QFFmpegScreenCaptureDxgi::updateError);
+    }
+
+    ~Grabber() {
+        stop();
+        if (m_releaseFrame)
+            m_duplication->ReleaseFrame();
+    }
 
     void run() override
     {
-        // TODO: refactor with QTimer
-
-        qCDebug(qLcScreenCaptureDxgi) << "ScreenGrabberActive started";
-
         DXGI_OUTDUPL_DESC outputDesc = {};
         m_duplication->GetDesc(&outputDesc);
 
-        QSize frameSize = { int(outputDesc.ModeDesc.Width), int(outputDesc.ModeDesc.Height) };
-        QVideoFrameFormat format(frameSize, QVideoFrameFormat::Format_BGRA8888);
+        m_frameSize = { int(outputDesc.ModeDesc.Width), int(outputDesc.ModeDesc.Height) };
+        QVideoFrameFormat frameFormat(m_frameSize, QVideoFrameFormat::Format_BGRA8888);
 
         m_formatMutex.lock();
-        m_format = format;
-        m_format.setFrameRate(int(m_maxFrameRate));
+        m_format = frameFormat;
+        m_format.setFrameRate(int(frameRate()));
         m_formatMutex.unlock();
         m_waitForFormat.wakeAll();
 
-        const microseconds frameTime(quint64(1000000. / m_maxFrameRate));
-        time_point frameStopTime = steady_clock::now();
-        time_point frameStartTime = frameStopTime - frameTime;
-
-        std::shared_ptr<QMutex> ctxMutex(new QMutex);
-        while (!isInterruptionRequested()) {
-            ctxMutex->lock();
-            auto maybeTex = getNextFrame(m_device.get(), m_duplication.get());
-            ctxMutex->unlock();
-
-            if (maybeTex) {
-                auto buffer = new QD3D11TextureVideoBuffer(m_device, ctxMutex, maybeTex.value(), frameSize);
-                QVideoFrame frame(buffer, format);
-                frame.setStartTime(duration_cast<microseconds>(frameStartTime.time_since_epoch()).count());
-                frame.setEndTime(duration_cast<microseconds>(frameStopTime.time_since_epoch()).count());
-                emit m_screenCapture.newVideoFrame(frame);
-            } else {
-                emit m_screenCapture.updateError(maybeTex.error().isEmpty() ? QScreenCapture::NoError
-                                                                            : QScreenCapture::CaptureFailed,
-                                                 maybeTex.error());
-            }
-
-            frameStartTime = frameStopTime;
-            std::this_thread::sleep_until(frameStartTime + frameTime);
-            frameStopTime = steady_clock::now();
-        }
-
-        qCDebug(qLcScreenCaptureDxgi) << "ScreenGrabberActive finished";
+        QFFmpegScreenCaptureThread::run();
     }
 
     QVideoFrameFormat format() {
@@ -219,25 +162,82 @@ public:
         return m_format;
     }
 
+    QVideoFrame grabFrame() override {
+        m_ctxMutex->lock();
+        auto maybeTex = getNextFrame();
+        m_ctxMutex->unlock();
+
+        if (maybeTex) {
+            auto buffer = new QD3D11TextureVideoBuffer(m_device, m_ctxMutex, maybeTex.value(), m_frameSize);
+            return QVideoFrame(buffer, format());
+        } else {
+            const auto status = maybeTex.error().isEmpty() ? QScreenCapture::NoError
+                                                           : QScreenCapture::CaptureFailed;
+            updateError(status, maybeTex.error());
+        }
+        return {};
+    };
+
 private:
-    QPlatformScreenCapture &m_screenCapture;
-    QWindowsIUPointer<IDXGIOutputDuplication> m_duplication;
-    QWindowsIUPointer<ID3D11Device> m_device;
-    qreal m_maxFrameRate;
+    QMaybe<ComPtr<ID3D11Texture2D>> getNextFrame()
+    {
+        if (m_releaseFrame) {
+            m_releaseFrame = false;
+
+            HRESULT hr = m_duplication->ReleaseFrame();
+            if (FAILED(hr))
+                return "Failed to release duplication frame. " + ::errorString(hr);
+        }
+
+        ComPtr<IDXGIResource> frame;
+        DXGI_OUTDUPL_FRAME_INFO info;
+        HRESULT hr = m_duplication->AcquireNextFrame(0, &info, frame.GetAddressOf());
+        if (FAILED(hr))
+            return hr == DXGI_ERROR_WAIT_TIMEOUT ? QString{}
+                                                 : "Failed to grab the screen content" + ::errorString(hr);
+
+        m_releaseFrame = true;
+
+        ComPtr<ID3D11Texture2D> tex;
+        hr = frame->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void **>(tex.GetAddressOf()));
+        if (FAILED(hr))
+            return "Failed to obtain D3D11 texture" + ::errorString(hr);
+
+        D3D11_TEXTURE2D_DESC texDesc = {};
+        tex->GetDesc(&texDesc);
+        texDesc.MiscFlags = 0;
+        texDesc.BindFlags = 0;
+        ComPtr<ID3D11Texture2D> texCopy;
+        hr = m_device->CreateTexture2D(&texDesc, nullptr, texCopy.GetAddressOf());
+        if (FAILED(hr))
+            return "Failed to create texture with CPU access" + ::errorString(hr);
+
+        ComPtr<ID3D11DeviceContext> ctx;
+        m_device->GetImmediateContext(ctx.GetAddressOf());
+        ctx->CopyResource(texCopy.Get(), tex.Get());
+
+        return texCopy;
+    }
+
+    ComPtr<IDXGIOutputDuplication> m_duplication;
+    ComPtr<ID3D11Device> m_device;
     QWaitCondition m_waitForFormat;
     QVideoFrameFormat m_format;
     QMutex m_formatMutex;
+    std::shared_ptr<QMutex> m_ctxMutex;
+    QSize m_frameSize;
+    bool m_releaseFrame = false;
 };
 
-static QMaybe<QWindowsIUPointer<IDXGIOutputDuplication>> duplicateOutput(ID3D11Device* device, IDXGIOutput *output)
+static QMaybe<ComPtr<IDXGIOutputDuplication>> duplicateOutput(ID3D11Device* device, IDXGIOutput *output)
 {
-    QWindowsIUPointer<IDXGIOutput1> output1;
-    HRESULT hr = output->QueryInterface(__uuidof(IDXGIOutput1), reinterpret_cast<void**>(output1.address()));
+    ComPtr<IDXGIOutput1> output1;
+    HRESULT hr = output->QueryInterface(__uuidof(IDXGIOutput1), reinterpret_cast<void**>(output1.GetAddressOf()));
     if (FAILED(hr))
         return  { "Failed to create IDXGIOutput1" + QString(std::system_category().message(hr).c_str()) };
 
-    QWindowsIUPointer<IDXGIOutputDuplication> dup;
-    hr = output1->DuplicateOutput(device, dup.address());
+    ComPtr<IDXGIOutputDuplication> dup;
+    hr = output1->DuplicateOutput(device, dup.GetAddressOf());
     if (SUCCEEDED(hr))
         return dup;
     else
@@ -245,8 +245,8 @@ static QMaybe<QWindowsIUPointer<IDXGIOutputDuplication>> duplicateOutput(ID3D11D
 }
 
 struct DxgiScreen {
-    QWindowsIUPointer<IDXGIAdapter1> adapter;
-    QWindowsIUPointer<IDXGIOutput> output;
+    ComPtr<IDXGIAdapter1> adapter;
+    ComPtr<IDXGIOutput> output;
 };
 
 static QMaybe<DxgiScreen> findDxgiScreen(const QScreen *screen)
@@ -257,15 +257,15 @@ static QMaybe<DxgiScreen> findDxgiScreen(const QScreen *screen)
     auto *winScreen = screen->nativeInterface<QNativeInterface::Private::QWindowsScreen>();
     HMONITOR handle = winScreen ? winScreen->handle() : nullptr;
 
-    QWindowsIUPointer<IDXGIFactory1> factory;
-    HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(factory.address()));
+    ComPtr<IDXGIFactory1> factory;
+    HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(factory.GetAddressOf()));
     if (FAILED(hr))
         return "Failed to create IDXGIFactory" + errorString(hr);
 
-    QWindowsIUPointer<IDXGIAdapter1> adapter;
-    for (quint32 i = 0; SUCCEEDED(factory->EnumAdapters1(i, adapter.address())); i++, adapter.reset()) {
-        QWindowsIUPointer<IDXGIOutput> output;
-        for (quint32 j = 0; SUCCEEDED(adapter->EnumOutputs(j, output.address())); j++, output.reset()) {
+    ComPtr<IDXGIAdapter1> adapter;
+    for (quint32 i = 0; SUCCEEDED(factory->EnumAdapters1(i, adapter.GetAddressOf())); i++, adapter.Reset()) {
+        ComPtr<IDXGIOutput> output;
+        for (quint32 j = 0; SUCCEEDED(adapter->EnumOutputs(j, output.GetAddressOf())); j++, output.Reset()) {
             DXGI_OUTPUT_DESC desc = {};
             output->GetDesc(&desc);
             qCDebug(qLcScreenCaptureDxgi) << i << j << QString::fromWCharArray(desc.DeviceName);
@@ -278,12 +278,12 @@ static QMaybe<DxgiScreen> findDxgiScreen(const QScreen *screen)
     return "Could not find screen adapter" + screen->name();
 }
 
-static QMaybe<QWindowsIUPointer<ID3D11Device>> createD3D11Device(IDXGIAdapter1 *adapter)
+static QMaybe<ComPtr<ID3D11Device>> createD3D11Device(IDXGIAdapter1 *adapter)
 {
-    QWindowsIUPointer<ID3D11Device> d3d11dev;
+    ComPtr<ID3D11Device> d3d11dev;
     HRESULT hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr,
-                                   D3D11_CREATE_DEVICE_DEBUG , nullptr, 0, D3D11_SDK_VERSION,
-                                   d3d11dev.address(), nullptr, nullptr);
+                                   0, nullptr, 0, D3D11_SDK_VERSION,
+                                   d3d11dev.GetAddressOf(), nullptr, nullptr);
     if (SUCCEEDED(hr))
         return d3d11dev;
     else
@@ -291,94 +291,52 @@ static QMaybe<QWindowsIUPointer<ID3D11Device>> createD3D11Device(IDXGIAdapter1 *
 }
 
 QFFmpegScreenCaptureDxgi::QFFmpegScreenCaptureDxgi(QScreenCapture *screenCapture)
-    : QPlatformScreenCapture(screenCapture)
+    : QFFmpegScreenCaptureBase(screenCapture)
 {
-}
-
-QFFmpegScreenCaptureDxgi::~QFFmpegScreenCaptureDxgi()
-{
-    resetGrabber();
 }
 
 QVideoFrameFormat QFFmpegScreenCaptureDxgi::frameFormat() const
 {
-    if (m_active)
-        return m_active->format();
+    if (m_grabber)
+        return m_grabber->format();
     else
         return {};
 }
 
-void QFFmpegScreenCaptureDxgi::setScreen(QScreen *screen)
+bool QFFmpegScreenCaptureDxgi::setActiveInternal(bool active)
 {
-    QScreen *oldScreen = m_screen;
-    if (oldScreen == screen)
-        return;
+    if (bool(m_grabber) == active)
+        return true;
 
-    bool active = bool(m_active);
-    if (active)
-        setActiveInternal(false);
-
-    m_screen = screen;
-    if (active)
-        setActiveInternal(true);
-
-    emit screenCapture()->screenChanged(screen);
-}
-
-void QFFmpegScreenCaptureDxgi::setActiveInternal(bool active)
-{
-    if (bool(m_active) == active)
-        return;
-
-    if (m_active) {
-        resetGrabber();
+    if (m_grabber) {
+        m_grabber.reset();
+        return true;
     } else {
-        QScreen *screen = m_screen ? m_screen : QGuiApplication::primaryScreen();
+        QScreen *screen = this->screen() ? this->screen() : QGuiApplication::primaryScreen();
         auto maybeDxgiScreen = findDxgiScreen(screen);
         if (!maybeDxgiScreen) {
             qCDebug(qLcScreenCaptureDxgi) << maybeDxgiScreen.error();
-            emit updateError(QScreenCapture::NotFound, maybeDxgiScreen.error());
-            return;
+            updateError(QScreenCapture::NotFound, maybeDxgiScreen.error());
+            return false;
         }
 
-        auto maybeDev = createD3D11Device(maybeDxgiScreen.value().adapter.get());
+        auto maybeDev = createD3D11Device(maybeDxgiScreen.value().adapter.Get());
         if (!maybeDev) {
             qCDebug(qLcScreenCaptureDxgi) << maybeDev.error();
-            emit updateError(QScreenCapture::InternalError, maybeDev.error());
-            return;
+            updateError(QScreenCapture::InternalError, maybeDev.error());
+            return false;
         }
 
-        auto maybeDupOutput = duplicateOutput(maybeDev.value().get(), maybeDxgiScreen.value().output.get());
+        auto maybeDupOutput = duplicateOutput(maybeDev.value().Get(), maybeDxgiScreen.value().output.Get());
         if (!maybeDupOutput) {
             qCDebug(qLcScreenCaptureDxgi) << maybeDupOutput.error();
-            emit updateError(QScreenCapture::InternalError, maybeDupOutput.error());
-            return;
+            updateError(QScreenCapture::InternalError, maybeDupOutput.error());
+            return false;
         }
 
-        qreal maxFrameRate = screen->refreshRate();
-        m_active.reset(new DxgiScreenGrabberActive(*this, maybeDev.value(), maybeDupOutput.value(), maxFrameRate));
-        m_active->start();
-    }
-}
-
-void QFFmpegScreenCaptureDxgi::setActive(bool active)
-{
-    if (bool(m_active) == active)
-        return;
-
-    emit updateError(QScreenCapture::NoError, {});
-
-    setActiveInternal(active);
-    emit screenCapture()->activeChanged(active);
-}
-
-void QFFmpegScreenCaptureDxgi::resetGrabber()
-{
-    if (m_active) {
-        m_active->requestInterruption();
-        m_active->quit();
-        m_active->wait();
-        m_active.reset();
+        m_grabber.reset(new Grabber(*this, screen, maybeDev.value(), maybeDupOutput.value()));
+        m_grabber->start();
+        return true;
     }
 }
 

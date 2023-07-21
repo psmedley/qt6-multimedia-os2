@@ -43,7 +43,7 @@ class QWindowsAudioSource : public QPlatformAudioSource
 {
     Q_OBJECT
 public:
-    QWindowsAudioSource(QWindowsIUPointer<IMMDevice> device, QObject *parent);
+    QWindowsAudioSource(ComPtr<IMMDevice> device, QObject *parent);
     ~QWindowsAudioSource();
 
     qint64 read(char* data, qint64 len);
@@ -72,9 +72,9 @@ private:
     QByteArray readCaptureClientBuffer();
 
     QTimer *m_timer = nullptr;
-    QWindowsIUPointer<IMMDevice> m_device;
-    QWindowsIUPointer<IAudioClient> m_audioClient;
-    QWindowsIUPointer<IAudioCaptureClient> m_captureClient;
+    ComPtr<IMMDevice> m_device;
+    ComPtr<IAudioClient> m_audioClient;
+    ComPtr<IAudioCaptureClient> m_captureClient;
     QWindowsResampler m_resampler;
     int m_bufferSize = 0;
     qreal m_volume = 1.0;

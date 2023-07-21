@@ -116,17 +116,17 @@ class tst_QScreenCaptureIntegration : public QObject
 
 private slots:
     void initTestCase();
-    void startStop();
-    void captureScreen();
-    void captureScreenByDefault();
-    void captureSecondaryScreen();
-    void recordToFile();
+    void setActive_startsAndStopsCapture();
+    void setScreen_selectsScreen_whenCalledWithWidgetsScreen();
+    void constructor_selectsPrimaryScreenAsDefault();
+    void setScreen_selectsSecondaryScreen_whenCalledWithSecondaryScreen();
+    void capture_capturesToFile_whenConnectedToMediaRecorder();
 
     void removeScreenWhileCapture(); // Keep the test last defined. TODO: find a way to restore
                                      // application screens.
 };
 
-void tst_QScreenCaptureIntegration::startStop()
+void tst_QScreenCaptureIntegration::setActive_startsAndStopsCapture()
 {
     TestVideoSink sink;
     QScreenCapture sc;
@@ -294,7 +294,7 @@ void tst_QScreenCaptureIntegration::initTestCase()
         QSKIP("Screen capturing not supported");
 }
 
-void tst_QScreenCaptureIntegration::captureScreen()
+void tst_QScreenCaptureIntegration::setScreen_selectsScreen_whenCalledWithWidgetsScreen()
 {
     auto widget = QTestWidget::createAndShow(Qt::Window | Qt::FramelessWindowHint
                                                      | Qt::WindowStaysOnTopHint,
@@ -305,7 +305,7 @@ void tst_QScreenCaptureIntegration::captureScreen()
             [&widget](QScreenCapture &sc) { sc.setScreen(widget->screen()); });
 }
 
-void tst_QScreenCaptureIntegration::captureScreenByDefault()
+void tst_QScreenCaptureIntegration::constructor_selectsPrimaryScreenAsDefault()
 {
     auto widget = QTestWidget::createAndShow(Qt::Window | Qt::FramelessWindowHint
                                                      | Qt::WindowStaysOnTopHint,
@@ -315,7 +315,7 @@ void tst_QScreenCaptureIntegration::captureScreenByDefault()
     capture(*widget, { 200, 100 }, QApplication::primaryScreen()->size(), nullptr);
 }
 
-void tst_QScreenCaptureIntegration::captureSecondaryScreen()
+void tst_QScreenCaptureIntegration::setScreen_selectsSecondaryScreen_whenCalledWithSecondaryScreen()
 {
     const auto screens = QApplication::screens();
 
@@ -336,7 +336,7 @@ void tst_QScreenCaptureIntegration::captureSecondaryScreen()
             [&screens](QScreenCapture &sc) { sc.setScreen(screens.back()); });
 }
 
-void tst_QScreenCaptureIntegration::recordToFile()
+void tst_QScreenCaptureIntegration::capture_capturesToFile_whenConnectedToMediaRecorder()
 {
     // Create widget with blue color
     auto widget = QTestWidget::createAndShow(Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint,
@@ -391,6 +391,7 @@ void tst_QScreenCaptureIntegration::recordToFile()
     QVERIFY(!fileName.isEmpty());
     QVERIFY(QFileInfo(fileName).size() > 0);
 
+    TestVideoSink sink;
     QMediaPlayer player;
     player.setSource(fileName);
     QCOMPARE_EQ(player.metaData().value(QMediaMetaData::Resolution).toSize(), QSize(videoResolution));
@@ -398,7 +399,6 @@ void tst_QScreenCaptureIntegration::recordToFile()
     QCOMPARE_LT(player.duration(), 650);
 
     // Convert video frames to QImages
-    TestVideoSink sink;
     player.setVideoSink(&sink);
     sink.setStoreImagesEnabled();
     player.setPlaybackRate(10);

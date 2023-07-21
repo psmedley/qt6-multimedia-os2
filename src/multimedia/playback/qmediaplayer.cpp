@@ -116,14 +116,18 @@ void QMediaPlayerPrivate::setStatus(QMediaPlayer::MediaStatus s)
     emit q->mediaStatusChanged(s);
 }
 
-void QMediaPlayerPrivate::setError(int error, const QString &errorString)
+void QMediaPlayerPrivate::setError(QMediaPlayer::Error error, const QString &errorString)
 {
     Q_Q(QMediaPlayer);
 
-    this->error = QMediaPlayer::Error(error);
-    this->errorString = errorString;
-    emit q->errorChanged();
-    emit q->errorOccurred(this->error, errorString);
+    auto prevError = std::exchange(this->error, error);
+    auto prevErrorString = std::exchange(this->errorString, errorString);
+
+    if (prevError != error || prevErrorString != errorString)
+        emit q->errorChanged();
+
+    if (error != QMediaPlayer::NoError)
+        emit q->errorOccurred(error, errorString);
 }
 
 void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
@@ -189,25 +193,16 @@ void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
             qWarning("Qt was built with -no-feature-temporaryfile: playback from resource file is not supported!");
 #endif
         }
-#if defined(Q_OS_ANDROID)
-    } else if (media.scheme() == QLatin1String("content") && !stream) {
-        // content scheme should happen only on android
-        const int fd = QJniObject::callStaticMethod<jint>(
-                "org/qtproject/qt/android/QtNative", "openFdForContentUrl",
-                "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)I",
-                QNativeInterface::QAndroidApplication::context(),
-                QJniObject::fromString(media.toString()).object(),
-                QJniObject::fromString(QLatin1String("r")).object());
-
-        file.reset(new QFile(QLatin1Char(':') + media.path()));
-        file->open(fd, QFile::ReadOnly, QFile::FileHandleFlag::AutoCloseHandle);
-        control->setMedia(media, file.get());
-#endif
     } else {
         qrcMedia = QUrl();
         QUrl url = media;
         if (url.scheme().isEmpty() || url.scheme() == QLatin1String("file"))
             url = QUrl::fromUserInput(media.path(), QDir::currentPath(), QUrl::AssumeLocalFile);
+        if (url.scheme() == QLatin1String("content") && !stream) {
+            file.reset(new QFile(media.url()));
+            stream = file.get();
+        }
+
         control->setMedia(url, stream);
     }
 
@@ -516,8 +511,7 @@ void QMediaPlayer::play()
         return;
 
     // Reset error conditions
-    d->error = NoError;
-    d->errorString = QString();
+    d->setError(NoError, QString());
 
     d->control->play();
 }

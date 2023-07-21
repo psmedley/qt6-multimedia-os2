@@ -16,10 +16,11 @@
 //
 
 #include <private/qplatformmediadevices_p.h>
-#include <private/qwindowsiupointer_p.h>
+#include <private/qcomptr_p.h>
 
 #include <qaudiodevice.h>
 
+struct IAudioClient3;
 struct IMMDeviceEnumerator;
 
 QT_BEGIN_NAMESPACE
@@ -40,11 +41,17 @@ public:
     QPlatformAudioSink *createAudioSink(const QAudioDevice &deviceInfo,
                                         QObject *parent) override;
 
+    void prepareAudio() override;
+
 private:
     QList<QAudioDevice> availableDevices(QAudioDevice::Mode mode) const;
 
-    QWindowsIUPointer<IMMDeviceEnumerator> m_deviceEnumerator;
-    QWindowsIUPointer<CMMNotificationClient> m_notificationClient;
+    ComPtr<IMMDeviceEnumerator> m_deviceEnumerator;
+    ComPtr<CMMNotificationClient> m_notificationClient;
+    // The "warm-up" audio client is required to run in the background in order to keep audio engine
+    // ready for audio output immediately after creating any other subsequent audio client.
+    ComPtr<IAudioClient3> m_warmUpAudioClient;
+    std::atomic_bool m_isAudioClientWarmedUp = false;
 
     friend CMMNotificationClient;
 };

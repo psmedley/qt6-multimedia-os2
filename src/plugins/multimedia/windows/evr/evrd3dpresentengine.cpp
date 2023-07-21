@@ -30,14 +30,13 @@ static Q_LOGGING_CATEGORY(qLcEvrD3DPresentEngine, "qt.multimedia.evrd3dpresenten
 class IMFSampleVideoBuffer: public QAbstractVideoBuffer
 {
 public:
-    IMFSampleVideoBuffer(QWindowsIUPointer<IDirect3DDevice9Ex> device,
+    IMFSampleVideoBuffer(ComPtr<IDirect3DDevice9Ex> device,
                           IMFSample *sample, QRhi *rhi, QVideoFrame::HandleType type = QVideoFrame::NoHandle)
         : QAbstractVideoBuffer(type, rhi)
         , m_device(device)
+        , m_sample(sample)
         , m_mapMode(QVideoFrame::NotMapped)
     {
-        sample->AddRef();
-        m_sample.reset(sample);
     }
 
     ~IMFSampleVideoBuffer() override
@@ -59,24 +58,24 @@ public:
                 return {};
 
         } else {
-            QWindowsIUPointer<IMFMediaBuffer> buffer;
-            HRESULT hr = m_sample->GetBufferByIndex(0, buffer.address());
+            ComPtr<IMFMediaBuffer> buffer;
+            HRESULT hr = m_sample->GetBufferByIndex(0, buffer.GetAddressOf());
             if (FAILED(hr))
                 return {};
 
-            QWindowsIUPointer<IDirect3DSurface9> surface;
-            hr = MFGetService(buffer.get(), MR_BUFFER_SERVICE, IID_IDirect3DSurface9, (void **)(surface.address()));
+            ComPtr<IDirect3DSurface9> surface;
+            hr = MFGetService(buffer.Get(), MR_BUFFER_SERVICE, IID_IDirect3DSurface9, (void **)(surface.GetAddressOf()));
             if (FAILED(hr))
                 return {};
 
             if (FAILED(surface->GetDesc(&desc)))
                 return {};
 
-            if (FAILED(m_device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, m_memSurface.address(), nullptr)))
+            if (FAILED(m_device->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, m_memSurface.GetAddressOf(), nullptr)))
                 return {};
 
-            if (FAILED(m_device->GetRenderTargetData(surface.get(), m_memSurface.get()))) {
-                m_memSurface.reset();
+            if (FAILED(m_device->GetRenderTargetData(surface.Get(), m_memSurface.Get()))) {
+                m_memSurface.Reset();
                 return {};
             }
         }
@@ -106,18 +105,18 @@ public:
     }
 
 protected:
-    QWindowsIUPointer<IDirect3DDevice9Ex> m_device;
-    QWindowsIUPointer<IMFSample> m_sample;
+    ComPtr<IDirect3DDevice9Ex> m_device;
+    ComPtr<IMFSample> m_sample;
 
 private:
-    QWindowsIUPointer<IDirect3DSurface9> m_memSurface;
+    ComPtr<IDirect3DSurface9> m_memSurface;
     QVideoFrame::MapMode m_mapMode;
 };
 
 class QVideoFrameD3D11Textures: public QVideoFrameTextures
 {
 public:
-    QVideoFrameD3D11Textures(std::unique_ptr<QRhiTexture> &&tex, QWindowsIUPointer<ID3D11Texture2D> &&d3d11tex)
+    QVideoFrameD3D11Textures(std::unique_ptr<QRhiTexture> &&tex, ComPtr<ID3D11Texture2D> &&d3d11tex)
        : m_tex(std::move(tex))
        , m_d3d11tex(std::move(d3d11tex))
     {}
@@ -129,13 +128,13 @@ public:
 
 private:
     std::unique_ptr<QRhiTexture> m_tex;
-    QWindowsIUPointer<ID3D11Texture2D> m_d3d11tex;
+    ComPtr<ID3D11Texture2D> m_d3d11tex;
 };
 
 class D3D11TextureVideoBuffer: public IMFSampleVideoBuffer
 {
 public:
-    D3D11TextureVideoBuffer(QWindowsIUPointer<IDirect3DDevice9Ex> device, IMFSample *sample,
+    D3D11TextureVideoBuffer(ComPtr<IDirect3DDevice9Ex> device, IMFSample *sample,
                             HANDLE sharedHandle, QRhi *rhi)
         : IMFSampleVideoBuffer(std::move(device), sample, rhi, QVideoFrame::RhiTextureHandle)
         , m_sharedHandle(sharedHandle)
@@ -154,8 +153,8 @@ public:
         if (!dev)
             return {};
 
-        QWindowsIUPointer<ID3D11Texture2D> d3d11tex;
-        HRESULT hr = dev->OpenSharedResource(m_sharedHandle, __uuidof(ID3D11Texture2D), (void**)(d3d11tex.address()));
+        ComPtr<ID3D11Texture2D> d3d11tex;
+        HRESULT hr = dev->OpenSharedResource(m_sharedHandle, __uuidof(ID3D11Texture2D), (void**)(d3d11tex.GetAddressOf()));
         if (SUCCEEDED(hr)) {
             D3D11_TEXTURE2D_DESC desc = {};
             d3d11tex->GetDesc(&desc);
@@ -168,7 +167,7 @@ public:
                 return {};
 
             std::unique_ptr<QRhiTexture> tex(rhi->newTexture(format, QSize{int(desc.Width), int(desc.Height)}, 1, {}));
-            tex->createFrom({quint64(d3d11tex.get()), 0});
+            tex->createFrom({quint64(d3d11tex.Get()), 0});
             return std::make_unique<QVideoFrameD3D11Textures>(std::move(tex), std::move(d3d11tex));
 
         } else {
@@ -288,7 +287,7 @@ private:
 class OpenGlVideoBuffer: public IMFSampleVideoBuffer
 {
 public:
-    OpenGlVideoBuffer(QWindowsIUPointer<IDirect3DDevice9Ex> device, IMFSample *sample,
+    OpenGlVideoBuffer(ComPtr<IDirect3DDevice9Ex> device, IMFSample *sample,
                       const WglNvDxInterop &wglNvDxInterop, HANDLE sharedHandle, QRhi *rhi)
         : IMFSampleVideoBuffer(std::move(device), sample, rhi, QVideoFrame::RhiTextureHandle)
         , m_sharedHandle(sharedHandle)
@@ -298,29 +297,29 @@ public:
     std::unique_ptr<QVideoFrameTextures> mapTextures(QRhi *rhi) override
     {
         if (!m_texture) {
-            QWindowsIUPointer<IMFMediaBuffer> buffer;
-            HRESULT hr = m_sample->GetBufferByIndex(0, buffer.address());
+            ComPtr<IMFMediaBuffer> buffer;
+            HRESULT hr = m_sample->GetBufferByIndex(0, buffer.GetAddressOf());
             if (FAILED(hr))
                 return {};
 
-            QWindowsIUPointer<IDirect3DSurface9> surface;
-            hr = MFGetService(buffer.get(), MR_BUFFER_SERVICE, IID_IDirect3DSurface9,
-                              (void **)(surface.address()));
+            ComPtr<IDirect3DSurface9> surface;
+            hr = MFGetService(buffer.Get(), MR_BUFFER_SERVICE, IID_IDirect3DSurface9,
+                              (void **)(surface.GetAddressOf()));
             if (FAILED(hr))
                 return {};
 
-            hr = surface->GetContainer(IID_IDirect3DTexture9, (void **)m_texture.address());
+            hr = surface->GetContainer(IID_IDirect3DTexture9, (void **)m_texture.GetAddressOf());
             if (FAILED(hr))
                 return {};
         }
 
-        return QVideoFrameOpenGlTextures::create(m_wgl, rhi, m_device.get(), m_texture.get(), m_sharedHandle);
+        return QVideoFrameOpenGlTextures::create(m_wgl, rhi, m_device.Get(), m_texture.Get(), m_sharedHandle);
     }
 
 private:
     HANDLE m_sharedHandle = nullptr;
     WglNvDxInterop m_wgl;
-    QWindowsIUPointer<IDirect3DTexture9> m_texture;
+    ComPtr<IDirect3DTexture9> m_texture;
 };
 #endif
 
@@ -344,9 +343,9 @@ void D3DPresentEngine::setSink(QVideoSink *sink)
     m_sink = sink;
 
     releaseResources();
-    m_device.reset();
-    m_devices.reset();
-    m_D3D9.reset();
+    m_device.Reset();
+    m_devices.Reset();
+    m_D3D9.Reset();
 
     if (!m_sink)
         return;
@@ -364,10 +363,10 @@ void D3DPresentEngine::setSink(QVideoSink *sink)
 
 HRESULT D3DPresentEngine::initializeD3D()
 {
-    HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, m_D3D9.address());
+    HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, m_D3D9.GetAddressOf());
 
     if (SUCCEEDED(hr))
-        hr = DXVA2CreateDirect3DDeviceManager9(&m_deviceResetToken, m_devices.address());
+        hr = DXVA2CreateDirect3DDeviceManager9(&m_deviceResetToken, m_devices.GetAddressOf());
 
     return hr;
 }
@@ -441,7 +440,7 @@ HRESULT D3DPresentEngine::createD3DDevice()
     QRhi *rhi = m_sink ? m_sink->rhi() : nullptr;
     if (rhi) {
         if (rhi->backend() == QRhi::D3D11) {
-            m_useTextureRendering = findD3D11AdapterID(*rhi, m_D3D9.get(), adapterID);
+            m_useTextureRendering = findD3D11AdapterID(*rhi, m_D3D9.Get(), adapterID);
 #if QT_CONFIG(opengl)
         } else if (rhi->backend() == QRhi::OpenGLES2)  {
             m_useTextureRendering = readWglNvDxInteropProc(m_wglNvDxInterop);
@@ -482,7 +481,7 @@ HRESULT D3DPresentEngine::createD3DDevice()
     pp.Flags = D3DPRESENTFLAG_VIDEO;
     pp.PresentationInterval = D3DPRESENT_INTERVAL_DEFAULT;
 
-    QWindowsIUPointer<IDirect3DDevice9Ex> device;
+    ComPtr<IDirect3DDevice9Ex> device;
 
     hr = m_D3D9->CreateDeviceEx(
                 adapterID,
@@ -491,7 +490,7 @@ HRESULT D3DPresentEngine::createD3DDevice()
                 vp | D3DCREATE_NOWINDOWCHANGES | D3DCREATE_MULTITHREADED | D3DCREATE_FPU_PRESERVE,
                 &pp,
                 NULL,
-                device.address()
+                device.GetAddressOf()
                 );
     if (FAILED(hr))
         return hr;
@@ -500,7 +499,7 @@ HRESULT D3DPresentEngine::createD3DDevice()
     if (FAILED(hr))
         return hr;
 
-    hr = m_devices->ResetDevice(device.get(), m_deviceResetToken);
+    hr = m_devices->ResetDevice(device.Get(), m_deviceResetToken);
     if (FAILED(hr))
         return hr;
 
@@ -510,7 +509,7 @@ HRESULT D3DPresentEngine::createD3DDevice()
 
 bool D3DPresentEngine::isValid() const
 {
-    return m_device.get() != nullptr;
+    return m_device.Get() != nullptr;
 }
 
 void D3DPresentEngine::releaseResources()
@@ -526,7 +525,7 @@ HRESULT D3DPresentEngine::getService(REFGUID, REFIID riid, void** ppv)
         if (!m_devices) {
             hr = MF_E_UNSUPPORTED_SERVICE;
         } else {
-            *ppv = m_devices.get();
+            *ppv = m_devices.Get();
             m_devices->AddRef();
         }
     } else {
@@ -604,24 +603,24 @@ HRESULT D3DPresentEngine::createVideoSamples(IMFMediaType *format, QList<IMFSamp
     for (int i = 0; i < PRESENTER_BUFFER_COUNT; i++) {
         // texture ref cnt is increased by GetSurfaceLevel()/MFCreateVideoSampleFromSurface()
         // below, so it will be destroyed only when the sample pool is released.
-        QWindowsIUPointer<IDirect3DTexture9> texture;
+        ComPtr<IDirect3DTexture9> texture;
         HANDLE sharedHandle = nullptr;
-        hr = m_device->CreateTexture(width, height, 1, D3DUSAGE_RENDERTARGET, (D3DFORMAT)d3dFormat,  D3DPOOL_DEFAULT, texture.address(), &sharedHandle);
+        hr = m_device->CreateTexture(width, height, 1, D3DUSAGE_RENDERTARGET, (D3DFORMAT)d3dFormat,  D3DPOOL_DEFAULT, texture.GetAddressOf(), &sharedHandle);
         if (FAILED(hr))
             break;
 
-        QWindowsIUPointer<IDirect3DSurface9> surface;
-        hr = texture->GetSurfaceLevel(0, surface.address());
+        ComPtr<IDirect3DSurface9> surface;
+        hr = texture->GetSurfaceLevel(0, surface.GetAddressOf());
         if (FAILED(hr))
             break;
 
-        QWindowsIUPointer<IMFSample> videoSample;
-        hr = MFCreateVideoSampleFromSurface(surface.get(), videoSample.address());
+        ComPtr<IMFSample> videoSample;
+        hr = MFCreateVideoSampleFromSurface(surface.Get(), videoSample.GetAddressOf());
         if (FAILED(hr))
             break;
 
-        m_sampleTextureHandle[i] = {videoSample.get(), sharedHandle};
-        videoSampleQueue.append(videoSample.release());
+        m_sampleTextureHandle[i] = {videoSample.Get(), sharedHandle};
+        videoSampleQueue.append(videoSample.Detach());
     }
 
     if (SUCCEEDED(hr)) {

@@ -18,7 +18,7 @@
 #include <QMutex>
 #include <QSize>
 #include <QVideoFrameFormat>
-#include <private/qwindowsiupointer_p.h>
+#include <private/qcomptr_p.h>
 #include <qpointer.h>
 
 #include <d3d9.h>
@@ -125,9 +125,9 @@ private:
     UINT m_deviceResetToken;
     D3DDISPLAYMODE m_displayMode;
 
-    QWindowsIUPointer<IDirect3D9Ex> m_D3D9;
-    QWindowsIUPointer<IDirect3DDevice9Ex> m_device;
-    QWindowsIUPointer<IDirect3DDeviceManager9> m_devices;
+    ComPtr<IDirect3D9Ex> m_D3D9;
+    ComPtr<IDirect3DDevice9Ex> m_device;
+    ComPtr<IDirect3DDeviceManager9> m_devices;
 
     QVideoFrameFormat m_surfaceFormat;
 
