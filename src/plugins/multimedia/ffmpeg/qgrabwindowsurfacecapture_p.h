@@ -1,8 +1,8 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#ifndef QFFMPEGSCREENCAPTURE_P_H
-#define QFFMPEGSCREENCAPTURE_P_H
+#ifndef QGRABWINDOWSURFACECAPTURE_P_H
+#define QGRABWINDOWSURFACECAPTURE_P_H
 
 //
 //  W A R N I N G
@@ -15,27 +15,27 @@
 // We mean it.
 //
 
-#include "qffmpegscreencapturebase_p.h"
-#include "qvideoframeformat.h"
+#include "private/qplatformsurfacecapture_p.h"
 
 #include <memory>
 
 QT_BEGIN_NAMESPACE
 
-class QFFmpegScreenCapture : public QFFmpegScreenCaptureBase
+class QGrabWindowSurfaceCapture : public QPlatformSurfaceCapture
 {
     class Grabber;
 
 public:
-    explicit QFFmpegScreenCapture(QScreenCapture *screenCapture);
-    ~QFFmpegScreenCapture() override;
+    explicit QGrabWindowSurfaceCapture(Source initialSource);
+    ~QGrabWindowSurfaceCapture() override;
 
     QVideoFrameFormat frameFormat() const override;
 
 protected:
     bool setActiveInternal(bool active) override;
 
-    void updateError(QScreenCapture::Error error, const QString &description);
+private:
+    void activate(ScreenSource);
 
 private:
     std::unique_ptr<Grabber> m_grabber;
@@ -43,4 +43,4 @@ private:
 
 QT_END_NAMESPACE
 
-#endif // QFFMPEGSCREENCAPTURE_P_H
+#endif // QGRABWINDOWSURFACECAPTURE_P_H

@@ -29,6 +29,7 @@ class Renderer : public PlaybackEngineObject
     Q_OBJECT
 public:
     using TimePoint = TimeController::TimePoint;
+    using Clock = TimeController::Clock;
     Renderer(const TimeController &tc, const std::chrono::microseconds &seekPosTimeOffset = {});
 
     void syncSoft(TimePoint tp, qint64 trackPos);
@@ -51,11 +52,11 @@ public slots:
 signals:
     void frameProcessed(Frame);
 
-    void synchronized(TimePoint tp, qint64 pos);
+    void synchronized(Id id, TimePoint tp, qint64 pos);
 
     void forceStepDone();
 
-    void loopChanged(qint64 offset, int index);
+    void loopChanged(Id id, qint64 offset, int index);
 
 protected:
     bool setForceStepDone();
@@ -68,7 +69,8 @@ protected:
 
     struct RenderingResult
     {
-        std::chrono::microseconds timeLeft = {};
+        bool done = true;
+        std::chrono::microseconds recheckInterval = std::chrono::microseconds(0);
     };
 
     virtual RenderingResult renderInternal(Frame frame) = 0;
@@ -77,6 +79,22 @@ protected:
 
     std::chrono::microseconds frameDelay(const Frame &frame) const;
 
+    void changeRendererTime(std::chrono::microseconds offset);
+
+    template<typename Output, typename ChangeHandler>
+    void setOutputInternal(QPointer<Output> &actual, Output *desired, ChangeHandler &&changeHandler)
+    {
+        const auto connectionType = thread() == QThread::currentThread()
+                ? Qt::AutoConnection
+                : Qt::BlockingQueuedConnection;
+        auto doer = [desired, changeHandler, &actual]() {
+            const auto prev = std::exchange(actual, desired);
+            if (prev != desired)
+                changeHandler(prev);
+        };
+        QMetaObject::invokeMethod(this, doer, connectionType);
+    }
+
 private:
     void doNextStep() override;
 
@@ -84,12 +102,13 @@ private:
 
 private:
     TimeController m_timeController;
-    std::atomic<qint64> m_lastPosition = 0;
-    std::atomic<qint64> m_seekPos = 0;
+    QAtomicInteger<qint64> m_lastPosition = 0;
+    QAtomicInteger<qint64> m_seekPos = 0;
     int m_loopIndex = 0;
     QQueue<Frame> m_frames;
 
-    std::atomic_bool m_isStepForced = false;
+    QAtomicInteger<bool> m_isStepForced = false;
+    std::optional<TimePoint> m_explicitNextFrameTime;
 };
 
 } // namespace QFFmpeg

@@ -1,8 +1,8 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#ifndef QFFMPEGSCREENCAPTURETHREAD_P_H
-#define QFFMPEGSCREENCAPTURETHREAD_P_H
+#ifndef QFFMPEGSURFACECAPTURETHREAD_P_H
+#define QFFMPEGSURFACECAPTURETHREAD_P_H
 
 //
 //  W A R N I N G
@@ -18,7 +18,7 @@
 #include <qthread.h>
 
 #include "qvideoframe.h"
-#include "qscreencapture.h"
+#include "private/qplatformsurfacecapture_p.h"
 
 #include <memory>
 #include <optional>
@@ -36,31 +36,31 @@ static constexpr qreal DefaultScreenCaptureFrameRate = 60.;
 static constexpr qreal MaxScreenCaptureFrameRate = 60.;
 static constexpr qreal MinScreenCaptureFrameRate = 1.;
 
-class QFFmpegScreenCaptureThread : public QThread
+class QFFmpegSurfaceCaptureThread : public QThread
 {
     Q_OBJECT
 public:
-    QFFmpegScreenCaptureThread();
+    QFFmpegSurfaceCaptureThread();
 
-    ~QFFmpegScreenCaptureThread() override;
+    ~QFFmpegSurfaceCaptureThread() override;
 
     void stop();
 
     template<typename Object, typename Method>
     void addFrameCallback(Object &object, Method method)
     {
-        connect(this, &QFFmpegScreenCaptureThread::frameGrabbed,
-                std::bind(method, &object, std::placeholders::_1));
+        connect(this, &QFFmpegSurfaceCaptureThread::frameGrabbed,
+                &object, method, Qt::DirectConnection);
     }
 
 signals:
     void frameGrabbed(const QVideoFrame&);
-    void errorUpdated(QScreenCapture::Error error, const QString &description);
+    void errorUpdated(QPlatformSurfaceCapture::Error error, const QString &description);
 
 protected:
     void run() override;
 
-    void updateError(QScreenCapture::Error error, const QString &description = {});
+    void updateError(QPlatformSurfaceCapture::Error error, const QString &description = {});
 
     virtual QVideoFrame grabFrame() = 0;
 
@@ -74,9 +74,9 @@ protected:
 private:
     qreal m_rate = 0;
     std::unique_ptr<QTimer> m_timer;
-    std::optional<QScreenCapture::Error> m_prevError;
+    std::optional<QPlatformSurfaceCapture::Error> m_prevError;
 };
 
 QT_END_NAMESPACE
 
-#endif // QFFMPEGSCREENCAPTURETHREAD_P_H
+#endif // QFFMPEGSURFACECAPTURETHREAD_P_H

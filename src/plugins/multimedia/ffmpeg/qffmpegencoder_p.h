@@ -18,11 +18,14 @@
 #include "qffmpeg_p.h"
 #include "qffmpeghwaccel_p.h"
 
+#include "private/qmultimediautils_p.h"
+
 #include <private/qplatformmediarecorder_p.h>
 #include <qaudioformat.h>
 #include <qaudiobuffer.h>
+#include <qmediarecorder.h>
 
-#include <qqueue.h>
+#include <queue>
 
 QT_BEGIN_NAMESPACE
 
@@ -68,13 +71,16 @@ public:
     void setMetaData(const QMediaMetaData &metaData);
 
 public Q_SLOTS:
-    void newAudioBuffer(const QAudioBuffer &buffer);
     void newTimeStamp(qint64 time);
 
 Q_SIGNALS:
     void durationChanged(qint64 duration);
     void error(QMediaRecorder::Error code, const QString &description);
     void finalizationDone();
+
+private:
+    template<typename... Args>
+    void addMediaFrameHandler(Args &&...args);
 
 private:
     // TODO: improve the encasulation
@@ -87,7 +93,6 @@ private:
     QMediaMetaData metaData;
     AVFormatContext *formatContext = nullptr;
     Muxer *muxer = nullptr;
-    bool isRecording = false;
 
     AudioEncoder *audioEncode = nullptr;
     QList<VideoEncoder *> videoEncoders;
@@ -95,20 +100,23 @@ private:
 
     QMutex timeMutex;
     qint64 timeRecorded = 0;
+
+    bool isHeaderWritten = false;
 };
 
 
 class Muxer : public Thread
 {
     mutable QMutex queueMutex;
-    QQueue<AVPacket *> packetQueue;
+    std::queue<AVPacketUPtr> packetQueue;
+
 public:
     Muxer(Encoder *encoder);
 
-    void addPacket(AVPacket *);
+    void addPacket(AVPacketUPtr packet);
 
 private:
-    AVPacket *takePacket();
+    AVPacketUPtr takePacket();
 
     void init() override;
     void cleanup() override;
@@ -134,7 +142,8 @@ protected:
 class AudioEncoder : public EncoderThread
 {
     mutable QMutex queueMutex;
-    QQueue<QAudioBuffer> audioBufferQueue;
+    std::queue<QAudioBuffer> audioBufferQueue;
+
 public:
     AudioEncoder(Encoder *encoder, QFFmpegAudioInput *input, const QMediaEncoderSettings &settings);
 
@@ -153,31 +162,30 @@ private:
     void loop() override;
 
     AVStream *stream = nullptr;
-    AVCodecContext *codec = nullptr;
-    QFFmpegAudioInput *input;
+    AVCodecContextUPtr codecContext;
+    QFFmpegAudioInput *input = nullptr;
     QAudioFormat format;
 
-    SwrContext *resampler = nullptr;
+    SwrContextUPtr resampler;
     qint64 samplesWritten = 0;
     const AVCodec *avCodec = nullptr;
     QMediaEncoderSettings settings;
 };
 
-
 class VideoEncoder : public EncoderThread
 {
     mutable QMutex queueMutex;
-    QQueue<QVideoFrame> videoFrameQueue;
-    const qsizetype maxQueueSize = 10; // Arbitrarily chosen to limit memory usage (332 MB @ 4K)
+    std::queue<QVideoFrame> videoFrameQueue;
+    const size_t maxQueueSize = 10; // Arbitrarily chosen to limit memory usage (332 MB @ 4K)
 
 public:
     VideoEncoder(Encoder *encoder, const QMediaEncoderSettings &settings,
                  const QVideoFrameFormat &format, std::optional<AVPixelFormat> hwFormat);
     ~VideoEncoder() override;
 
-    void addFrame(const QVideoFrame &frame);
-
     bool isValid() const;
+
+    void addFrame(const QVideoFrame &frame);
 
     void setPaused(bool b) override
     {
@@ -195,7 +203,7 @@ private:
     bool shouldWait() const override;
     void loop() override;
 
-    VideoFrameEncoder *frameEncoder = nullptr;
+    std::unique_ptr<VideoFrameEncoder> frameEncoder;
 
     QAtomicInteger<qint64> baseTime = std::numeric_limits<qint64>::min();
     qint64 lastFrameTime = 0;

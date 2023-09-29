@@ -2,17 +2,23 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qscreencapture.h"
+#include "qmediacapturesession.h"
 #include <private/qplatformmediaintegration_p.h>
-#include <private/qplatformscreencapture_p.h>
+#include <private/qplatformsurfacecapture_p.h>
 #include <private/qobject_p.h>
 
 QT_BEGIN_NAMESPACE
+
+static QScreenCapture::Error toScreenCaptureError(QPlatformSurfaceCapture::Error error)
+{
+    return static_cast<QScreenCapture::Error>(error);
+}
 
 class QScreenCapturePrivate : public QObjectPrivate
 {
 public:
     QMediaCaptureSession *captureSession = nullptr;
-    std::unique_ptr<QPlatformScreenCapture> platformScreenCapture;
+    std::unique_ptr<QPlatformSurfaceCapture> platformScreenCapture;
 };
 
 /*!
@@ -67,8 +73,24 @@ QScreenCapture::QScreenCapture(QObject *parent)
 {
     Q_D(QScreenCapture);
 
-    d->platformScreenCapture.reset(
-            QPlatformMediaIntegration::instance()->createScreenCapture(this));
+    auto platformCapture = QPlatformMediaIntegration::instance()->createScreenCapture(this);
+    if (platformCapture) {
+        connect(platformCapture, &QPlatformSurfaceCapture::activeChanged, this,
+                &QScreenCapture::activeChanged);
+        connect(platformCapture, &QPlatformSurfaceCapture::errorChanged, this,
+                &QScreenCapture::errorChanged);
+        connect(platformCapture, &QPlatformSurfaceCapture::errorOccurred, this,
+                [this](QPlatformSurfaceCapture::Error error, QString errorString) {
+                    emit errorOccurred(toScreenCaptureError(error), errorString);
+                });
+
+        connect(platformCapture,
+                qOverload<QPlatformSurfaceCapture::ScreenSource>(
+                        &QPlatformSurfaceCapture::sourceChanged),
+                this, &QScreenCapture::screenChanged);
+
+        d->platformScreenCapture.reset(platformCapture);
+    }
 }
 
 QScreenCapture::~QScreenCapture()
@@ -77,6 +99,9 @@ QScreenCapture::~QScreenCapture()
 
     // Reset platformScreenCapture in the destructor to avoid having broken ref in the object.
     d->platformScreenCapture.reset();
+
+    if (d->captureSession)
+        d->captureSession->setScreenCapture(nullptr);
 }
 
 /*!
@@ -143,19 +168,17 @@ void QScreenCapture::setScreen(QScreen *screen)
 {
     Q_D(QScreenCapture);
 
-    if (d->platformScreenCapture) {
-        d->platformScreenCapture->setWindow(nullptr);
-        d->platformScreenCapture->setWindowId(0);
-        d->platformScreenCapture->setScreen(screen);
-    }
+    if (d->platformScreenCapture)
+        d->platformScreenCapture->setSource(QPlatformSurfaceCapture::ScreenSource(screen));
 }
 
 QScreen *QScreenCapture::screen() const
 {
     Q_D(const QScreenCapture);
 
-    return d->platformScreenCapture ? d->platformScreenCapture->screen()
-                                    : nullptr;
+    return d->platformScreenCapture
+            ? d->platformScreenCapture->source<QPlatformSurfaceCapture::ScreenSource>()
+            : nullptr;
 }
 
 /*!
@@ -171,7 +194,7 @@ QScreenCapture::Error QScreenCapture::error() const
 {
     Q_D(const QScreenCapture);
 
-    return d->platformScreenCapture ? d->platformScreenCapture->error()
+    return d->platformScreenCapture ? toScreenCaptureError(d->platformScreenCapture->error())
                                     : CapturingNotSupported;
 }
 
@@ -219,7 +242,7 @@ void QScreenCapture::setCaptureSession(QMediaCaptureSession *captureSession)
 /*!
     \internal
 */
-class QPlatformScreenCapture *QScreenCapture::platformScreenCapture() const
+class QPlatformSurfaceCapture *QScreenCapture::platformScreenCapture() const
 {
     Q_D(const QScreenCapture);
 

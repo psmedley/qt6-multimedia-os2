@@ -1,22 +1,22 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#ifndef QMOCKSCREENCAPTURE_H
-#define QMOCKSCREENCAPTURE_H
+#ifndef QMOCKSURFACECAPTURE_H
+#define QMOCKSURFACECAPTURE_H
 
-#include "private/qplatformscreencapture_p.h"
+#include "private/qplatformsurfacecapture_p.h"
 
 #include "qmockvideobuffer.h"
 #include "qthread.h"
 
 QT_BEGIN_NAMESPACE
 
-class QMockScreenCapture : public QPlatformScreenCapture
+class QMockSurfaceCapture : public QPlatformSurfaceCapture
 {
     class Grabber : public QThread
     {
     public:
-        Grabber(QMockScreenCapture &capture) : QThread(&capture), m_capture(capture) { }
+        Grabber(QMockSurfaceCapture &capture) : QThread(&capture), m_capture(capture) { }
 
         void run() override
         {
@@ -35,27 +35,24 @@ class QMockScreenCapture : public QPlatformScreenCapture
         }
 
     private:
-        QMockScreenCapture &m_capture;
+        QMockSurfaceCapture &m_capture;
     };
 
 public:
-    using QPlatformScreenCapture::QPlatformScreenCapture;
+    using QPlatformSurfaceCapture::QPlatformSurfaceCapture;
 
-    ~QMockScreenCapture() { resetGrabber(); }
+    ~QMockSurfaceCapture() { resetGrabber(); }
 
-    void setActive(bool active) override
+    bool setActiveInternal(bool active) override
     {
-        if (active == bool(m_grabber))
-            return;
-
-        if (m_grabber) {
-            resetGrabber();
-        } else {
+        if (active) {
             m_grabber = std::make_unique<Grabber>(*this);
             m_grabber->start();
+        } else {
+            resetGrabber();
         }
 
-        emit screenCapture()->activeChanged(bool(m_grabber));
+        return true;
     }
 
     bool isActive() const override { return bool(m_grabber); }
@@ -66,10 +63,6 @@ public:
                        m_imageSize, QVideoFrameFormat::pixelFormatFromImageFormat(m_imageFormat))
                          : QVideoFrameFormat{};
     }
-
-    void setScreen(QScreen *) override { }
-
-    QScreen *screen() const override { return nullptr; }
 
 private:
     void resetGrabber()
@@ -90,4 +83,4 @@ private:
 
 QT_END_NAMESPACE
 
-#endif // QMOCKSCREENCAPTURE_H
+#endif // QMOCKSURFACECAPTURE_H

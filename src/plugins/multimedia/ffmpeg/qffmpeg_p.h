@@ -135,6 +135,8 @@ using AVHWFramesConstraintsUPtr = std::unique_ptr<
         AVHWFramesConstraints,
         AVDeleter<decltype(&av_hwframe_constraints_free), &av_hwframe_constraints_free>>;
 
+using SwrContextUPtr = std::unique_ptr<SwrContext, AVDeleter<decltype(&swr_free), &swr_free>>;
+
 using PixelOrSampleFormat = int;
 using AVScore = int;
 constexpr AVScore BestAVScore = std::numeric_limits<AVScore>::max();
@@ -202,6 +204,8 @@ std::string cvFormatToString(uint32_t format);
 
 #endif
 }
+
+QDebug operator<<(QDebug, const AVRational &);
 
 QT_END_NAMESPACE
 

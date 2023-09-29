@@ -12,6 +12,7 @@
 #include <qaudioformat.h>
 #include <qmockintegration.h>
 #include <qmediacapturesession.h>
+#include <qscreencapture.h>
 
 #include "qguiapplication_platform.h"
 #include "qmockmediacapturesession.h"
@@ -30,7 +31,7 @@ public slots:
 private slots:
     void testBasicSession();
     void testNullControls();
-    void testDeleteMediaSource();
+    void testDeleteMediaCapture();
     void testError();
     void testSink();
     void testRecord();
@@ -50,7 +51,7 @@ private slots:
     void testApplicationInative();
 
 private:
-    QMockIntegration *mockIntegration = nullptr;
+    QMockIntegrationFactory mockIntegrationFactory;
     QMediaCaptureSession *captureSession;
     QCamera *object = nullptr;
     QMockMediaCaptureSession *service = nullptr;
@@ -60,13 +61,12 @@ private:
 
 void tst_QMediaRecorder::initTestCase()
 {
-    mockIntegration = new QMockIntegration;
     captureSession = new QMediaCaptureSession;
     object = new QCamera;
     encoder = new QMediaRecorder;
     captureSession->setCamera(object);
     captureSession->setRecorder(encoder);
-    service = mockIntegration->lastCaptureService();
+    service = QMockIntegration::instance()->lastCaptureService();
     mock = service->mockControl;
 }
 
@@ -75,7 +75,6 @@ void tst_QMediaRecorder::cleanupTestCase()
     delete encoder;
     delete object;
     delete captureSession;
-    delete mockIntegration;
 }
 
 void tst_QMediaRecorder::testBasicSession()
@@ -144,23 +143,44 @@ void tst_QMediaRecorder::testNullControls()
     QCOMPARE(spy.size(), 0);
 }
 
-void tst_QMediaRecorder::testDeleteMediaSource()
+void tst_QMediaRecorder::testDeleteMediaCapture()
 {
     QMediaCaptureSession session;
-    QCamera *camera = new QCamera;
-    QMediaRecorder *recorder = new QMediaRecorder;
-    session.setCamera(camera);
-    session.setRecorder(recorder);
+    QMediaRecorder recorder;
 
-    QVERIFY(session.camera() == camera);
-    QVERIFY(recorder->isAvailable());
+    session.setRecorder(&recorder);
 
-    delete camera;
+    auto checkSourceDeleting = [&](auto setter, auto getter, auto signal) {
+        using Type = std::remove_pointer_t<decltype((session.*getter)())>;
 
-    QVERIFY(session.camera() == nullptr);
-    QVERIFY(recorder->isAvailable());
+        auto errorPrinter = qScopeGuard(
+                []() { qDebug() << QMetaType::fromType<Type>().name() << "deleting failed"; });
 
-    delete recorder;
+        auto capture = std::make_unique<Type>();
+
+        (session.*setter)(capture.get());
+
+        QVERIFY((session.*getter)() == capture.get());
+
+        QSignalSpy spy(&session, signal);
+        capture.reset();
+
+        QCOMPARE(spy.size(), 1);
+        QCOMPARE((session.*getter)(), nullptr);
+
+        QVERIFY(recorder.isAvailable());
+
+        errorPrinter.dismiss();
+    };
+
+    checkSourceDeleting(&QMediaCaptureSession::setImageCapture,
+                        &QMediaCaptureSession::imageCapture,
+                        &QMediaCaptureSession::imageCaptureChanged);
+    checkSourceDeleting(&QMediaCaptureSession::setCamera, &QMediaCaptureSession::camera,
+                        &QMediaCaptureSession::cameraChanged);
+    checkSourceDeleting(&QMediaCaptureSession::setScreenCapture,
+                        &QMediaCaptureSession::screenCapture,
+                        &QMediaCaptureSession::screenCaptureChanged);
 }
 
 void tst_QMediaRecorder::testError()

@@ -12,15 +12,17 @@
 #include "qffmpegimagecapture_p.h"
 #include "qffmpegaudioinput_p.h"
 #include "qffmpegaudiodecoder_p.h"
-#include "qffmpegscreencapture_p.h"
+#include "qffmpegsymbolsresolve_p.h"
+#include "qgrabwindowsurfacecapture_p.h"
 
 #ifdef Q_OS_MACOS
 #include <VideoToolbox/VideoToolbox.h>
+
+#include "qavfscreencapture_p.h"
 #endif
 
 #ifdef Q_OS_DARWIN
 #include "qavfcamera_p.h"
-#include "qavfscreencapture_p.h"
 #elif defined(Q_OS_WINDOWS)
 #include "qwindowscamera_p.h"
 #include "qwindowsvideodevices_p.h"
@@ -31,6 +33,7 @@
 #    include "jni.h"
 #    include "qandroidvideodevices_p.h"
 #    include "qandroidcamera_p.h"
+#    include "qandroidimagecapture_p.h"
 extern "C" {
 #  include <libavutil/log.h>
 #  include <libavcodec/jni.h>
@@ -41,12 +44,8 @@ extern "C" {
 #include "qv4l2camera_p.h"
 #endif
 
-#if QT_CONFIG(cpp_winrt)
-#include "qffmpegscreencapture_uwp_p.h"
-#endif
-
 #if QT_CONFIG(xlib)
-#include "qx11screencapture_p.h"
+#include "qx11surfacecapture_p.h"
 #endif
 
 QT_BEGIN_NAMESPACE
@@ -69,9 +68,16 @@ public:
     }
 };
 
+bool thread_local FFmpegLogsEnabledInThread = true;
+static bool UseCustomFFmpegLogger = false;
+
 static void qffmpegLogCallback(void *ptr, int level, const char *fmt, va_list vl)
 {
-    Q_UNUSED(ptr)
+    if (!FFmpegLogsEnabledInThread)
+        return;
+
+    if (!UseCustomFFmpegLogger)
+        return av_log_default_callback(ptr, level, fmt, vl);
 
     // filter logs above the chosen level and AV_LOG_QUIET (negative level)
     if (level < 0 || level > av_log_get_level())
@@ -91,42 +97,42 @@ static void qffmpegLogCallback(void *ptr, int level, const char *fmt, va_list vl
         qCritical() << message;
 }
 
+static void setupFFmpegLogger()
+{
+    if (qEnvironmentVariableIsSet("QT_FFMPEG_DEBUG")) {
+        av_log_set_level(AV_LOG_DEBUG);
+        UseCustomFFmpegLogger = true;
+    }
+
+    av_log_set_callback(&qffmpegLogCallback);
+}
+
 QFFmpegMediaIntegration::QFFmpegMediaIntegration()
 {
-    m_formatsInfo = new QFFmpegMediaFormatInfo();
+    resolveSymbols();
 
-#if QT_CONFIG(linux_v4l)
+    setupFFmpegLogger();
+
+#if defined(Q_OS_ANDROID)
+    m_videoDevices = std::make_unique<QAndroidVideoDevices>(this);
+#elif QT_CONFIG(linux_v4l)
     m_videoDevices = std::make_unique<QV4L2CameraDevices>(this);
 #endif
 #ifdef Q_OS_DARWIN
     m_videoDevices = std::make_unique<QAVFVideoDevices>(this);
-#elif defined(Q_OS_ANDROID)
-    m_videoDevices = std::make_unique<QAndroidVideoDevices>(this);
 #elif defined(Q_OS_WINDOWS)
     m_videoDevices = std::make_unique<QWindowsVideoDevices>(this);
 #endif
 
-    if (qEnvironmentVariableIsSet("QT_FFMPEG_DEBUG")) {
-        av_log_set_level(AV_LOG_DEBUG);
-        av_log_set_callback(&qffmpegLogCallback);
-    }
-
 #ifndef QT_NO_DEBUG
     qDebug() << "Available HW decoding frameworks:";
-    AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
-    while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE)
+    for (auto type : QFFmpeg::HWAccel::decodingDeviceTypes())
+        qDebug() << "    " << av_hwdevice_get_type_name(type);
+
+    qDebug() << "Available HW encoding frameworks:";
+    for (auto type : QFFmpeg::HWAccel::encodingDeviceTypes())
         qDebug() << "    " << av_hwdevice_get_type_name(type);
 #endif
-}
-
-QFFmpegMediaIntegration::~QFFmpegMediaIntegration()
-{
-    delete m_formatsInfo;
-}
-
-QPlatformMediaFormatInfo *QFFmpegMediaIntegration::formatInfo()
-{
-    return m_formatsInfo;
 }
 
 QMaybe<QPlatformAudioDecoder *> QFFmpegMediaIntegration::createAudioDecoder(QAudioDecoder *decoder)
@@ -160,25 +166,19 @@ QMaybe<QPlatformCamera *> QFFmpegMediaIntegration::createCamera(QCamera *camera)
 #endif
 }
 
-QPlatformScreenCapture *QFFmpegMediaIntegration::createScreenCapture(QScreenCapture *screenCapture)
+QPlatformSurfaceCapture *QFFmpegMediaIntegration::createScreenCapture(QScreenCapture *)
 {
-#if QT_CONFIG(cpp_winrt)
-    // Turned off since it's not stable: produce crashes and different side effects
-    // if (QFFmpegScreenCaptureUwp::isSupported())
-    //    return new QFFmpegScreenCaptureUwp(screenCapture);
-#endif
-
 #if QT_CONFIG(xlib)
-    if (QX11ScreenCapture::isSupported())
-        return new QX11ScreenCapture(screenCapture);
+    if (QX11SurfaceCapture::isSupported())
+        return new QX11SurfaceCapture(QPlatformSurfaceCapture::ScreenSource{});
 #endif
 
 #if defined(Q_OS_WINDOWS)
-    return new QFFmpegScreenCaptureDxgi(screenCapture);
+    return new QFFmpegScreenCaptureDxgi;
 #elif defined(Q_OS_MACOS) // TODO: probably use it for iOS as well
-    return new QAVFScreenCapture(screenCapture);
+    return new QAVFScreenCapture;
 #else
-    return new QFFmpegScreenCapture(screenCapture);
+    return new QGrabWindowSurfaceCapture(QPlatformSurfaceCapture::ScreenSource{});
 #endif
 }
 
@@ -189,7 +189,11 @@ QMaybe<QPlatformMediaRecorder *> QFFmpegMediaIntegration::createRecorder(QMediaR
 
 QMaybe<QPlatformImageCapture *> QFFmpegMediaIntegration::createImageCapture(QImageCapture *imageCapture)
 {
+#if defined(Q_OS_ANDROID)
+    return new QAndroidImageCapture(imageCapture);
+#else
     return new QFFmpegImageCapture(imageCapture);
+#endif
 }
 
 QMaybe<QPlatformVideoSink *> QFFmpegMediaIntegration::createVideoSink(QVideoSink *sink)
@@ -200,6 +204,11 @@ QMaybe<QPlatformVideoSink *> QFFmpegMediaIntegration::createVideoSink(QVideoSink
 QMaybe<QPlatformAudioInput *> QFFmpegMediaIntegration::createAudioInput(QAudioInput *input)
 {
     return new QFFmpegAudioInput(input);
+}
+
+QPlatformMediaFormatInfo *QFFmpegMediaIntegration::createFormatInfo()
+{
+    return new QFFmpegMediaFormatInfo;
 }
 
 #ifdef Q_OS_ANDROID

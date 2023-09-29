@@ -27,14 +27,15 @@ class QVideoSink;
 class QPlatformAudioInput;
 class QPlatformAudioOutput;
 class QMediaCaptureSession;
-class QPlatformScreenCapture;
+class QPlatformSurfaceCapture;
+class QPlatformVideoSource;
 
 class Q_MULTIMEDIA_EXPORT QPlatformMediaCaptureSession : public QObject
 {
     Q_OBJECT
 public:
     QPlatformMediaCaptureSession() = default;
-    virtual ~QPlatformMediaCaptureSession();
+    ~QPlatformMediaCaptureSession() override;
 
     void setCaptureSession(QMediaCaptureSession *session) { m_session = session; }
     QMediaCaptureSession *captureSession() const { return m_session; }
@@ -42,8 +43,8 @@ public:
     virtual QPlatformCamera *camera() = 0;
     virtual void setCamera(QPlatformCamera *) {}
 
-    virtual QPlatformScreenCapture *screenCapture() { return nullptr; }
-    virtual void setScreenCapture(QPlatformScreenCapture *) {}
+    virtual QPlatformSurfaceCapture *screenCapture() { return nullptr; }
+    virtual void setScreenCapture(QPlatformSurfaceCapture *) {}
 
     virtual QPlatformImageCapture *imageCapture() = 0;
     virtual void setImageCapture(QPlatformImageCapture *) {}
@@ -56,6 +57,9 @@ public:
     virtual void setVideoPreview(QVideoSink * /*sink*/) {}
 
     virtual void setAudioOutput(QPlatformAudioOutput *) {}
+
+    // TBD: implement ordering of the sources basing on the order of adding
+    std::vector<QPlatformVideoSource *> activeVideoSources();
 
 Q_SIGNALS:
     void cameraChanged();

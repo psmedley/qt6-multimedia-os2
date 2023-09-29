@@ -3,16 +3,19 @@
 package org.qtproject.qt.android.multimedia;
 
 import org.qtproject.qt.android.multimedia.QtVideoDeviceManager;
+import org.qtproject.qt.android.multimedia.QtExifDataHandler;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Rect;
+import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureFailure;
+import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
 import android.media.Image;
@@ -36,6 +39,7 @@ public class QtCamera2 {
     HandlerThread mBackgroundThread;
     Handler mBackgroundHandler;
     ImageReader mImageReader = null;
+    ImageReader mCapturedPhotoReader = null;
     CameraManager mCameraManager;
     CameraCaptureSession mCaptureSession;
     CaptureRequest.Builder mPreviewRequestBuilder;
@@ -43,10 +47,20 @@ public class QtCamera2 {
     String mCameraId;
     List<Surface> mTargetSurfaces = new ArrayList<>();
 
+    private static final int STATE_PREVIEW = 0;
+    private static final int STATE_WAITING_LOCK = 1;
+    private static final int STATE_WAITING_PRECAPTURE = 2;
+    private static final int STATE_WAITING_NON_PRECAPTURE = 3;
+    private static final int STATE_PICTURE_TAKEN = 4;
+
+    private int mState = STATE_PREVIEW;
     private Object mStartMutex = new Object();
     private boolean mIsStarted = false;
     private static int MaxNumberFrames = 10;
+    private int mFlashMode = CaptureRequest.CONTROL_AE_MODE_ON;
     private int mTorchMode = CameraMetadata.FLASH_MODE_OFF;
+    private int mAFMode = CaptureRequest.CONTROL_AF_MODE_OFF;
+    private QtExifDataHandler mExifDataHandler = null;
 
     native void onCameraOpened(String cameraId);
     native void onCameraDisconnect(String cameraId);
@@ -110,6 +124,63 @@ public class QtCamera2 {
             super.onCaptureFailed(session, request, failure);
             onCaptureSessionFailed(mCameraId, failure.getReason(), failure.getFrameNumber());
         }
+
+        private void process(CaptureResult result) {
+            switch (mState) {
+                case STATE_WAITING_LOCK: {
+                    Integer afState = result.get(CaptureResult.CONTROL_AF_STATE);
+                    if (CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED == afState ||
+                        CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED == afState) {
+                        Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
+                        if (aeState == null ||
+                                aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED) {
+                            mState = STATE_PICTURE_TAKEN;
+                            capturePhoto();
+                        } else {
+                            try {
+                                mPreviewRequestBuilder.set(
+                                    CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
+                                    CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START);
+                                mState = STATE_WAITING_PRECAPTURE;
+                                mCaptureSession.capture(mPreviewRequestBuilder.build(),
+                                                        mCaptureCallback,
+                                                        mBackgroundHandler);
+                            } catch (CameraAccessException e) {
+                                Log.w("QtCamera2", "Cannot get access to the camera: " + e);
+                            }
+                        }
+                    }
+                    break;
+                }
+                case STATE_WAITING_PRECAPTURE: {
+                    Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
+                    if (aeState == null || aeState == CaptureResult.CONTROL_AE_STATE_PRECAPTURE) {
+                        mState = STATE_WAITING_NON_PRECAPTURE;
+                    }
+                    break;
+                }
+                case STATE_WAITING_NON_PRECAPTURE: {
+                    Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
+                    if (aeState == null || aeState != CaptureResult.CONTROL_AE_STATE_PRECAPTURE) {
+                        mState = STATE_PICTURE_TAKEN;
+                        capturePhoto();
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+
+        @Override
+        public void onCaptureProgressed(CameraCaptureSession s, CaptureRequest r, CaptureResult partialResult) {
+            process(partialResult);
+        }
+
+        @Override
+        public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, TotalCaptureResult result) {
+            process(result);
+        }
     };
 
     public QtCamera2(Context context) {
@@ -148,6 +219,14 @@ public class QtCamera2 {
         return false;
     }
 
+    native void onPhotoAvailable(String cameraId, Image frame);
+
+    ImageReader.OnImageAvailableListener mOnPhotoAvailableListener = new ImageReader.OnImageAvailableListener() {
+        @Override
+        public void onImageAvailable(ImageReader reader) {
+            QtCamera2.this.onPhotoAvailable(mCameraId, reader.acquireLatestImage());
+        }
+    };
 
     native void onFrameAvailable(String cameraId, Image frame);
 
@@ -166,6 +245,10 @@ public class QtCamera2 {
         mImageReader = ImageReader.newInstance(width, height, format, MaxNumberFrames);
         mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mBackgroundHandler);
         addSurface(mImageReader.getSurface());
+
+        mCapturedPhotoReader = ImageReader.newInstance(width, height, format, MaxNumberFrames);
+        mCapturedPhotoReader.setOnImageAvailableListener(mOnPhotoAvailableListener, mBackgroundHandler);
+        addSurface(mCapturedPhotoReader.getSurface());
 
         return true;
     }
@@ -209,12 +292,19 @@ public class QtCamera2 {
         synchronized (mStartMutex) {
             try {
                 mPreviewRequestBuilder = mCameraDevice.createCaptureRequest(template);
-                for (Surface surface : mTargetSurfaces) {
-                    mPreviewRequestBuilder.addTarget(surface);
+                mPreviewRequestBuilder.addTarget(mImageReader.getSurface());
+                mAFMode = CaptureRequest.CONTROL_AF_MODE_OFF;
+                for (int mode : mVideoDeviceManager.getSupportedAfModes(mCameraId)) {
+                    if (mode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE) {
+                        mAFMode = mode;
+                        break;
+                    }
                 }
 
+                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, mFlashMode);
                 mPreviewRequestBuilder.set(CaptureRequest.FLASH_MODE, mTorchMode);
-                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
+                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, mAFMode);
                 mPreviewRequestBuilder.set(CaptureRequest.CONTROL_CAPTURE_INTENT, CameraMetadata.CONTROL_CAPTURE_INTENT_VIDEO_RECORD);
 
                 mPreviewRequest = mPreviewRequestBuilder.build();
@@ -249,6 +339,64 @@ public class QtCamera2 {
         }
     }
 
+    private void capturePhoto() {
+        try {
+            final CaptureRequest.Builder captureBuilder =
+                   mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+            captureBuilder.addTarget(mCapturedPhotoReader.getSurface());
+            captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, mFlashMode);
+
+            CameraCaptureSession.CaptureCallback captureCallback
+                        = new CameraCaptureSession.CaptureCallback() {
+            @Override
+            public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
+                                           TotalCaptureResult result) {
+                    try {
+                        mExifDataHandler = new QtExifDataHandler(result);
+                        // Reset the focus/flash and go back to the normal state of preview.
+                        mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
+                                                   CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
+                        mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
+                                                   CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE);
+                        mPreviewRequest = mPreviewRequestBuilder.build();
+                        mState = STATE_PREVIEW;
+                        mCaptureSession.setRepeatingRequest(mPreviewRequest,
+                                                            mCaptureCallback,
+                                                            mBackgroundHandler);
+                    } catch (CameraAccessException e) {
+                        e.printStackTrace();
+                    }
+                }
+            };
+
+            mCaptureSession.capture(captureBuilder.build(), captureCallback, mBackgroundHandler);
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void takePhoto() {
+        try {
+            if (mAFMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE) {
+                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START);
+                mState = STATE_WAITING_LOCK;
+                mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback, mBackgroundHandler);
+            } else {
+                capturePhoto();
+            }
+        } catch (CameraAccessException e) {
+            Log.w("QtCamera2", "Cannot get access to the camera: " + e);
+        }
+    }
+
+    public void saveExifToFile(String path)
+    {
+        if (mExifDataHandler != null)
+            mExifDataHandler.save(path);
+        else
+            Log.e("QtCamera2", "No Exif data that could be saved to " + path);
+    }
+
     public void zoomTo(float factor)
     {
         synchronized (mStartMutex) {
@@ -270,6 +418,30 @@ public class QtCamera2 {
                 mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback, mBackgroundHandler);
             } catch (Exception exception) {
                 Log.w("QtCamera2", "Failed to set zoom:" + exception);
+            }
+        }
+    }
+    public void setFlashMode(String flashMode)
+    {
+        synchronized (mStartMutex) {
+
+            int flashModeValue = mVideoDeviceManager.stringToControlAEMode(flashMode);
+            if (flashModeValue < 0) {
+                Log.w("QtCamera2", "Unknown flash mode");
+                return;
+            }
+            mFlashMode = flashModeValue;
+
+            if (!mIsStarted)
+                return;
+
+            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE, mFlashMode);
+            mPreviewRequest = mPreviewRequestBuilder.build();
+
+            try {
+                mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback, mBackgroundHandler);
+            } catch (Exception exception) {
+                Log.w("QtCamera2", "Failed to set flash mode:" + exception);
             }
         }
     }

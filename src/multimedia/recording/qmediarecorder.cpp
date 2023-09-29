@@ -6,9 +6,10 @@
 #include <private/qplatformmediarecorder_p.h>
 #include <qaudiodevice.h>
 #include <qcamera.h>
+#include <qscreencapture.h>
 #include <qmediacapturesession.h>
 #include <private/qplatformcamera_p.h>
-#include <private/qplatformscreencapture_p.h>
+#include <private/qplatformsurfacecapture_p.h>
 #include <private/qplatformmediaintegration_p.h>
 #include <private/qplatformmediacapture_p.h>
 
@@ -108,9 +109,17 @@ QMediaRecorder::QMediaRecorder(QObject *parent)
       d_ptr(new QMediaRecorderPrivate)
 {
     Q_D(QMediaRecorder);
+
+    auto &mediaIntegration = *QPlatformMediaIntegration::instance();
+
     d->q_ptr = this;
-    auto maybeControl = QPlatformMediaIntegration::instance()->createRecorder(this);
+    auto maybeControl = mediaIntegration.createRecorder(this);
     if (maybeControl) {
+        // The first format info initialization may take some time,
+        // for users it seems to be more suitable to have a delay on the object construction
+        // rather than on QMediaRecorder::record
+        mediaIntegration.formatInfo();
+
         d->control = maybeControl.value();
     } else {
         d->initErrorMessage = maybeControl.error();
@@ -330,16 +339,16 @@ void QMediaRecorder::record()
 {
     Q_D(QMediaRecorder);
 
-    if (!d->control || ! d->captureSession)
+    if (!d->control || !d->captureSession)
         return;
 
     if (d->control->state() == QMediaRecorder::PausedState) {
         d->control->resume();
     } else {
         auto oldMediaFormat = d->encoderSettings.mediaFormat();
-        auto camera = d->captureSession->camera();
-        auto screenCapture = d->captureSession->screenCapture();
-        bool hasVideo = (camera && camera->isActive()) || (screenCapture && screenCapture->isActive());
+
+        auto platformSession = d->captureSession->platformSession();
+        const bool hasVideo = platformSession && !platformSession->activeVideoSources().empty();
 
         d->encoderSettings.resolveFormat(hasVideo ? QMediaFormat::RequiresVideo : QMediaFormat::NoFlags);
         d->control->clearActualLocation();

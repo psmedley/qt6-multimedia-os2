@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideoframe.h"
-#include "qffmpegscreencapture_p.h"
+#include "qgrabwindowsurfacecapture_p.h"
 #include "qscreencapture.h"
-#include "qffmpegscreencapturethread_p.h"
+#include "qffmpegsurfacecapturethread_p.h"
 
 #include "private/qabstractvideobuffer_p.h"
 
@@ -13,13 +13,10 @@
 #include "qwaitcondition.h"
 #include "qpixmap.h"
 #include "qguiapplication.h"
-#include "qdatetime.h"
 #include "qwindow.h"
-#include "qelapsedtimer.h"
+#include "qpointer.h"
 
 #include <QtCore/qloggingcategory.h>
-
-static Q_LOGGING_CATEGORY(qLcFfmpegScreenCapture, "qt.multimedia.ffmpeg.screencapture")
 
 QT_BEGIN_NAMESPACE
 
@@ -35,10 +32,7 @@ public:
     {
     }
 
-    QVideoFrame::MapMode mapMode() const override
-    {
-        return m_mapMode;
-    }
+    QVideoFrame::MapMode mapMode() const override { return m_mapMode; }
 
     MapData map(QVideoFrame::MapMode mode) override
     {
@@ -64,17 +58,17 @@ public:
     QImage m_image;
 };
 
-}
+} // namespace
 
-class QFFmpegScreenCapture::Grabber : public QFFmpegScreenCaptureThread
+class QGrabWindowSurfaceCapture::Grabber : public QFFmpegSurfaceCaptureThread
 {
 public:
-    Grabber(QFFmpegScreenCapture &capture, QScreen *screen) : Grabber(capture, screen, nullptr)
+    Grabber(QGrabWindowSurfaceCapture &capture, QScreen *screen) : Grabber(capture, screen, nullptr)
     {
         Q_ASSERT(screen);
     }
 
-    Grabber(QFFmpegScreenCapture &capture, WindowUPtr window)
+    Grabber(QGrabWindowSurfaceCapture &capture, WindowUPtr window)
         : Grabber(capture, nullptr, std::move(window))
     {
         Q_ASSERT(m_window);
@@ -95,12 +89,12 @@ public:
     }
 
 private:
-    Grabber(QFFmpegScreenCapture &capture, QScreen *screen, WindowUPtr window)
+    Grabber(QGrabWindowSurfaceCapture &capture, QScreen *screen, WindowUPtr window)
         : m_capture(capture), m_screen(screen), m_window(std::move(window))
     {
         connect(qApp, &QGuiApplication::screenRemoved, this, &Grabber::onScreenRemoved);
-        addFrameCallback(m_capture, &QFFmpegScreenCapture::newVideoFrame);
-        connect(this, &Grabber::errorUpdated, &m_capture, &QFFmpegScreenCapture::updateError);
+        addFrameCallback(m_capture, &QGrabWindowSurfaceCapture::newVideoFrame);
+        connect(this, &Grabber::errorUpdated, &m_capture, &QGrabWindowSurfaceCapture::updateError);
     }
 
     void onScreenRemoved(QScreen *screen)
@@ -157,7 +151,7 @@ private:
         QScreen *screen = m_window ? m_window->screen() : m_screen ? m_screen.data() : nullptr;
 
         if (!screen) {
-            updateError(QScreenCapture::Error::CaptureFailed, "Screen not found");
+            updateError(QPlatformSurfaceCapture::CaptureFailed, "Screen not found");
             return {};
         }
 
@@ -172,8 +166,8 @@ private:
         updateFormat(format);
 
         if (!format.isValid()) {
-            updateError(QScreenCapture::Error::CaptureFailed,
-                                  "Failed to grab the screen content");
+            updateError(QPlatformSurfaceCapture::CaptureFailed,
+                        "Failed to grab the screen content");
             return {};
         }
 
@@ -181,7 +175,7 @@ private:
     }
 
 private:
-    QFFmpegScreenCapture &m_capture;
+    QGrabWindowSurfaceCapture &m_capture;
     QPointer<QScreen> m_screen;
     WindowUPtr m_window;
 
@@ -194,14 +188,14 @@ private:
     QWaitCondition m_screenRemovingWc;
 };
 
-QFFmpegScreenCapture::QFFmpegScreenCapture(QScreenCapture *screenCapture)
-    : QFFmpegScreenCaptureBase(screenCapture)
+QGrabWindowSurfaceCapture::QGrabWindowSurfaceCapture(Source initialSource)
+    : QPlatformSurfaceCapture(initialSource)
 {
 }
 
-QFFmpegScreenCapture::~QFFmpegScreenCapture() = default;
+QGrabWindowSurfaceCapture::~QGrabWindowSurfaceCapture() = default;
 
-QVideoFrameFormat QFFmpegScreenCapture::frameFormat() const
+QVideoFrameFormat QGrabWindowSurfaceCapture::frameFormat() const
 {
     if (m_grabber)
         return m_grabber->format();
@@ -209,50 +203,26 @@ QVideoFrameFormat QFFmpegScreenCapture::frameFormat() const
         return {};
 }
 
-bool QFFmpegScreenCapture::setActiveInternal(bool active)
+bool QGrabWindowSurfaceCapture::setActiveInternal(bool active)
 {
-    if (active == bool(m_grabber))
+    if (active == static_cast<bool>(m_grabber))
         return true;
 
-    if (m_grabber) {
+    if (m_grabber)
         m_grabber.reset();
-        return true;
-    }
+    else
+        std::visit([this](auto source) { activate(source); }, source());
 
-    if (auto wid = window() ? window()->winId() : windowId()) {
-        // create a copy of QWindow anyway since Grabber has to own the object
-        if (auto wnd = WindowUPtr(QWindow::fromWinId(wid))) {
-            if (!wnd->screen()) {
-                updateError(QScreenCapture::InternalError,
-                            "Window " + QString::number(wid) + " doesn't belong to any screen");
-                return false;
-            }
-
-            m_grabber = std::make_unique<Grabber>(*this, std::move(wnd));
-            m_grabber->start();
-            return true;
-        } else {
-            updateError(QScreenCapture::NotFound,
-                        "Window " + QString::number(wid) + "doesn't exist or permissions denied");
-            return false;
-        }
-    }
-
-    if (auto scrn = screen() ? screen() : QGuiApplication::primaryScreen()) {
-        m_grabber = std::make_unique<Grabber>(*this, scrn);
-        m_grabber->start();
-        return true;
-    }
-
-    updateError(QScreenCapture::NotFound, "Screen not found");
-    return false;
+    return static_cast<bool>(m_grabber) == active;
 }
 
-void QFFmpegScreenCapture::updateError(QScreenCapture::Error error, const QString &description)
+void QGrabWindowSurfaceCapture::activate(ScreenSource screen)
 {
-    qCDebug(qLcFfmpegScreenCapture) << description;
-    QMetaObject::invokeMethod(this, "updateError", Q_ARG(QScreenCapture::Error, error),
-                              Q_ARG(QString, description));
+    if (!checkScreenWithError(screen))
+        return;
+
+    m_grabber = std::make_unique<Grabber>(*this, screen);
+    m_grabber->start();
 }
 
 QT_END_NAMESPACE

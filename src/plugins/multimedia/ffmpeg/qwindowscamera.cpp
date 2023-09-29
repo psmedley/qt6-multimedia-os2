@@ -23,8 +23,7 @@ using namespace QWindowsMultimediaUtils;
 class CameraReaderCallback : public IMFSourceReaderCallback
 {
 public:
-    CameraReaderCallback() : m_cRef(1) {}
-    virtual ~CameraReaderCallback() {}
+    CameraReaderCallback() : m_cRef(1) { }
 
     //from IUnknown
     STDMETHODIMP QueryInterface(REFIID riid, LPVOID *ppvObject) override
@@ -34,7 +33,7 @@ public:
         if (riid == IID_IMFSourceReaderCallback) {
             *ppvObject = static_cast<IMFSourceReaderCallback*>(this);
         } else if (riid == IID_IUnknown) {
-            *ppvObject = static_cast<IUnknown*>(static_cast<IMFSourceReaderCallback*>(this));
+            *ppvObject = static_cast<IUnknown *>(this);
         } else {
             *ppvObject =  nullptr;
             return E_NOINTERFACE;
@@ -68,6 +67,9 @@ public:
         m_activeCamera = activeCamera;
     }
 private:
+    // Destructor is private. Caller should call Release.
+    virtual ~CameraReaderCallback() { }
+
     LONG m_cRef;
     ActiveCamera *m_activeCamera = nullptr;
     QMutex m_mutex;
@@ -176,8 +178,6 @@ static ComPtr<IMFMediaType> findVideoType(IMFSourceReader *reader,
 
 class ActiveCamera {
 public:
-    ActiveCamera() = delete;
-
     static std::unique_ptr<ActiveCamera> create(QWindowsCamera &wc, const QCameraDevice &device, const QCameraFormat &format)
     {
         auto ac = std::unique_ptr<ActiveCamera>(new ActiveCamera(wc));
@@ -199,8 +199,7 @@ public:
 
     bool setFormat(const QCameraFormat &format)
     {
-        m_reader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
-        m_flushWait.acquire();
+        flush();
 
         auto videoType = findVideoType(m_reader.Get(), format);
         if (videoType) {
@@ -257,13 +256,19 @@ public:
 
     ~ActiveCamera()
     {
-        m_reader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
-        m_flushWait.acquire();
+        flush();
         m_readerCallback->setActiveCamera(nullptr);
     }
 
 private:
     explicit ActiveCamera(QWindowsCamera &wc) : m_windowsCamera(wc), m_flushWait(0) {};
+
+    void flush()
+    {
+        if (SUCCEEDED(m_reader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM))) {
+            m_flushWait.acquire();
+        }
+    }
 
     QWindowsCamera &m_windowsCamera;
 
@@ -322,8 +327,8 @@ void QWindowsCamera::setActive(bool active)
             activeChanged(true);
 
     } else {
-        emit activeChanged(false);
         m_active.reset();
+        emit activeChanged(false);
     }
 }
 

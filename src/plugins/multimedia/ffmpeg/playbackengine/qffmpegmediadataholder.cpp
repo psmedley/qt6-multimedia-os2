@@ -9,7 +9,12 @@
 #include "qdatetime.h"
 #include "qloggingcategory.h"
 
+#include <math.h>
 #include <optional>
+
+extern "C" {
+#include "libavutil/display.h"
+}
 
 QT_BEGIN_NAMESPACE
 
@@ -41,6 +46,29 @@ static std::optional<qint64> streamDuration(const AVStream &stream)
     return {};
 }
 
+static int streamOrientation(const AVStream *stream)
+{
+    Q_ASSERT(stream);
+    using SideDataSize = decltype(AVPacketSideData::size);
+    SideDataSize dataSize = 0;
+    constexpr SideDataSize displayMatrixSize = sizeof(int32_t) * 9;
+    const uint8_t *sideData = av_stream_get_side_data(stream, AV_PKT_DATA_DISPLAYMATRIX, &dataSize);
+    if (dataSize < displayMatrixSize)
+        return 0;
+    auto displayMatrix = reinterpret_cast<const int32_t *>(sideData);
+    auto rotation = static_cast<int>(std::round(av_display_rotation_get(displayMatrix)));
+    // Convert counterclockwise rotation angle to clockwise, restricted to 0, 90, 180 and 270
+    if (rotation % 90 != 0)
+        return 0;
+    return rotation < 0 ? -rotation % 360 : -rotation % 360 + 360;
+}
+
+QVideoFrame::RotationAngle MediaDataHolder::getRotationAngle() const
+{
+    int orientation = m_metaData.value(QMediaMetaData::Orientation).toInt();
+    return static_cast<QVideoFrame::RotationAngle>(orientation);
+}
+
 static void insertMediaData(QMediaMetaData &metaData, QPlatformMediaPlayer::TrackType trackType,
                             const AVStream *stream)
 {
@@ -56,6 +84,7 @@ static void insertMediaData(QMediaMetaData &metaData, QPlatformMediaPlayer::Trac
         metaData.insert(QMediaMetaData::Resolution, QSize(codecPar->width, codecPar->height));
         metaData.insert(QMediaMetaData::VideoFrameRate,
                         qreal(stream->avg_frame_rate.num) / qreal(stream->avg_frame_rate.den));
+        metaData.insert(QMediaMetaData::Orientation, QVariant::fromValue(streamOrientation(stream)));
         break;
     case QPlatformMediaPlayer::AudioStream:
         metaData.insert(QMediaMetaData::AudioBitRate, (int)codecPar->bit_rate);
@@ -136,7 +165,11 @@ MediaDataHolder::recreateAVFormatContext(const QUrl &media, QIODevice *stream)
         context->pb = avio_alloc_context(buffer, bufferSize, false, stream, &readQIODevice, nullptr, &seekQIODevice);
     }
 
-    int ret = avformat_open_input(&context, url.constData(), nullptr, nullptr);
+    AVDictionaryHolder dict;
+    constexpr auto NetworkTimeoutUs = "5000000";
+    av_dict_set(dict, "timeout", NetworkTimeoutUs, 0);
+
+    int ret = avformat_open_input(&context, url.constData(), nullptr, dict);
     if (ret < 0) {
         auto code = QMediaPlayer::ResourceError;
         if (ret == AVERROR(EACCES))
@@ -202,6 +235,12 @@ void MediaDataHolder::updateStreams()
         }
 
         m_streamMap[trackType].append({ (int)i, isDefault, metaData });
+    }
+
+    // With some media files, streams may be lacking duration info. Let's
+    // get it from ffmpeg's duration estimation instead.
+    if (m_duration == 0 && m_context->duration > 0ll) {
+        m_duration = m_context->duration;
     }
 
     for (auto trackType :

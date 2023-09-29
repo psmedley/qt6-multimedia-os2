@@ -16,11 +16,11 @@
 
 #include "playbackengine/qffmpegplaybackenginedefs_p.h"
 #include "qthread.h"
-#include "qtimer.h"
-
-#include <atomic>
+#include "qatomic.h"
 
 QT_BEGIN_NAMESPACE
+
+class QTimer;
 
 namespace QFFmpeg {
 
@@ -30,6 +30,11 @@ class PlaybackEngineObject : public QObject
 public:
     using TimePoint = std::chrono::steady_clock::time_point;
     using TimePointOpt = std::optional<TimePoint>;
+    using Id = quint64;
+
+    PlaybackEngineObject();
+
+    ~PlaybackEngineObject();
 
     bool isPaused() const;
 
@@ -38,6 +43,8 @@ public:
     void kill();
 
     void setPaused(bool isPaused);
+
+    Id id() const;
 
 signals:
     void atEnd();
@@ -59,12 +66,16 @@ protected:
 
     virtual void doNextStep() { }
 
-private:
-    QTimer *m_timer = nullptr;
+private slots:
+    void onTimeout();
 
-    std::atomic_bool m_paused = true;
-    std::atomic_bool m_atEnd = false;
-    std::atomic_bool m_deleting = false;
+private:
+    std::unique_ptr<QTimer> m_timer;
+
+    QAtomicInteger<bool> m_paused = true;
+    QAtomicInteger<bool> m_atEnd = false;
+    QAtomicInteger<bool> m_deleting = false;
+    const Id m_id;
 };
 } // namespace QFFmpeg
 

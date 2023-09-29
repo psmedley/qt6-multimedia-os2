@@ -36,8 +36,7 @@ Q_DECLARE_LOGGING_CATEGORY(qWasmMediaDevices)
 
 class QWasmAudioEngine;
 
-class QWasmCameraDevices : public QObject,
-                           public QPlatformVideoDevices
+class QWasmCameraDevices : public QPlatformVideoDevices
 {
     Q_OBJECT
 public:
@@ -68,6 +67,7 @@ private:
     void updateCameraDevices();
     void getMediaDevices();
     void getOpenALAudioDevices();
+    void parseDevices(emscripten::val devices);
 
     QMap <std::string, QAudioDevice> m_audioOutputs;
     QMap <std::string, QAudioDevice> m_audioInputs;
@@ -81,6 +81,7 @@ private:
     bool m_audioOutputsAdded = false;
     emscripten::val m_jsMediaDevicesInterface = emscripten::val::undefined();
     bool m_initDone = false;
+    bool m_firstInit = false;
 };
 
 QT_END_NAMESPACE

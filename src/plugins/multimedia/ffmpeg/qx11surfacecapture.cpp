@@ -1,17 +1,18 @@
-// Copyright (C) 2016 The Qt Company Ltd.
+// Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "qx11screencapture_p.h"
-#include "qffmpegscreencapturethread_p.h"
+#include "qx11surfacecapture_p.h"
+#include "qffmpegsurfacecapturethread_p.h"
 
 #include <qvideoframe.h>
 #include <qscreen.h>
 #include <qwindow.h>
 #include <qdebug.h>
-#include <QGuiApplication>
+#include <qguiapplication.h>
 #include <qloggingcategory.h>
 
-#include "private/qabstractvideobuffer_p.h"
+#include "private/qmemoryvideobuffer_p.h"
+#include "private/qvideoframeconversionhelper_p.h"
 
 #include <X11/Xlib.h>
 #include <sys/shm.h>
@@ -23,7 +24,7 @@
 
 QT_BEGIN_NAMESPACE
 
-static Q_LOGGING_CATEGORY(qLcX11ScreenCapture, "qt.multimedia.ffmpeg.x11screencapture")
+static Q_LOGGING_CATEGORY(qLcX11SurfaceCapture, "qt.multimedia.ffmpeg.qx11surfacecapture");
 
 namespace {
 
@@ -78,55 +79,18 @@ QVideoFrameFormat::PixelFormat xImagePixelFormat(const XImage &image)
     return QVideoFrameFormat::Format_Invalid;
 }
 
-class DataVideoBuffer : public QAbstractVideoBuffer
-{
-public:
-    DataVideoBuffer(const char *data, int bytesPerLine, int size)
-        : QAbstractVideoBuffer(QVideoFrame::NoHandle),
-          m_data(data, size),
-          m_size(size),
-          m_bytesPerLine(bytesPerLine)
-    {
-    }
-
-    QVideoFrame::MapMode mapMode() const override { return m_mapMode; }
-
-    MapData map(QVideoFrame::MapMode mode) override
-    {
-        MapData mapData;
-        if (m_mapMode == QVideoFrame::NotMapped) {
-            m_mapMode = mode;
-
-            mapData.nPlanes = 1;
-            mapData.bytesPerLine[0] = m_bytesPerLine;
-            mapData.data[0] = (uchar *)m_data.data();
-            mapData.size[0] = m_size;
-        }
-
-        return mapData;
-    }
-
-    void unmap() override { m_mapMode = QVideoFrame::NotMapped; }
-
-private:
-    QByteArray m_data;
-    QVideoFrame::MapMode m_mapMode = QVideoFrame::NotMapped;
-    int m_size;
-    int m_bytesPerLine;
-};
-
 } // namespace
 
-class QX11ScreenCapture::Grabber : private QFFmpegScreenCaptureThread
+class QX11SurfaceCapture::Grabber : private QFFmpegSurfaceCaptureThread
 {
 public:
-    static std::unique_ptr<Grabber> create(QX11ScreenCapture &capture, QScreen *screen)
+    static std::unique_ptr<Grabber> create(QX11SurfaceCapture &capture, QScreen *screen)
     {
         std::unique_ptr<Grabber> result(new Grabber(capture));
         return result->init(screen) ? std::move(result) : nullptr;
     }
 
-    static std::unique_ptr<Grabber> create(QX11ScreenCapture &capture, WId wid)
+    static std::unique_ptr<Grabber> create(QX11SurfaceCapture &capture, WId wid)
     {
         std::unique_ptr<Grabber> result(new Grabber(capture));
         return result->init(wid) ? std::move(result) : nullptr;
@@ -142,10 +106,10 @@ public:
     const QVideoFrameFormat &format() const { return m_format; }
 
 private:
-    Grabber(QX11ScreenCapture &capture) : m_capture(capture)
+    Grabber(QX11SurfaceCapture &capture)
     {
-        addFrameCallback(capture, &QX11ScreenCapture::newVideoFrame);
-        connect(this, &Grabber::errorUpdated, &capture, &QX11ScreenCapture::updateError);
+        addFrameCallback(capture, &QX11SurfaceCapture::newVideoFrame);
+        connect(this, &Grabber::errorUpdated, &capture, &QX11SurfaceCapture::updateError);
     }
 
     bool createDisplay()
@@ -153,10 +117,15 @@ private:
         if (!m_display)
             m_display.reset(XOpenDisplay(nullptr));
 
+        if (!m_display)
+            updateError(QPlatformSurfaceCapture::InternalError,
+                        QLatin1String("Cannot open X11 display"));
+
         return m_display != nullptr;
     }
 
-    bool init(WId wid) {
+    bool init(WId wid)
+    {
         if (auto screen = QGuiApplication::primaryScreen())
             setFrameRate(screen->refreshRate());
 
@@ -165,6 +134,11 @@ private:
 
     bool init(QScreen *screen)
     {
+        if (!screen) {
+            updateError(QPlatformSurfaceCapture::NotFound, QLatin1String("Screen Not Found"));
+            return false;
+        }
+
         if (!createDisplay())
             return false;
 
@@ -219,7 +193,8 @@ private:
     {
         XWindowAttributes wndattr = {};
         if (XGetWindowAttributes(m_display.get(), m_xid, &wndattr) == 0) {
-            updateError(QScreenCapture::CaptureFailed, QLatin1String("Cannot get window attributes"));
+            updateError(QPlatformSurfaceCapture::CaptureFailed,
+                        QLatin1String("Cannot get window attributes"));
             return false;
         }
 
@@ -233,8 +208,8 @@ private:
         if (!m_xImage || wndattr.width != m_xImage->width || wndattr.height != m_xImage->height
             || wndattr.depth != m_xImage->depth || wndattr.visual->visualid != m_visualID) {
 
-            qCDebug(qLcX11ScreenCapture) << "recreate ximage: " << wndattr.width << wndattr.height << wndattr.depth
-                     << wndattr.visual->visualid;
+            qCDebug(qLcX11SurfaceCapture) << "recreate ximage: " << wndattr.width << wndattr.height
+                                          << wndattr.depth << wndattr.visual->visualid;
 
             detachShm();
             m_xImage.reset();
@@ -244,7 +219,8 @@ private:
                                            nullptr, &m_shmInfo, wndattr.width, wndattr.height));
 
             if (!m_xImage) {
-                updateError(QScreenCapture::CaptureFailed, QLatin1String("Cannot create image"));
+                updateError(QPlatformSurfaceCapture::CaptureFailed,
+                            QLatin1String("Cannot create image"));
                 return false;
             }
 
@@ -252,7 +228,7 @@ private:
 
             // TODO: probably, add a converter instead
             if (pixelFormat == QVideoFrameFormat::Format_Invalid) {
-                updateError(QScreenCapture::CaptureFailed,
+                updateError(QPlatformSurfaceCapture::CaptureFailed,
                             QLatin1String("Not handled pixel format, bpp=")
                                     + QString::number(m_xImage->bits_per_pixel));
                 return false;
@@ -261,13 +237,12 @@ private:
             attachShm();
 
             if (!m_attached) {
-                updateError(QScreenCapture::CaptureFailed,
+                updateError(QPlatformSurfaceCapture::CaptureFailed,
                             QLatin1String("Cannot attach shared memory"));
                 return false;
             }
 
-            m_format = QVideoFrameFormat(QSize(m_xImage->width, m_xImage->height),
-                                         pixelFormat);
+            m_format = QVideoFrameFormat(QSize(m_xImage->width, m_xImage->height), pixelFormat);
             m_format.setFrameRate(frameRate());
         }
 
@@ -282,34 +257,41 @@ protected:
 
         if (!XShmGetImage(m_display.get(), m_xid, m_xImage.get(), m_xOffset, m_yOffset,
                           AllPlanes)) {
-            updateError(QScreenCapture::CaptureFailed,
+            updateError(QPlatformSurfaceCapture::CaptureFailed,
                         QLatin1String(
                                 "Cannot get ximage; the window may be out of the screen borders"));
             return {};
         }
 
-        auto buffer = new DataVideoBuffer(m_xImage->data, m_xImage->bytes_per_line,
-                                          m_xImage->bytes_per_line * m_xImage->height);
+        QByteArray data(m_xImage->bytes_per_line * m_xImage->height, Qt::Uninitialized);
 
+        const auto pixelSrc = reinterpret_cast<const uint32_t *>(m_xImage->data);
+        const auto pixelDst = reinterpret_cast<uint32_t *>(data.data());
+        const auto pixelCount = data.size() / 4;
+        const auto xImageAlphaVaries = false; // In known cases it doesn't vary - it's 0xff or 0xff
+
+        qCopyPixelsWithAlphaMask(pixelDst, pixelSrc, pixelCount, m_format.pixelFormat(),
+                                       xImageAlphaVaries);
+
+        auto buffer = new QMemoryVideoBuffer(data, m_xImage->bytes_per_line);
         return QVideoFrame(buffer, m_format);
     }
 
 private:
-    QX11ScreenCapture &m_capture;
-    std::optional<QScreenCapture::Error> m_prevGrabberError;
+    std::optional<QPlatformSurfaceCapture::Error> m_prevGrabberError;
     XID m_xid = None;
     int m_xOffset = 0;
     int m_yOffset = 0;
-    std::unique_ptr<Display, decltype(&XCloseDisplay)> m_display{nullptr, &XCloseDisplay};
-    std::unique_ptr<XImage, decltype(&destroyXImage)> m_xImage{nullptr, &destroyXImage};
+    std::unique_ptr<Display, decltype(&XCloseDisplay)> m_display{ nullptr, &XCloseDisplay };
+    std::unique_ptr<XImage, decltype(&destroyXImage)> m_xImage{ nullptr, &destroyXImage };
     XShmSegmentInfo m_shmInfo;
     bool m_attached = false;
     VisualID m_visualID = None;
     QVideoFrameFormat m_format;
 };
 
-QX11ScreenCapture::QX11ScreenCapture(QScreenCapture *screenCapture)
-    : QFFmpegScreenCaptureBase(screenCapture)
+QX11SurfaceCapture::QX11SurfaceCapture(Source initialSource)
+    : QPlatformSurfaceCapture(initialSource)
 {
     // For debug
     //  XSetErrorHandler([](Display *, XErrorEvent * e) {
@@ -318,30 +300,32 @@ QX11ScreenCapture::QX11ScreenCapture(QScreenCapture *screenCapture)
     //  });
 }
 
-QX11ScreenCapture::~QX11ScreenCapture() = default;
+QX11SurfaceCapture::~QX11SurfaceCapture() = default;
 
-QVideoFrameFormat QX11ScreenCapture::frameFormat() const
+QVideoFrameFormat QX11SurfaceCapture::frameFormat() const
 {
     return m_grabber ? m_grabber->format() : QVideoFrameFormat{};
 }
 
-bool QX11ScreenCapture::setActiveInternal(bool active)
+bool QX11SurfaceCapture::setActiveInternal(bool active)
 {
-    qCDebug(qLcX11ScreenCapture) << "set active" << active;
+    qCDebug(qLcX11SurfaceCapture) << "set active" << active;
 
-    if (active) {
-        if (auto wid = window() ? window()->winId() : windowId())
-            m_grabber = Grabber::create(*this, wid);
-        else if (auto scrn = screen() ? screen() : QGuiApplication::primaryScreen())
-            m_grabber = Grabber::create(*this, scrn);
-    } else {
+    if (m_grabber)
         m_grabber.reset();
-    }
+    else
+        std::visit([this](auto source) { activate(source); }, source());
 
     return static_cast<bool>(m_grabber) == active;
 }
 
-bool QX11ScreenCapture::isSupported()
+void QX11SurfaceCapture::activate(ScreenSource screen)
+{
+    if (checkScreenWithError(screen))
+        m_grabber = Grabber::create(*this, screen);
+}
+
+bool QX11SurfaceCapture::isSupported()
 {
     return qgetenv("XDG_SESSION_TYPE").compare(QLatin1String("x11"), Qt::CaseInsensitive) == 0;
 }

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 qt_find_package(EGL)
-qt_find_package(VAAPI COMPONENTS VA DRM PROVIDED_TARGETS VAAPI::VA VAAPI::DRM MODULE_NAME multimedia QMAKE_LIB vaapi)
+qt_find_package(VAAPI COMPONENTS VA DRM PROVIDED_TARGETS VAAPI::VAAPI MODULE_NAME multimedia QMAKE_LIB vaapi)
 
 qt_internal_find_apple_system_framework(FWCoreMedia CoreMedia)
 qt_internal_find_apple_system_framework(FWCoreAudio CoreAudio)
@@ -35,9 +35,9 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
         qffmpegresampler.cpp qffmpegresampler_p.h
         qffmpegvideoframeencoder.cpp qffmpegvideoframeencoder_p.h
         qffmpegvideoencoderutils.cpp qffmpegvideoencoderutils_p.h
-        qffmpegscreencapturebase.cpp qffmpegscreencapturebase_p.h
-        qffmpegscreencapture.cpp qffmpegscreencapture_p.h
-        qffmpegscreencapturethread.cpp qffmpegscreencapturethread_p.h
+        qgrabwindowsurfacecapture.cpp qgrabwindowsurfacecapture_p.h
+        qffmpegsurfacecapturethread.cpp qffmpegsurfacecapturethread_p.h
+        qffmpegsymbolsresolve_p.h
 
         qffmpegplaybackengine.cpp qffmpegplaybackengine_p.h
         playbackengine/qffmpegplaybackengineobject.cpp playbackengine/qffmpegplaybackengineobject_p.h
@@ -61,17 +61,67 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
         FFmpeg::avformat FFmpeg::avcodec FFmpeg::swresample FFmpeg::swscale FFmpeg::avutil
 )
 
-qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_ffmpeg AND QT_FEATURE_vaapi
+qt_internal_extend_target(QFFmpegMediaPlugin CONDITION DYNAMIC_RESOLVE_OPENSSL_SYMBOLS
+    SOURCES
+        qffmpegopensslsymbols.cpp
+    INCLUDE_DIRECTORIES
+        ${OPENSSL_INCLUDE_DIR}
+)
+
+if (ENABLE_DYNAMIC_RESOLVE_VAAPI_SYMBOLS)
+    if (QT_FEATURE_vaapi AND NOT DYNAMIC_RESOLVE_VAAPI_SYMBOLS)
+        message(WARNING
+               "QT_FEATURE_vaapi is found but ffmpeg doesn't include vaapi,"
+               "however dynamic symbols resolve is possible.")
+
+        set(DYNAMIC_RESOLVE_VAAPI_SYMBOLS TRUE CACHE INTERNAL "")
+    elseif (NOT QT_FEATURE_vaapi AND DYNAMIC_RESOLVE_VAAPI_SYMBOLS)
+
+        message(FATAL_ERROR
+               "QT_FEATURE_vaapi is not found "
+               "but ffmpeg includes VAAPI and dynamic symbols resolve is enabled.")
+    endif()
+endif()
+
+qt_internal_extend_target(QFFmpegMediaPlugin
+    CONDITION
+        DYNAMIC_RESOLVE_OPENSSL_SYMBOLS OR DYNAMIC_RESOLVE_VAAPI_SYMBOLS
+    SOURCES
+        qffmpegsymbolsresolveutils.cpp qffmpegsymbolsresolveutils_p.h
+)
+
+function (__propagate_to_compile_definitions VAR)
+    if (${VAR})
+        target_compile_definitions(QFFmpegMediaPlugin PRIVATE ${VAR})
+    endif()
+endfunction()
+
+__propagate_to_compile_definitions(DYNAMIC_RESOLVE_OPENSSL_SYMBOLS)
+__propagate_to_compile_definitions(DYNAMIC_RESOLVE_VAAPI_SYMBOLS)
+__propagate_to_compile_definitions(DYNAMIC_RESOLVE_VA_DRM_SYMBOLS)
+__propagate_to_compile_definitions(DYNAMIC_RESOLVE_VA_X11_SYMBOLS)
+
+qt_internal_extend_target(QFFmpegMediaPlugin CONDITION DYNAMIC_RESOLVE_VAAPI_SYMBOLS
+    SOURCES
+        qffmpegvaapisymbols.cpp
+    INCLUDE_DIRECTORIES
+        "$<TARGET_PROPERTY:VAAPI::VAAPI,INTERFACE_INCLUDE_DIRECTORIES>"
+)
+
+qt_internal_extend_target(QFFmpegMediaPlugin
+    CONDITION NOT DYNAMIC_RESOLVE_VAAPI_SYMBOLS AND QT_FEATURE_vaapi
+    LIBRARIES VAAPI::VAAPI
+)
+
+qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_vaapi
     SOURCES
         qffmpeghwaccel_vaapi.cpp qffmpeghwaccel_vaapi_p.h
     NO_UNITY_BUILD_SOURCES
         # Conflicts with macros defined in X11.h, and Xlib.h
         qffmpeghwaccel_vaapi.cpp
     LIBRARIES
-        VAAPI::VAAPI
         EGL::EGL
 )
-
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION APPLE
     SOURCES
@@ -81,7 +131,6 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION APPLE
         qffmpeghwaccel_videotoolbox.mm qffmpeghwaccel_videotoolbox_p.h
         qavfcamera.mm qavfcamera_p.h
         qavfsamplebufferdelegate.mm qavfsamplebufferdelegate_p.h
-        qavfscreencapture.mm qavfscreencapture_p.h
     INCLUDE_DIRECTORIES
         ../darwin
         ../darwin/camera
@@ -94,6 +143,11 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION APPLE
         ${FWVideoToolbox}
         ${FWSecurity}
         AVFoundation::AVFoundation
+)
+
+qt_internal_extend_target(QFFmpegMediaPlugin CONDITION MACOS
+    SOURCES
+        qavfscreencapture.mm qavfscreencapture_p.h
 )
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION WIN32
@@ -111,8 +165,6 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION WIN32
 )
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_cpp_winrt
-    SOURCES
-        qffmpegscreencapture_uwp.cpp qffmpegscreencapture_uwp_p.h
     INCLUDE_DIRECTORIES
         ../windows
     LIBRARIES
@@ -123,14 +175,14 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_cpp_winrt
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_xlib
     SOURCES
-        qx11screencapture.cpp qx11screencapture_p.h
+        qx11surfacecapture.cpp qx11surfacecapture_p.h
     LIBRARIES
         X11
         Xrandr
         Xext
 )
 
-set_source_files_properties(qx11screencapture.cpp # X headers
+set_source_files_properties(qx11surfacecapture.cpp # X headers
                             PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_linux_v4l
@@ -145,6 +197,7 @@ if (ANDROID)
             qandroidcamera_p.h qandroidcamera.cpp
             qandroidvideodevices.cpp qandroidvideodevices_p.h
             qandroidcameraframe_p.h  qandroidcameraframe.cpp
+            qandroidimagecapture_p.h qandroidimagecapture.cpp
             ../android/wrappers/jni/androidsurfacetexture_p.h
             ../android/wrappers/jni/androidsurfacetexture.cpp
         NO_UNITY_BUILD_SOURCES

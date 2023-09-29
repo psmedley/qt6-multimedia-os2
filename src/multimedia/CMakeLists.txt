@@ -29,6 +29,8 @@ qt_internal_add_module(Multimedia
         audio/qaudiosource.cpp audio/qaudiosource.h
         audio/qaudiosink.cpp audio/qaudiosink.h
         audio/qaudiosystem.cpp audio/qaudiosystem_p.h
+        audio/qaudiostatemachine.cpp audio/qaudiostatemachine_p.h
+        audio/qaudiostatemachineutils_p.h
         audio/qsamplecache_p.cpp audio/qsamplecache_p.h
         audio/qsoundeffect.cpp audio/qsoundeffect.h
         audio/qwavedecoder.cpp audio/qwavedecoder.h
@@ -40,7 +42,7 @@ qt_internal_add_module(Multimedia
         platform/qplatformaudiooutput_p.h
         platform/qplatformcamera.cpp platform/qplatformcamera_p.h
         platform/qplatformvideosource.cpp platform/qplatformvideosource_p.h
-        platform/qplatformscreencapture.cpp platform/qplatformscreencapture_p.h
+        platform/qplatformsurfacecapture.cpp platform/qplatformsurfacecapture_p.h
         platform/qplatformimagecapture.cpp platform/qplatformimagecapture_p.h
         platform/qplatformmediacapture.cpp platform/qplatformmediacapture_p.h
         platform/qplatformmediadevices.cpp platform/qplatformmediadevices_p.h

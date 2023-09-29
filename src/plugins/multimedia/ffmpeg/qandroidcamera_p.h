@@ -22,6 +22,8 @@
 
 QT_BEGIN_NAMESPACE
 
+class QVideoFrame;
+
 class QAndroidCamera : public QPlatformCamera
 {
     Q_OBJECT
@@ -31,10 +33,13 @@ public:
     ~QAndroidCamera() override;
 
     bool isActive() const override { return m_state == State::Started; }
+    bool isFlashModeSupported(QCamera::FlashMode mode) const override;
+    bool isFlashReady() const override;
     bool isTorchModeSupported(QCamera::TorchMode mode) const override;
     void setActive(bool active) override;
     void setCamera(const QCameraDevice &camera) override;
     bool setCameraFormat(const QCameraFormat &format) override;
+    void setFlashMode(QCamera::FlashMode mode) override;
     void setTorchMode(QCamera::TorchMode mode) override;
     void zoomTo(float factor, float rate) override;
 
@@ -42,16 +47,22 @@ public:
 
     static bool registerNativeMethods();
 
+    void capture();
+    void updateExif(const QString &filename);
 public slots:
+    void onApplicationStateChanged();
     void onCameraOpened();
     void onCameraDisconnect();
     void onCameraError(int error);
-    void frameAvailable(QJniObject image);
+    void frameAvailable(QJniObject image, bool takePhoto = false);
     void onCaptureSessionConfigured();
     void onCaptureSessionConfigureFailed();
     void onCaptureSessionFailed(int reason, long frameNumber);
     void onSessionActive();
     void onSessionClosed();
+
+Q_SIGNALS:
+    void onCaptured(const QVideoFrame&);
 
 private:
     bool isActivating() const { return m_state != State::Closed; }
@@ -69,8 +80,10 @@ private:
     std::unique_ptr<QFFmpeg::HWAccel> m_hwAccel;
 
     QVideoFrameFormat::PixelFormat m_androidFramePixelFormat;
+    QList<QCamera::FlashMode> m_supportedFlashModes;
     bool m_waitingForFirstFrame = false;
     bool m_TorchModeSupported = false;
+    bool m_wasActive = false;
 };
 
 QT_END_NAMESPACE

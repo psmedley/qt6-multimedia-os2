@@ -35,6 +35,8 @@ class AudioRenderer : public Renderer
 public:
     AudioRenderer(const TimeController &tc, QAudioOutput *output);
 
+    void setOutput(QAudioOutput *output);
+
     ~AudioRenderer() override;
 
 protected:
@@ -52,7 +54,9 @@ protected:
 
     void updateVolume();
 
-    void updateSampleCompensation(const Frame &currentFrame);
+    void updateSynchronization(const Frame &currentFrame);
+
+    std::chrono::microseconds currentBufferLoadingTime() const;
 
 private:
     QPointer<QAudioOutput> m_output;

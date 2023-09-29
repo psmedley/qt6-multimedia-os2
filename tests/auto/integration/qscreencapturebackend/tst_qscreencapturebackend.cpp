@@ -84,27 +84,29 @@ private:
 class TestVideoSink : public QVideoSink
 {
 public:
-    TestVideoSink()
-    {
-        connect(this, &QVideoSink::videoFrameChanged, [this](const QVideoFrame &frame) {
-            if (m_storeImages) {
-                auto image = frame.toImage();
-                image.detach();
-                m_images.push_back(std::move(image));
-            }
-        });
-    }
+    TestVideoSink() = default;
 
-    void setStoreImagesEnabled(bool storeImages = true) { m_storeImages = storeImages; }
+    void setStoreImagesEnabled(bool storeImages = true) {
+        if (storeImages)
+            connect(this, &QVideoSink::videoFrameChanged, this, &TestVideoSink::storeImage, Qt::UniqueConnection);
+        else
+            disconnect(this, &QVideoSink::videoFrameChanged, this, &TestVideoSink::storeImage);
+    }
 
     const std::vector<QImage> &images() const { return m_images; }
 
 private:
+    void storeImage(const QVideoFrame &frame) {
+        auto image = frame.toImage();
+        image.detach();
+        m_images.push_back(std::move(image));
+    }
+
+private:
     std::vector<QImage> m_images;
-    bool m_storeImages = false;
 };
 
-class tst_QScreenCaptureIntegration : public QObject
+class tst_QScreenCaptureBackend : public QObject
 {
     Q_OBJECT
 
@@ -126,7 +128,7 @@ private slots:
                                      // application screens.
 };
 
-void tst_QScreenCaptureIntegration::setActive_startsAndStopsCapture()
+void tst_QScreenCaptureBackend::setActive_startsAndStopsCapture()
 {
     TestVideoSink sink;
     QScreenCapture sc;
@@ -185,7 +187,7 @@ void tst_QScreenCaptureIntegration::setActive_startsAndStopsCapture()
     }
 }
 
-void tst_QScreenCaptureIntegration::capture(QTestWidget &widget, const QPoint &drawingOffset,
+void tst_QScreenCaptureBackend::capture(QTestWidget &widget, const QPoint &drawingOffset,
                                             const QSize &expectedSize,
                                             std::function<void(QScreenCapture &)> scModifier)
 {
@@ -238,7 +240,7 @@ void tst_QScreenCaptureIntegration::capture(QTestWidget &widget, const QPoint &d
     QCOMPARE(errorsSpy.size(), 0);
 }
 
-void tst_QScreenCaptureIntegration::removeWhileCapture(
+void tst_QScreenCaptureBackend::removeWhileCapture(
         std::function<void(QScreenCapture &)> scModifier, std::function<void()> deleter)
 {
     QVideoSink sink;
@@ -278,7 +280,7 @@ void tst_QScreenCaptureIntegration::removeWhileCapture(
     QVERIFY2(framesSpy.empty(), "No frames expected after screen removal");
 }
 
-void tst_QScreenCaptureIntegration::initTestCase()
+void tst_QScreenCaptureBackend::initTestCase()
 {
 #if defined(Q_OS_LINUX)
     if (qEnvironmentVariable("QTEST_ENVIRONMENT").toLower() == "ci" &&
@@ -294,7 +296,7 @@ void tst_QScreenCaptureIntegration::initTestCase()
         QSKIP("Screen capturing not supported");
 }
 
-void tst_QScreenCaptureIntegration::setScreen_selectsScreen_whenCalledWithWidgetsScreen()
+void tst_QScreenCaptureBackend::setScreen_selectsScreen_whenCalledWithWidgetsScreen()
 {
     auto widget = QTestWidget::createAndShow(Qt::Window | Qt::FramelessWindowHint
                                                      | Qt::WindowStaysOnTopHint,
@@ -305,7 +307,7 @@ void tst_QScreenCaptureIntegration::setScreen_selectsScreen_whenCalledWithWidget
             [&widget](QScreenCapture &sc) { sc.setScreen(widget->screen()); });
 }
 
-void tst_QScreenCaptureIntegration::constructor_selectsPrimaryScreenAsDefault()
+void tst_QScreenCaptureBackend::constructor_selectsPrimaryScreenAsDefault()
 {
     auto widget = QTestWidget::createAndShow(Qt::Window | Qt::FramelessWindowHint
                                                      | Qt::WindowStaysOnTopHint,
@@ -315,7 +317,7 @@ void tst_QScreenCaptureIntegration::constructor_selectsPrimaryScreenAsDefault()
     capture(*widget, { 200, 100 }, QApplication::primaryScreen()->size(), nullptr);
 }
 
-void tst_QScreenCaptureIntegration::setScreen_selectsSecondaryScreen_whenCalledWithSecondaryScreen()
+void tst_QScreenCaptureBackend::setScreen_selectsSecondaryScreen_whenCalledWithSecondaryScreen()
 {
     const auto screens = QApplication::screens();
 
@@ -336,8 +338,13 @@ void tst_QScreenCaptureIntegration::setScreen_selectsSecondaryScreen_whenCalledW
             [&screens](QScreenCapture &sc) { sc.setScreen(screens.back()); });
 }
 
-void tst_QScreenCaptureIntegration::capture_capturesToFile_whenConnectedToMediaRecorder()
+void tst_QScreenCaptureBackend::capture_capturesToFile_whenConnectedToMediaRecorder()
 {
+#ifdef Q_OS_LINUX
+    if (qEnvironmentVariable("QTEST_ENVIRONMENT").toLower() == "ci")
+        QSKIP("QTBUG-116671: SKIP on linux CI to avoid crashes in ffmpeg. To be fixed.");
+#endif
+
     // Create widget with blue color
     auto widget = QTestWidget::createAndShow(Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint,
                                                  QRect{ 200, 100, 430, 351 });
@@ -425,7 +432,7 @@ void tst_QScreenCaptureIntegration::capture_capturesToFile_whenConnectedToMediaR
     }
 
     // Verify color of last fourth of the video frames
-    for (int i = static_cast<int>(framesCount * 0.75); i < framesCount; i++) {
+    for (size_t i = static_cast<size_t>(framesCount * 0.75); i < framesCount - 1; i++) {
         QImage image = sink.images().at(i);
         QVERIFY(!image.isNull());
         QRgb rgb = image.pixel(point);
@@ -440,7 +447,7 @@ void tst_QScreenCaptureIntegration::capture_capturesToFile_whenConnectedToMediaR
     QFile(fileName).remove();
 }
 
-void tst_QScreenCaptureIntegration::removeScreenWhileCapture()
+void tst_QScreenCaptureBackend::removeScreenWhileCapture()
 {
     QSKIP("TODO: find a reliable way to emulate it");
 
@@ -452,6 +459,6 @@ void tst_QScreenCaptureIntegration::removeScreenWhileCapture()
                        });
 }
 
-QTEST_MAIN(tst_QScreenCaptureIntegration)
+QTEST_MAIN(tst_QScreenCaptureBackend)
 
-#include "tst_qscreencapture_integration.moc"
+#include "tst_qscreencapturebackend.moc"

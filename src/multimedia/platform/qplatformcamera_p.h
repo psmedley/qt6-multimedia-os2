@@ -30,8 +30,6 @@ public:
     virtual bool setCameraFormat(const QCameraFormat &/*format*/) { return false; }
     QCameraFormat cameraFormat() const { return m_cameraFormat; }
 
-    virtual void setCaptureSession(QPlatformMediaCaptureSession *) {}
-
     virtual bool isFocusModeSupported(QCamera::FocusMode mode) const { return mode == QCamera::FocusModeAuto; }
     virtual void setFocusMode(QCamera::FocusMode /*mode*/) {}
 
@@ -113,13 +111,16 @@ public:
     static int colorTemperatureForWhiteBalance(QCamera::WhiteBalanceMode mode);
 
 Q_SIGNALS:
-    void activeChanged(bool);
     void error(int error, const QString &errorString);
 
 protected:
     explicit QPlatformCamera(QCamera *parent);
 
-    virtual int cameraPixelFormatScore(QVideoFrameFormat::PixelFormat /*format*/) const { return 0; }
+    virtual int cameraPixelFormatScore(QVideoFrameFormat::PixelFormat /*format*/,
+                                       QVideoFrameFormat::ColorRange /*colorRange*/) const
+    {
+        return 0;
+    }
 
     QCameraFormat findBestCameraFormat(const QCameraDevice &camera) const;
     QCameraFormat m_cameraFormat;

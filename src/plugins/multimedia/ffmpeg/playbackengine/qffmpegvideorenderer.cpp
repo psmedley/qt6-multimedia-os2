@@ -9,18 +9,28 @@ QT_BEGIN_NAMESPACE
 
 namespace QFFmpeg {
 
-VideoRenderer::VideoRenderer(const TimeController &tc, QVideoSink *sink)
-    : Renderer(tc), m_sink(sink)
+VideoRenderer::VideoRenderer(const TimeController &tc, QVideoSink *sink, QVideoFrame::RotationAngle rotationAngle)
+    : Renderer(tc), m_sink(sink), m_rotationAngle(rotationAngle)
 {
+}
+
+void VideoRenderer::setOutput(QVideoSink *sink, bool cleanPrevSink)
+{
+    setOutputInternal(m_sink, sink, [cleanPrevSink](QVideoSink *prev) {
+        if (prev && cleanPrevSink)
+            prev->setVideoFrame({});
+    });
 }
 
 VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
 {
-    if (!frame.isValid())
-        return {};
-
     if (!m_sink)
         return {};
+
+    if (!frame.isValid()) {
+        m_sink->setVideoFrame({});
+        return {};
+    }
 
     //        qCDebug(qLcVideoRenderer) << "RHI:" << accel.isNull() << accel.rhi() << sink->rhi();
 
@@ -51,6 +61,7 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
     QVideoFrame videoFrame(buffer.release(), format);
     videoFrame.setStartTime(frame.pts());
     videoFrame.setEndTime(frame.end());
+    videoFrame.setRotationAngle(m_rotationAngle);
     m_sink->setVideoFrame(videoFrame);
 
     return {};

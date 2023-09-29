@@ -12,22 +12,27 @@
 #endif
 #if QT_CONFIG(wmf)
 #include "qffmpeghwaccel_d3d11_p.h"
+#include <QtCore/private/qsystemlibrary_p.h>
+
 #endif
 #ifdef Q_OS_ANDROID
 #    include "qffmpeghwaccel_mediacodec_p.h"
 #endif
 #include "qffmpeg_p.h"
 #include "qffmpegvideobuffer_p.h"
+#include "qscopedvaluerollback.h"
+#include "QtCore/qfile.h"
 
 #include <private/qrhi_p.h>
 #include <qloggingcategory.h>
-#include <set>
+#include <unordered_set>
 
 /* Infrastructure for HW acceleration goes into this file. */
 
 QT_BEGIN_NAMESPACE
 
 static Q_LOGGING_CATEGORY(qLHWAccel, "qt.multimedia.ffmpeg.hwaccel");
+extern bool thread_local FFmpegLogsEnabledInThread;
 
 namespace QFFmpeg {
 
@@ -35,9 +40,13 @@ static const std::initializer_list<AVHWDeviceType> preferredHardwareAccelerators
 #if defined(Q_OS_ANDROID)
     AV_HWDEVICE_TYPE_MEDIACODEC,
 #elif defined(Q_OS_LINUX)
-    AV_HWDEVICE_TYPE_VAAPI,
-    AV_HWDEVICE_TYPE_VDPAU,
     AV_HWDEVICE_TYPE_CUDA,
+    AV_HWDEVICE_TYPE_VAAPI,
+
+    // TODO: investigate VDPAU advantages.
+    // nvenc/nvdec codecs use AV_HWDEVICE_TYPE_CUDA by default, but they can also use VDPAU
+    // if it's included into the ffmpeg build and vdpau drivers are installed.
+    // AV_HWDEVICE_TYPE_VDPAU
 #elif defined (Q_OS_WIN)
     AV_HWDEVICE_TYPE_D3D11VA,
 #elif defined (Q_OS_DARWIN)
@@ -45,52 +54,133 @@ static const std::initializer_list<AVHWDeviceType> preferredHardwareAccelerators
 #endif
 };
 
-static std::vector<AVHWDeviceType> deviceTypes(const char *envVarName)
+static AVBufferUPtr loadHWContext(AVHWDeviceType type)
 {
-    std::vector<AVHWDeviceType> result;
+    AVBufferRef *hwContext = nullptr;
+    qCDebug(qLHWAccel) << "    Checking HW context:" << av_hwdevice_get_type_name(type);
+    int ret = av_hwdevice_ctx_create(&hwContext, type, nullptr, nullptr, 0);
 
-    const auto definedDeviceTypes = qgetenv(envVarName);
-    if (!definedDeviceTypes.isNull()) {
-        const auto definedDeviceTypesString = QString::fromUtf8(definedDeviceTypes).toLower();
-        for (const auto &deviceType : definedDeviceTypesString.split(',')) {
-            if (!deviceType.isEmpty()) {
-                const auto foundType = av_hwdevice_find_type_by_name(deviceType.toUtf8().data());
-                if (foundType == AV_HWDEVICE_TYPE_NONE)
-                    qWarning() << "Unknown hw device type" << deviceType;
-                else
-                    result.emplace_back(foundType);
-            }
+    if (ret == 0) {
+        qCDebug(qLHWAccel) << "    Using above hw context.";
+        return AVBufferUPtr(hwContext);
+    }
+    qCDebug(qLHWAccel) << "    Could not create hw context:" << ret << strerror(-ret);
+    return nullptr;
+}
+
+// FFmpeg might crash on loading non-existing hw devices.
+// Let's roughly precheck drivers/libraries.
+static bool precheckDriver(AVHWDeviceType type)
+{
+    // precheckings might need some improvements
+#if defined(Q_OS_LINUX)
+    if (type == AV_HWDEVICE_TYPE_CUDA)
+        return QFile::exists(QLatin1String("/proc/driver/nvidia/version"));
+#elif defined(Q_OS_WINDOWS)
+    if (type == AV_HWDEVICE_TYPE_D3D11VA)
+        return QSystemLibrary(QLatin1String("d3d11.dll")).load();
+
+    if (type == AV_HWDEVICE_TYPE_DXVA2)
+        return QSystemLibrary(QLatin1String("d3d9.dll")).load();
+
+    // TODO: check nvenc/nvdec and revisit the checking
+    if (type == AV_HWDEVICE_TYPE_CUDA)
+        return QSystemLibrary(QLatin1String("nvml.dll")).load();
+#else
+     Q_UNUSED(type);
+#endif
+
+    return true;
+}
+
+static bool checkHwType(AVHWDeviceType type)
+{
+    const auto deviceName = av_hwdevice_get_type_name(type);
+    if (!deviceName) {
+        qWarning() << "Internal ffmpeg error, unknow hw type:" << type;
+        return false;
+    }
+
+    if (!precheckDriver(type)) {
+        qCDebug(qLHWAccel) << "Drivers for hw device" << deviceName << "is not installed";
+        return false;
+    }
+
+    if (type == AV_HWDEVICE_TYPE_MEDIACODEC ||
+        type == AV_HWDEVICE_TYPE_VIDEOTOOLBOX ||
+        type == AV_HWDEVICE_TYPE_D3D11VA ||
+        type == AV_HWDEVICE_TYPE_DXVA2)
+        return true; // Don't waste time; it's expected to work fine of the precheck is OK
+
+
+    QScopedValueRollback rollback(FFmpegLogsEnabledInThread);
+    FFmpegLogsEnabledInThread = false;
+
+    return loadHWContext(type) != nullptr;
+}
+
+static const std::vector<AVHWDeviceType> &deviceTypes()
+{
+    static const auto types = []() {
+        qCDebug(qLHWAccel) << "Check device types";
+        QElapsedTimer timer;
+        timer.start();
+
+        // gather hw pix formats
+        std::unordered_set<AVPixelFormat> hwPixFormats;
+        void *opaque = nullptr;
+        while (auto codec = av_codec_iterate(&opaque)) {
+            if (auto pixFmt = codec->pix_fmts)
+                for (; *pixFmt != AV_PIX_FMT_NONE; ++pixFmt)
+                    if (isHwPixelFormat(*pixFmt))
+                        hwPixFormats.insert(*pixFmt);
         }
 
-        return result;
-    } else {
-        std::set<AVHWDeviceType> deviceTypesSet;
+        // create a device types list
+        std::vector<AVHWDeviceType> result;
         AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
         while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE)
-            deviceTypesSet.insert(type);
+            if (hwPixFormats.count(pixelFormatForHwDevice(type)) && checkHwType(type))
+                result.push_back(type);
+        result.shrink_to_fit();
 
-        for (const auto preffered : preferredHardwareAccelerators)
-            if (deviceTypesSet.erase(preffered))
-                result.push_back(preffered);
+        // reorder the list accordingly preferredHardwareAccelerators
+        auto it = result.begin();
+        for (const auto preffered : preferredHardwareAccelerators) {
+            auto found = std::find(it, result.end(), preffered);
+            if (found != result.end())
+                std::rotate(it++, found, std::next(found));
+        }
 
-        result.insert(result.end(), deviceTypesSet.begin(), deviceTypesSet.end());
+        qCDebug(qLHWAccel) << "Device types checked. Spent time:" << timer.nsecsElapsed() / 1000 << "us";
+
+        return result;
+    }();
+
+    return types;
+}
+
+static std::vector<AVHWDeviceType> deviceTypes(const char *envVarName)
+{
+    const auto definedDeviceTypes = qgetenv(envVarName);
+
+    if (definedDeviceTypes.isNull())
+        return deviceTypes();
+
+    std::vector<AVHWDeviceType> result;
+    const auto definedDeviceTypesString = QString::fromUtf8(definedDeviceTypes).toLower();
+    for (const auto &deviceType : definedDeviceTypesString.split(',')) {
+        if (!deviceType.isEmpty()) {
+            const auto foundType = av_hwdevice_find_type_by_name(deviceType.toUtf8().data());
+            if (foundType == AV_HWDEVICE_TYPE_NONE)
+                qWarning() << "Unknown hw device type" << deviceType;
+            else
+                result.emplace_back(foundType);
+        }
     }
 
     result.shrink_to_fit();
     return result;
-}
-
-static AVBufferRef *loadHWContext(const AVHWDeviceType type)
-{
-    AVBufferRef *hwContext = nullptr;
-    int ret = av_hwdevice_ctx_create(&hwContext, type, nullptr, nullptr, 0);
-    qCDebug(qLHWAccel) << "    Checking HW context:" << av_hwdevice_get_type_name(type);
-    if (ret == 0) {
-        qCDebug(qLHWAccel) << "    Using above hw context.";
-        return hwContext;
-    }
-    qCDebug(qLHWAccel) << "    Could not create hw context:" << ret << strerror(-ret);
-    return nullptr;
 }
 
 template<typename CodecFinder>
@@ -134,6 +224,53 @@ static bool isNoConversionFormat(AVPixelFormat f)
     QFFmpegVideoBuffer::toQtPixelFormat(f, &needsConversion);
     return !needsConversion;
 };
+
+namespace {
+
+bool hwTextureConversionEnabled(AVPixelFormat fmt)
+{
+
+    // HW textures conversions are not stable in specific cases, dependent on the hardware and OS.
+    // We need the env var for testing with no textures conversion on the user's side.
+    static bool isDisableConversionSet = false;
+    static const int disableHwConversion = qEnvironmentVariableIntValue(
+            "QT_DISABLE_HW_TEXTURES_CONVERSION", &isDisableConversionSet);
+
+    if (disableHwConversion)
+        return false;
+
+#if QT_CONFIG(wmf)
+    if (fmt == AV_PIX_FMT_D3D11) {
+        // On Windows, HW texture conversion currently causes stuttering video display and possibly
+        // crash on AMD GPUs. See for example QTBUG-113832 and QTBUG-111543. On this platform, HW
+        // texture conversions have to be explicitly enabled for debugging and testing.
+        if (!isDisableConversionSet)
+            return false;
+    }
+#else
+    Q_UNUSED(fmt);
+#endif
+
+    return true;
+}
+
+void setupDecoder(const AVPixelFormat format, AVCodecContext *const codecContext)
+{
+    if (!hwTextureConversionEnabled(format))
+        return;
+
+#if QT_CONFIG(wmf)
+    if (format == AV_PIX_FMT_D3D11)
+        QFFmpeg::D3D11TextureConverter::SetupDecoderTextures(codecContext);
+#elif defined Q_OS_ANDROID
+    if (format == AV_PIX_FMT_MEDIACODEC)
+        QFFmpeg::MediaCodecTextureConverter::setupDecoderSurface(codecContext);
+#else
+    Q_UNUSED(codecContext);
+#endif
+}
+
+} // namespace
 
 // Used for the AVCodecContext::get_format callback
 AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *suggestedFormats)
@@ -180,14 +317,7 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *sugge
 
         const auto &format = formatAndScore.first;
         if (format != AV_PIX_FMT_NONE) {
-#if QT_CONFIG(wmf)
-            if (format == AV_PIX_FMT_D3D11)
-                QFFmpeg::D3D11TextureConverter::SetupDecoderTextures(codecContext);
-#endif
-#ifdef Q_OS_ANDROID
-            if (format == AV_PIX_FMT_MEDIACODEC)
-                QFFmpeg::MediaCodecTextureConverter::setupDecoderSurface(codecContext);
-#endif
+            setupDecoder(format, codecContext);
             qCDebug(qLHWAccel) << "Selected format" << format << "for hw" << device_ctx->type;
             return format;
         }
@@ -215,8 +345,8 @@ HWAccel::~HWAccel() = default;
 
 std::unique_ptr<HWAccel> HWAccel::create(AVHWDeviceType deviceType)
 {
-    if (auto *ctx = loadHWContext(deviceType))
-        return std::unique_ptr<HWAccel>(new HWAccel(ctx));
+    if (auto ctx = loadHWContext(deviceType))
+        return std::unique_ptr<HWAccel>(new HWAccel(std::move(ctx)));
     else
         return {};
 }
@@ -253,10 +383,14 @@ AVPixelFormat HWAccel::hwFormat() const
     return pixelFormatForHwDevice(deviceType());
 }
 
-AVHWFramesConstraintsUPtr HWAccel::constraints() const
+const AVHWFramesConstraints *HWAccel::constraints() const
 {
-    return AVHWFramesConstraintsUPtr(
-            av_hwdevice_get_hwframe_constraints(hwDeviceContextAsBuffer(), nullptr));
+    std::call_once(m_constraintsOnceFlag, [this]() {
+        if (auto context = hwDeviceContextAsBuffer())
+            m_constraints.reset(av_hwdevice_get_hwframe_constraints(context, nullptr));
+    });
+
+    return m_constraints.get();
 }
 
 std::pair<const AVCodec *, std::unique_ptr<HWAccel>>
@@ -330,12 +464,7 @@ void TextureConverter::updateBackend(AVPixelFormat fmt)
     if (!d->rhi)
         return;
 
-    // HW textures conversions are not stable in specific cases, dependent on the hardware and OS.
-    // We need the env var for testing with no textures conversion on the user's side.
-    static const bool disableConversion =
-            qEnvironmentVariableIsSet("QT_DISABLE_HW_TEXTURES_CONVERSION");
-
-    if (disableConversion)
+    if (!hwTextureConversionEnabled(fmt))
         return;
 
     switch (fmt) {

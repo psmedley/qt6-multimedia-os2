@@ -5,7 +5,7 @@
 
 #include "private/qplatformaudioinput_p.h"
 #include "private/qplatformaudiooutput_p.h"
-#include "private/qplatformscreencapture_p.h"
+#include "private/qplatformsurfacecapture_p.h"
 #include "qffmpegimagecapture_p.h"
 #include "qffmpegmediarecorder_p.h"
 #include "private/qplatformcamera_p.h"
@@ -33,11 +33,11 @@ static int preferredAudioSinkBufferSize(const QFFmpegAudioInput &input)
 
 QFFmpegMediaCaptureSession::QFFmpegMediaCaptureSession()
 {
+    connect(this, &QFFmpegMediaCaptureSession::primaryActiveVideoSourceChanged, this,
+            &QFFmpegMediaCaptureSession::updateVideoFrameConnection);
 }
 
-QFFmpegMediaCaptureSession::~QFFmpegMediaCaptureSession()
-{
-}
+QFFmpegMediaCaptureSession::~QFFmpegMediaCaptureSession() = default;
 
 QPlatformCamera *QFFmpegMediaCaptureSession::camera()
 {
@@ -46,41 +46,19 @@ QPlatformCamera *QFFmpegMediaCaptureSession::camera()
 
 void QFFmpegMediaCaptureSession::setCamera(QPlatformCamera *camera)
 {
-    if (m_camera == camera)
-        return;
-    if (m_camera) {
-        m_camera->disconnect(this);
-        m_camera->setCaptureSession(nullptr);
-    }
-
-    m_camera = camera;
-
-    if (m_camera) {
-        connect(m_camera, &QPlatformCamera::newVideoFrame, this, &QFFmpegMediaCaptureSession::newCameraVideoFrame);
-        m_camera->setCaptureSession(this);
-    }
-
-    emit cameraChanged();
+    if (setVideoSource(m_camera, camera))
+        emit cameraChanged();
 }
 
-QPlatformScreenCapture *QFFmpegMediaCaptureSession::screenCapture()
+QPlatformSurfaceCapture *QFFmpegMediaCaptureSession::screenCapture()
 {
     return m_screenCapture;
 }
 
-void QFFmpegMediaCaptureSession::setScreenCapture(QPlatformScreenCapture *screenCapture)
+void QFFmpegMediaCaptureSession::setScreenCapture(QPlatformSurfaceCapture *screenCapture)
 {
-    if (m_screenCapture == screenCapture)
-        return;
-    if (m_screenCapture)
-        m_screenCapture->disconnect(this);
-
-    m_screenCapture = screenCapture;
-
-    if (m_screenCapture)
-        connect(m_screenCapture, &QPlatformScreenCapture::newVideoFrame, this, &QFFmpegMediaCaptureSession::newScreenCaptureVideoFrame);
-
-    emit screenCaptureChanged();
+    if (setVideoSource(m_screenCapture, screenCapture))
+        emit screenCaptureChanged();
 }
 
 QPlatformImageCapture *QFFmpegMediaCaptureSession::imageCapture()
@@ -149,11 +127,10 @@ void QFFmpegMediaCaptureSession::setAudioInput(QPlatformAudioInput *input)
 
 void QFFmpegMediaCaptureSession::updateAudioSink()
 {
-
     if (m_audioSink) {
         m_audioSink->reset();
         m_audioSink.reset();
-    };
+    }
 
     if (!m_audioInput || !m_audioOutput)
         return;
@@ -175,7 +152,7 @@ void QFFmpegMediaCaptureSession::updateAudioSink()
     m_audioIODevice = m_audioSink->start();
     if (m_audioIODevice) {
         connect(m_audioInput, &QFFmpegAudioInput::newAudioBuffer, m_audioSink.get(),
-                [=](const QAudioBuffer &buffer) {
+                [this](const QAudioBuffer &buffer) {
                     if (m_audioBufferSize < preferredAudioSinkBufferSize(*m_audioInput)) {
                         qCDebug(qLcFFmpegMediaCaptureSession)
                                 << "Recreate audiosink due to small buffer size:"
@@ -212,10 +189,10 @@ QPlatformAudioInput *QFFmpegMediaCaptureSession::audioInput()
 
 void QFFmpegMediaCaptureSession::setVideoPreview(QVideoSink *sink)
 {
-    if (m_videoSink == sink)
+    if (std::exchange(m_videoSink, sink) == sink)
         return;
 
-    m_videoSink = sink;
+    updateVideoFrameConnection();
 }
 
 void QFFmpegMediaCaptureSession::setAudioOutput(QPlatformAudioOutput *output)
@@ -243,18 +220,57 @@ void QFFmpegMediaCaptureSession::setAudioOutput(QPlatformAudioOutput *output)
     updateAudioSink();
 }
 
-void QFFmpegMediaCaptureSession::newCameraVideoFrame(const QVideoFrame &frame)
+void QFFmpegMediaCaptureSession::updateVideoFrameConnection()
 {
-    if (m_videoSink)
-        m_videoSink->setVideoFrame(frame);
+    disconnect(m_videoFrameConnection);
+
+    if (m_primaryActiveVideoSource && m_videoSink) {
+        // deliver frames directly to video sink;
+        // AutoConnection type might be a pessimization due to an extra queuing
+        // TODO: investigate and integrate direct connection
+        m_videoFrameConnection =
+                connect(m_primaryActiveVideoSource, &QPlatformVideoSource::newVideoFrame,
+                        m_videoSink, &QVideoSink::setVideoFrame);
+    }
 }
 
-void QFFmpegMediaCaptureSession::newScreenCaptureVideoFrame(const QVideoFrame &frame)
+void QFFmpegMediaCaptureSession::updatePrimaryActiveVideoSource()
 {
-    if (m_videoSink && !(m_camera && m_camera->isActive()))
-        m_videoSink->setVideoFrame(frame);
+    auto sources = activeVideoSources();
+    auto source = sources.empty() ? nullptr : sources.front();
+    if (std::exchange(m_primaryActiveVideoSource, source) != source)
+        emit primaryActiveVideoSourceChanged();
 }
 
+template<typename VideoSource>
+bool QFFmpegMediaCaptureSession::setVideoSource(QPointer<VideoSource> &source,
+                                                VideoSource *newSource)
+{
+    if (source == newSource)
+        return false;
+
+    if (auto prevSource = std::exchange(source, newSource)) {
+        prevSource->setCaptureSession(nullptr);
+        prevSource->disconnect(this);
+    }
+
+    if (source) {
+        source->setCaptureSession(this);
+        connect(source, &QPlatformVideoSource::activeChanged, this,
+                &QFFmpegMediaCaptureSession::updatePrimaryActiveVideoSource);
+        connect(source, &QObject::destroyed, this,
+                &QFFmpegMediaCaptureSession::updatePrimaryActiveVideoSource, Qt::QueuedConnection);
+    }
+
+    updatePrimaryActiveVideoSource();
+
+    return true;
+}
+
+QPlatformVideoSource *QFFmpegMediaCaptureSession::primaryActiveVideoSource()
+{
+    return m_primaryActiveVideoSource;
+}
 
 QT_END_NAMESPACE
 

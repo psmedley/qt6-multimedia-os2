@@ -129,6 +129,10 @@ protected: // objects managing
 
     virtual RendererPtr createRenderer(QPlatformMediaPlayer::TrackType trackType);
 
+    void updateActiveAudioOutput(QAudioOutput *output);
+
+    void updateActiveVideoOutput(QVideoSink *sink, bool cleanOutput = false);
+
 private:
     void createStreamAndRenderer(QPlatformMediaPlayer::TrackType trackType);
 
@@ -152,11 +156,12 @@ private:
 
     void deleteFreeThreads();
 
-    void onRendererSynchronized(std::chrono::steady_clock::time_point time, qint64 trackTime);
+    void onRendererSynchronized(quint64 id, std::chrono::steady_clock::time_point time,
+                                qint64 trackTime);
 
     void onRendererFinished();
 
-    void onRendererLoopChanged(qint64 offset, int loopIndex);
+    void onRendererLoopChanged(quint64 id, qint64 offset, int loopIndex);
 
     void triggerStepIfNeeded();
 
@@ -167,6 +172,12 @@ private:
     bool hasMediaStream() const;
 
     void finilizeTime(qint64 pos);
+
+    void finalizeOutputs();
+
+    bool hasRenderer(quint64 id) const;
+
+    void updateVideoSinkSize(QVideoSink *prevSink = nullptr);
 
 private:
     TimeController m_timeController;
