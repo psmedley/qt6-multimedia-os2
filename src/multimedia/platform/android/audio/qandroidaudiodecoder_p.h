@@ -53,7 +53,6 @@
 #include "private/qplatformaudiodecoder_p.h"
 
 #include <QtCore/qurl.h>
-#include <QtCore/qmutex.h>
 #include <QThread>
 
 #include "media/NdkMediaCodec.h"
@@ -81,6 +80,7 @@ signals:
     void durationChanged(const qint64 duration);
     void error(const QAudioDecoder::Error error, const QString &errorString);
     void finished();
+    void decodingChanged(bool decoding);
 
 private:
     void createDecoder();
@@ -90,6 +90,7 @@ private:
     AMediaFormat *m_format = nullptr;
 
     QAudioFormat m_outputFormat;
+    QString m_formatError;
     bool m_inputEOS;
 };
 
@@ -119,6 +120,9 @@ public:
     qint64 position() const override;
     qint64 duration() const override;
 
+signals:
+    void setSourceUrl(const QUrl &source);
+
 private slots:
     void positionChanged(QAudioBuffer audioBuffer, qint64 position);
     void durationChanged(qint64 duration);
@@ -134,18 +138,16 @@ private:
     QIODevice *m_device = nullptr;
     Decoder *m_decoder;
 
-    QList<QAudioBuffer> m_audioBuffer;
+    QList<QPair<QAudioBuffer, int>> m_audioBuffer;
     QUrl m_source;
 
-    mutable QMutex m_buffersMutex;
     qint64 m_position = -1;
     qint64 m_duration = -1;
     long long m_presentationTimeUs = 0;
-    int m_buffersAvailable = 0;
 
     QByteArray m_deviceBuffer;
 
-    QThread *m_threadDecoder;
+    QThread *m_threadDecoder = nullptr;
 };
 
 QT_END_NAMESPACE

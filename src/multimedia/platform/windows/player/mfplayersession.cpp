@@ -152,7 +152,7 @@ void MFPlayerSession::close()
         m_closing = true;
         hr = m_session->Close();
         if (SUCCEEDED(hr)) {
-            DWORD dwWaitResult = WaitForSingleObject(m_hCloseEvent, 100);
+            DWORD dwWaitResult = WaitForSingleObject(m_hCloseEvent, 2000);
             if (dwWaitResult == WAIT_TIMEOUT) {
                 qWarning() << "session close time out!";
             }
@@ -187,6 +187,7 @@ void MFPlayerSession::close()
         CloseHandle(m_hCloseEvent);
     m_hCloseEvent = 0;
     m_lastPosition = -1;
+    m_position = 0;
 }
 
 MFPlayerSession::~MFPlayerSession()
@@ -216,6 +217,7 @@ void MFPlayerSession::load(const QUrl &url, QIODevice *stream)
         createSession();
         changeStatus(QMediaPlayer::LoadingMedia);
         m_sourceResolver->load(url, stream);
+        m_updateRoutingOnStart = true;
     }
     positionChanged(position());
 }
@@ -282,9 +284,10 @@ void MFPlayerSession::handleMediaSourceReady()
 bool MFPlayerSession::getStreamInfo(IMFStreamDescriptor *stream,
                                     MFPlayerSession::MediaType *type,
                                     QString *name,
-                                    QString *language) const
+                                    QString *language,
+                                    GUID *format) const
 {
-    if (!stream || !type || !name || !language)
+    if (!stream || !type || !name || !language || !format)
         return false;
 
     *type = Unknown;
@@ -318,6 +321,13 @@ bool MFPlayerSession::getStreamInfo(IMFStreamDescriptor *stream,
             else if (guidMajorType == MFMediaType_Video)
                 *type = Video;
         }
+
+        IMFMediaType *mediaType = nullptr;
+        if (SUCCEEDED(typeHandler->GetCurrentMediaType(&mediaType))) {
+            mediaType->GetGUID(MF_MT_SUBTYPE, format);
+            mediaType->Release();
+        }
+
         typeHandler->Release();
     }
 
@@ -358,8 +368,9 @@ void MFPlayerSession::setupPlaybackTopology(IMFMediaSource *source, IMFPresentat
             MediaType mediaType = Unknown;
             QString streamName;
             QString streamLanguage;
+            GUID format = GUID_NULL;
 
-            if (getStreamInfo(streamDesc, &mediaType, &streamName, &streamLanguage)) {
+            if (getStreamInfo(streamDesc, &mediaType, &streamName, &streamLanguage, &format)) {
 
                 QPlatformMediaPlayer::TrackType trackType = (mediaType == Audio) ?
                             QPlatformMediaPlayer::AudioStream : QPlatformMediaPlayer::VideoStream;
@@ -373,6 +384,7 @@ void MFPlayerSession::setupPlaybackTopology(IMFMediaSource *source, IMFPresentat
 
                 m_trackInfo[trackType].metaData.append(metaData);
                 m_trackInfo[trackType].nativeIndexes.append(i);
+                m_trackInfo[trackType].format = format;
 
                 if (((m_mediaTypes & mediaType) == 0) && selected) { // Check if this type isn't already added
                     IMFTopologyNode *sourceNode = addSourceNode(topology, source, sourcePD, streamDesc);
@@ -503,6 +515,12 @@ IMFTopologyNode* MFPlayerSession::addOutputNode(MediaType mediaType, IMFTopology
         }
     } else if (mediaType == Video) {
         activate = m_videoRendererControl->createActivate();
+
+        QSize resolution = m_metaData.value(QMediaMetaData::Resolution).toSize();
+
+        if (resolution.isValid())
+            m_videoRendererControl->setCropRect(QRect(QPoint(), resolution));
+
     } else {
         // Unknown stream type.
         emit error(QMediaPlayer::FormatError, tr("Unknown stream type."), false);
@@ -1068,6 +1086,11 @@ void MFPlayerSession::stop(bool immediate)
 
 void MFPlayerSession::start()
 {
+    if (status() == QMediaPlayer::LoadedMedia && m_updateRoutingOnStart) {
+        m_updateRoutingOnStart = false;
+        updateOutputRouting();
+    }
+
     if (m_status == QMediaPlayer::EndOfMedia) {
         m_position = 0; // restart from the beginning
         positionChanged(0);
@@ -1639,6 +1662,14 @@ void MFPlayerSession::handleSessionEvent(IMFMediaEvent *sessionEvent)
         changeStatus(QMediaPlayer::InvalidMedia);
         break;
     case MEError:
+        if (hrStatus == MF_E_ALREADY_INITIALIZED) {
+            // Workaround for a possible WMF issue that causes an error
+            // with some specific videos, which play fine otherwise.
+#ifdef DEBUG_MEDIAFOUNDATION
+            qDebug() << "handleSessionEvent: ignoring MF_E_ALREADY_INITIALIZED";
+#endif
+            break;
+        }
         changeStatus(QMediaPlayer::InvalidMedia);
         qWarning() << "handleSessionEvent: serious error = " << hrStatus;
         emit error(QMediaPlayer::ResourceError, tr("Media session serious error."), true);
@@ -1779,8 +1810,7 @@ void MFPlayerSession::handleSessionEvent(IMFMediaEvent *sessionEvent)
 
                     if (SUCCEEDED(MFGetService(m_session, MF_RATE_CONTROL_SERVICE, IID_PPV_ARGS(&m_rateControl)))) {
                         if (SUCCEEDED(MFGetService(m_session, MF_RATE_CONTROL_SERVICE, IID_PPV_ARGS(&m_rateSupport)))) {
-                            if ((m_mediaTypes & Video) == Video
-                                && SUCCEEDED(m_rateSupport->IsRateSupported(TRUE, 0, NULL)))
+                            if (SUCCEEDED(m_rateSupport->IsRateSupported(TRUE, 0, NULL)))
                                 m_canScrub = true;
                         }
                         BOOL isThin = FALSE;
@@ -1889,6 +1919,7 @@ void MFPlayerSession::clear()
         m_trackInfo[i].currentIndex = -1;
         m_trackInfo[i].sourceNodeId = TOPOID(-1);
         m_trackInfo[i].outputNodeId = TOPOID(-1);
+        m_trackInfo[i].format = GUID_NULL;
     }
 
     if (!m_metaData.isEmpty()) {
@@ -1965,6 +1996,11 @@ void MFPlayerSession::setActiveTrack(QPlatformMediaPlayer::TrackType type, int i
     const auto &nativeIndexes = m_trackInfo[type].nativeIndexes;
 
     if (index < -1 || index >= nativeIndexes.count())
+        return;
+
+    // Updating the topology fails if there is a HEVC video stream,
+    // which causes other issues. Ignoring the change, for now.
+    if (m_trackInfo[QPlatformMediaPlayer::VideoStream].format == MFVideoFormat_HEVC)
         return;
 
     IMFTopology *topology = nullptr;

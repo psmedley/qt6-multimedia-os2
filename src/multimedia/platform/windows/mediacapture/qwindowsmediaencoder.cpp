@@ -81,12 +81,17 @@ void QWindowsMediaEncoder::record(QMediaEncoderSettings &settings)
     if (m_state != QMediaRecorder::StoppedState)
         return;
 
-    m_mediaDeviceSession->setActive(true);
+    m_sessionWasActive = m_mediaDeviceSession->isActive() || m_mediaDeviceSession->isActivating();
 
-    if (!m_mediaDeviceSession->isActive() && !m_mediaDeviceSession->isActivating()) {
-        error(QMediaRecorder::ResourceError,
-              QMediaRecorderPrivate::msgFailedStartRecording());
-        return;
+    if (!m_sessionWasActive) {
+
+        m_mediaDeviceSession->setActive(true);
+
+        if (!m_mediaDeviceSession->isActivating()) {
+            error(QMediaRecorder::ResourceError,
+                  QMediaRecorderPrivate::msgFailedStartRecording());
+            return;
+        }
     }
 
     const auto audioOnly = settings.videoCodec() == QMediaFormat::VideoCodec::Unspecified;
@@ -135,8 +140,11 @@ void QWindowsMediaEncoder::resume()
 
 void QWindowsMediaEncoder::stop()
 {
-    if (m_mediaDeviceSession && m_state != QMediaRecorder::StoppedState)
+    if (m_mediaDeviceSession && m_state != QMediaRecorder::StoppedState) {
         m_mediaDeviceSession->stopRecording();
+        if (!m_sessionWasActive)
+            m_mediaDeviceSession->setActive(false);
+    }
 }
 
 
@@ -214,6 +222,8 @@ void QWindowsMediaEncoder::onStreamingError(int errorCode)
 
     if (m_state != QMediaRecorder::StoppedState) {
         m_mediaDeviceSession->stopRecording();
+        if (!m_sessionWasActive)
+            m_mediaDeviceSession->setActive(false);
     }
 }
 
