@@ -288,6 +288,21 @@ void AndroidMediaPlayer::unblockAudio()
     mAudioBlocked = false;
 }
 
+void AndroidMediaPlayer::startSoundStreaming(const int inputId, const int outputId)
+{
+    QJniObject::callStaticMethod<void>("org/qtproject/qt/android/multimedia/QtAudioDeviceManager",
+                                       "startSoundStreaming",
+                                       "(II)V",
+                                       inputId,
+                                       outputId);
+}
+
+void AndroidMediaPlayer::stopSoundStreaming()
+{
+    QJniObject::callStaticMethod<void>(
+        "org/qtproject/qt/android/multimedia/QtAudioDeviceManager", "stopSoundStreaming");
+}
+
 bool AndroidMediaPlayer::setPlaybackRate(qreal rate)
 {
     if (QNativeInterface::QAndroidApplication::sdkVersion() < 23) {
@@ -296,34 +311,7 @@ bool AndroidMediaPlayer::setPlaybackRate(qreal rate)
         return false;
     }
 
-    QJniObject player = mMediaPlayer.callObjectMethod("getMediaPlayerHandle",
-                                                      "()Landroid/media/MediaPlayer;");
-    if (player.isValid()) {
-        QJniObject playbackParams = player.callObjectMethod("getPlaybackParams",
-                                                            "()Landroid/media/PlaybackParams;");
-        if (playbackParams.isValid()) {
-            playbackParams.callObjectMethod("setSpeed", "(F)Landroid/media/PlaybackParams;",
-                                            jfloat(rate));
-            // pitch can only be > 0
-            if (!qFuzzyIsNull(rate))
-                playbackParams.callObjectMethod("setPitch", "(F)Landroid/media/PlaybackParams;",
-                                                jfloat(qAbs(rate)));
-
-            QJniEnvironment env;
-            auto methodId = env->GetMethodID(player.objectClass(), "setPlaybackParams",
-                                             "(Landroid/media/PlaybackParams;)V");
-            env->CallVoidMethod(player.object(), methodId, playbackParams.object());
-
-            if (env.checkAndClearExceptions()) {
-                qWarning() << "Invalid playback rate" << rate;
-                return false;
-            } else {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return mMediaPlayer.callMethod<jboolean>("setPlaybackRate", "(F)V", jfloat(rate));
 }
 
 void AndroidMediaPlayer::setDisplay(AndroidSurfaceTexture *surfaceTexture)

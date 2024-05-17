@@ -59,6 +59,7 @@
 #include "mfplayersession_p.h"
 #include <mferror.h>
 #include <nserror.h>
+#include <winerror.h>
 #include "private/sourceresolver_p.h"
 #include "samplegrabber_p.h"
 #include "mftvideo_p.h"
@@ -110,7 +111,7 @@ MFPlayerSession::MFPlayerSession(MFPlayerControl *playerControl)
     m_request.rate = 1.0f;
 
     m_audioSampleGrabber = new AudioSampleGrabberCallback;
-    m_videoRendererControl = new MFVideoRendererControl;
+    m_videoRendererControl = new MFVideoRendererControl(this);
 }
 
 void MFPlayerSession::timeout()
@@ -217,7 +218,8 @@ void MFPlayerSession::load(const QUrl &url, QIODevice *stream)
         createSession();
         changeStatus(QMediaPlayer::LoadingMedia);
         m_sourceResolver->load(url, stream);
-        m_updateRoutingOnStart = true;
+        if (url.isLocalFile())
+            m_updateRoutingOnStart = true;
     }
     positionChanged(position());
 }
@@ -241,7 +243,17 @@ void MFPlayerSession::handleSourceError(long hr)
         errorCode = QMediaPlayer::FormatError;
         errorString = tr("Unsupported media type.");
         break;
+    case MF_E_UNSUPPORTED_SCHEME:
+        errorCode = QMediaPlayer::ResourceError;
+        errorString = tr("Unsupported URL scheme.");
+        break;
+    case QMM_WININET_E_CANNOT_CONNECT:
+        errorCode = QMediaPlayer::NetworkError;
+        errorString = tr("A connection with the server could not be established.");
+        break;
     default:
+        qWarning() << "handleSourceError:"
+                   << Qt::showbase << Qt::hex << Qt::uppercasedigits << static_cast<quint32>(hr);
         errorString = tr("Failed to load source.");
         break;
     }
@@ -492,20 +504,15 @@ IMFTopologyNode* MFPlayerSession::addOutputNode(MediaType mediaType, IMFTopology
             }
 
             auto id = m_audioOutput->device.id();
-            if (!id.isEmpty()) {
-                QString s = QString::fromUtf8(id);
-                hr = activate->SetString(MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID, (LPCWSTR)s.utf16());
-            } else {
-                //This is the default one that has been inserted in updateEndpoints(),
-                //so give the activate a hint that we want to use the device for multimedia playback
-                //then the media foundation will choose an appropriate one.
-
-                //from MSDN:
-                //The ERole enumeration defines constants that indicate the role that the system has assigned to an audio endpoint device.
-                //eMultimedia: Music, movies, narration, and live music recording.
-                hr = activate->SetUINT32(MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ROLE, eMultimedia);
+            if (id.isEmpty()) {
+                qWarning() << "No audio output";
+                activate->Release();
+                node->Release();
+                return NULL;
             }
 
+            QString s = QString::fromUtf8(id);
+            hr = activate->SetString(MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID, (LPCWSTR)s.utf16());
             if (FAILED(hr)) {
                 qWarning() << "Failed to set attribute for audio device" << m_audioOutput->device.description();
                 activate->Release();
@@ -1586,8 +1593,13 @@ ULONG MFPlayerSession::AddRef(void)
 ULONG MFPlayerSession::Release(void)
 {
     LONG cRef = InterlockedDecrement(&m_cRef);
-    if (cRef == 0)
+    if (cRef == 0) {
         this->deleteLater();
+
+        // In rare cases the session has queued events to be run between deleteLater and deleting,
+        // so we set the parent control to nullptr in order to prevent crashes in the cases.
+        m_playerControl = nullptr;
+    }
     return cRef;
 }
 
@@ -1671,8 +1683,25 @@ void MFPlayerSession::handleSessionEvent(IMFMediaEvent *sessionEvent)
             break;
         }
         changeStatus(QMediaPlayer::InvalidMedia);
-        qWarning() << "handleSessionEvent: serious error = " << hrStatus;
-        emit error(QMediaPlayer::ResourceError, tr("Media session serious error."), true);
+        qWarning() << "handleSessionEvent: serious error = "
+                   << Qt::showbase << Qt::hex << Qt::uppercasedigits << static_cast<quint32>(hrStatus);
+        switch (hrStatus) {
+        case MF_E_NET_READ:
+            emit error(QMediaPlayer::NetworkError, tr("Error reading from the network."), true);
+            break;
+        case MF_E_NET_WRITE:
+            emit error(QMediaPlayer::NetworkError, tr("Error writing to the network."), true);
+            break;
+        case NS_E_FIREWALL:
+            emit error(QMediaPlayer::NetworkError, tr("Network packets might be blocked by a firewall."), true);
+            break;
+        case MF_E_MEDIAPROC_WRONGSTATE:
+            emit error(QMediaPlayer::ResourceError, tr("Media session state error."), true);
+            break;
+        default:
+            emit error(QMediaPlayer::ResourceError, tr("Media session serious error."), true);
+            break;
+        }
         break;
     case MESessionRateChanged:
         // If the rate change succeeded, we've already got the rate

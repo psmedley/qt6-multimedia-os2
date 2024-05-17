@@ -96,8 +96,6 @@ public:
     void pause() override;
     void stop() override;
 
-    bool isSeekable() const override;
-
     int trackCount(TrackType trackType) override;
     QMediaMetaData trackMetaData(TrackType trackType, int streamNumber) override;
     int activeTrack(TrackType trackType) override;
@@ -137,7 +135,7 @@ private:
     int mPendingMute = -1;
     bool mReloadingMedia = false;
     int mActiveStateChangeNotifiers = 0;
-    qreal mPendingPlaybackRate = 1.;
+    qreal mCurrentPlaybackRate = 1.;
     bool mHasPendingPlaybackRate = false; // we need this because the rate can theoretically be negative
     QMap<TrackType, QList<QAndroidMetaData>> mTracksMetadata;
 
