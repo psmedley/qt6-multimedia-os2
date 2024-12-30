@@ -3,6 +3,7 @@
 
 #include <QtMultimedia/private/qtmultimediaglobal_p.h>
 #include "qgstutils_p.h"
+#include "qgstreamermessage_p.h"
 
 #include <QtCore/qdatetime.h>
 #include <QtCore/qdir.h>
@@ -21,14 +22,17 @@
 #include <gst/audio/audio.h>
 #include <gst/video/video.h>
 
-template<typename T, int N> constexpr int lengthOf(const T (&)[N]) { return N; }
-
 QT_BEGIN_NAMESPACE
-
 
 namespace {
 
-static const char *audioSampleFormatNames[QAudioFormat::NSampleFormats] = {
+template <typename T, int N>
+constexpr int lengthOf(const T (&)[N])
+{
+    return N;
+}
+
+const char *audioSampleFormatNames[QAudioFormat::NSampleFormats] = {
     nullptr,
 #if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
     "U8",
@@ -43,7 +47,7 @@ static const char *audioSampleFormatNames[QAudioFormat::NSampleFormats] = {
 #endif
 };
 
-static QAudioFormat::SampleFormat gstSampleFormatToSampleFormat(const char *fmt)
+QAudioFormat::SampleFormat gstSampleFormatToSampleFormat(const char *fmt)
 {
     if (fmt) {
         for (int i = 1; i < QAudioFormat::NSampleFormats; ++i) {
@@ -121,7 +125,7 @@ QList<QAudioFormat::SampleFormat> QGValue::getSampleFormats() const
     QList<QAudioFormat::SampleFormat> formats;
     guint nFormats = gst_value_list_get_size(value);
     for (guint f = 0; f < nFormats; ++f) {
-        QGValue v = gst_value_list_get_value(value, f);
+        QGValue v = QGValue{ gst_value_list_get_value(value, f) };
         auto *name = v.toString();
         QAudioFormat::SampleFormat fmt = gstSampleFormatToSampleFormat(name);
         if (fmt == QAudioFormat::Unknown)
@@ -139,8 +143,7 @@ struct VideoFormat
     GstVideoFormat gstFormat;
 };
 
-static const VideoFormat qt_videoFormatLookup[] =
-{
+const VideoFormat qt_videoFormatLookup[] = {
     { QVideoFrameFormat::Format_YUV420P, GST_VIDEO_FORMAT_I420 },
     { QVideoFrameFormat::Format_YUV422P, GST_VIDEO_FORMAT_Y42B },
     { QVideoFrameFormat::Format_YV12   , GST_VIDEO_FORMAT_YV12 },
@@ -167,7 +170,7 @@ static const VideoFormat qt_videoFormatLookup[] =
 #endif
 };
 
-static int indexOfVideoFormat(QVideoFrameFormat::PixelFormat format)
+int indexOfVideoFormat(QVideoFrameFormat::PixelFormat format)
 {
     for (int i = 0; i < lengthOf(qt_videoFormatLookup); ++i)
         if (qt_videoFormatLookup[i].pixelFormat == format)
@@ -176,7 +179,7 @@ static int indexOfVideoFormat(QVideoFrameFormat::PixelFormat format)
     return -1;
 }
 
-static int indexOfVideoFormat(GstVideoFormat format)
+int indexOfVideoFormat(GstVideoFormat format)
 {
     for (int i = 0; i < lengthOf(qt_videoFormatLookup); ++i)
         if (qt_videoFormatLookup[i].gstFormat == format)
@@ -185,111 +188,123 @@ static int indexOfVideoFormat(GstVideoFormat format)
     return -1;
 }
 
+} // namespace
+
+QGstCaps::MemoryFormat QGstCaps::memoryFormat() const
+{
+    auto *features = gst_caps_get_features(get(), 0);
+    if (gst_caps_features_contains(features, "memory:GLMemory"))
+        return GLTexture;
+    if (gst_caps_features_contains(features, "memory:DMABuf"))
+        return DMABuf;
+    return CpuMemory;
 }
 
-QVideoFrameFormat QGstCaps::formatForCaps(GstVideoInfo *info) const
+std::optional<std::pair<QVideoFrameFormat, GstVideoInfo>> QGstCaps::formatAndVideoInfo() const
 {
     GstVideoInfo vidInfo;
-    GstVideoInfo *infoPtr = info ? info : &vidInfo;
 
-    if (gst_video_info_from_caps(infoPtr, caps)) {
-        int index = indexOfVideoFormat(infoPtr->finfo->format);
+    bool success = gst_video_info_from_caps(&vidInfo, get());
+    if (!success)
+        return std::nullopt;
 
-        if (index != -1) {
-            QVideoFrameFormat format(
-                        QSize(infoPtr->width, infoPtr->height),
-                        qt_videoFormatLookup[index].pixelFormat);
+    int index = indexOfVideoFormat(vidInfo.finfo->format);
+    if (index == -1)
+        return std::nullopt;
 
-            if (infoPtr->fps_d > 0)
-                format.setFrameRate(qreal(infoPtr->fps_n) / infoPtr->fps_d);
+    QVideoFrameFormat format(QSize(vidInfo.width, vidInfo.height),
+                             qt_videoFormatLookup[index].pixelFormat);
 
-            QVideoFrameFormat::ColorRange range = QVideoFrameFormat::ColorRange_Unknown;
-            switch (infoPtr->colorimetry.range) {
-            case GST_VIDEO_COLOR_RANGE_UNKNOWN:
-                break;
-            case GST_VIDEO_COLOR_RANGE_0_255:
-                range = QVideoFrameFormat::ColorRange_Full;
-                break;
-            case GST_VIDEO_COLOR_RANGE_16_235:
-                range = QVideoFrameFormat::ColorRange_Video;
-                break;
-            }
-            format.setColorRange(range);
+    if (vidInfo.fps_d > 0)
+        format.setFrameRate(qreal(vidInfo.fps_n) / vidInfo.fps_d);
 
-            QVideoFrameFormat::ColorSpace colorSpace = QVideoFrameFormat::ColorSpace_Undefined;
-            switch (infoPtr->colorimetry.matrix) {
-            case GST_VIDEO_COLOR_MATRIX_UNKNOWN:
-            case GST_VIDEO_COLOR_MATRIX_RGB:
-            case GST_VIDEO_COLOR_MATRIX_FCC:
-                break;
-            case GST_VIDEO_COLOR_MATRIX_BT709:
-                colorSpace = QVideoFrameFormat::ColorSpace_BT709;
-                break;
-            case GST_VIDEO_COLOR_MATRIX_BT601:
-                colorSpace = QVideoFrameFormat::ColorSpace_BT601;
-                break;
-            case GST_VIDEO_COLOR_MATRIX_SMPTE240M:
-                colorSpace = QVideoFrameFormat::ColorSpace_AdobeRgb;
-                break;
-            case GST_VIDEO_COLOR_MATRIX_BT2020:
-                colorSpace = QVideoFrameFormat::ColorSpace_BT2020;
-                break;
-            }
-            format.setColorSpace(colorSpace);
-
-            QVideoFrameFormat::ColorTransfer transfer = QVideoFrameFormat::ColorTransfer_Unknown;
-            switch (infoPtr->colorimetry.transfer) {
-            case GST_VIDEO_TRANSFER_UNKNOWN:
-                break;
-            case GST_VIDEO_TRANSFER_GAMMA10:
-                transfer = QVideoFrameFormat::ColorTransfer_Linear;
-                break;
-            case GST_VIDEO_TRANSFER_GAMMA22:
-            case GST_VIDEO_TRANSFER_SMPTE240M:
-            case GST_VIDEO_TRANSFER_SRGB:
-            case GST_VIDEO_TRANSFER_ADOBERGB:
-                transfer = QVideoFrameFormat::ColorTransfer_Gamma22;
-                break;
-            case GST_VIDEO_TRANSFER_GAMMA18:
-            case GST_VIDEO_TRANSFER_GAMMA20:
-                // not quite, but best fit
-            case GST_VIDEO_TRANSFER_BT709:
-            case GST_VIDEO_TRANSFER_BT2020_12:
-                transfer = QVideoFrameFormat::ColorTransfer_BT709;
-                break;
-            case GST_VIDEO_TRANSFER_GAMMA28:
-                transfer = QVideoFrameFormat::ColorTransfer_Gamma28;
-                break;
-            case GST_VIDEO_TRANSFER_LOG100:
-            case GST_VIDEO_TRANSFER_LOG316:
-                break;
-#if GST_CHECK_VERSION(1, 18, 0)
-            case GST_VIDEO_TRANSFER_SMPTE2084:
-                transfer = QVideoFrameFormat::ColorTransfer_ST2084;
-                break;
-            case GST_VIDEO_TRANSFER_ARIB_STD_B67:
-                transfer = QVideoFrameFormat::ColorTransfer_STD_B67;
-                break;
-            case GST_VIDEO_TRANSFER_BT2020_10:
-                transfer = QVideoFrameFormat::ColorTransfer_BT709;
-                break;
-            case GST_VIDEO_TRANSFER_BT601:
-                transfer = QVideoFrameFormat::ColorTransfer_BT601;
-                break;
-#endif
-            }
-            format.setColorTransfer(transfer);
-
-            return format;
-        }
+    QVideoFrameFormat::ColorRange range = QVideoFrameFormat::ColorRange_Unknown;
+    switch (vidInfo.colorimetry.range) {
+    case GST_VIDEO_COLOR_RANGE_UNKNOWN:
+        break;
+    case GST_VIDEO_COLOR_RANGE_0_255:
+        range = QVideoFrameFormat::ColorRange_Full;
+        break;
+    case GST_VIDEO_COLOR_RANGE_16_235:
+        range = QVideoFrameFormat::ColorRange_Video;
+        break;
     }
-    return QVideoFrameFormat();
+    format.setColorRange(range);
+
+    QVideoFrameFormat::ColorSpace colorSpace = QVideoFrameFormat::ColorSpace_Undefined;
+    switch (vidInfo.colorimetry.matrix) {
+    case GST_VIDEO_COLOR_MATRIX_UNKNOWN:
+    case GST_VIDEO_COLOR_MATRIX_RGB:
+    case GST_VIDEO_COLOR_MATRIX_FCC:
+        break;
+    case GST_VIDEO_COLOR_MATRIX_BT709:
+        colorSpace = QVideoFrameFormat::ColorSpace_BT709;
+        break;
+    case GST_VIDEO_COLOR_MATRIX_BT601:
+        colorSpace = QVideoFrameFormat::ColorSpace_BT601;
+        break;
+    case GST_VIDEO_COLOR_MATRIX_SMPTE240M:
+        colorSpace = QVideoFrameFormat::ColorSpace_AdobeRgb;
+        break;
+    case GST_VIDEO_COLOR_MATRIX_BT2020:
+        colorSpace = QVideoFrameFormat::ColorSpace_BT2020;
+        break;
+    }
+    format.setColorSpace(colorSpace);
+
+    QVideoFrameFormat::ColorTransfer transfer = QVideoFrameFormat::ColorTransfer_Unknown;
+    switch (vidInfo.colorimetry.transfer) {
+    case GST_VIDEO_TRANSFER_UNKNOWN:
+        break;
+    case GST_VIDEO_TRANSFER_GAMMA10:
+        transfer = QVideoFrameFormat::ColorTransfer_Linear;
+        break;
+    case GST_VIDEO_TRANSFER_GAMMA22:
+    case GST_VIDEO_TRANSFER_SMPTE240M:
+    case GST_VIDEO_TRANSFER_SRGB:
+    case GST_VIDEO_TRANSFER_ADOBERGB:
+        transfer = QVideoFrameFormat::ColorTransfer_Gamma22;
+        break;
+    case GST_VIDEO_TRANSFER_GAMMA18:
+    case GST_VIDEO_TRANSFER_GAMMA20:
+        // not quite, but best fit
+    case GST_VIDEO_TRANSFER_BT709:
+    case GST_VIDEO_TRANSFER_BT2020_12:
+        transfer = QVideoFrameFormat::ColorTransfer_BT709;
+        break;
+    case GST_VIDEO_TRANSFER_GAMMA28:
+        transfer = QVideoFrameFormat::ColorTransfer_Gamma28;
+        break;
+    case GST_VIDEO_TRANSFER_LOG100:
+    case GST_VIDEO_TRANSFER_LOG316:
+        break;
+#if GST_CHECK_VERSION(1, 18, 0)
+    case GST_VIDEO_TRANSFER_SMPTE2084:
+        transfer = QVideoFrameFormat::ColorTransfer_ST2084;
+        break;
+    case GST_VIDEO_TRANSFER_ARIB_STD_B67:
+        transfer = QVideoFrameFormat::ColorTransfer_STD_B67;
+        break;
+    case GST_VIDEO_TRANSFER_BT2020_10:
+        transfer = QVideoFrameFormat::ColorTransfer_BT709;
+        break;
+    case GST_VIDEO_TRANSFER_BT601:
+        transfer = QVideoFrameFormat::ColorTransfer_BT601;
+        break;
+#endif
+    }
+    format.setColorTransfer(transfer);
+
+    return std::pair{
+        std::move(format),
+        vidInfo,
+    };
 }
 
 void QGstCaps::addPixelFormats(const QList<QVideoFrameFormat::PixelFormat> &formats, const char *modifier)
 {
-    if (!gst_caps_is_writable(caps))
-        caps = gst_caps_make_writable(caps);
+    if (!gst_caps_is_writable(get()))
+        *this = QGstCaps(gst_caps_make_writable(release()), QGstCaps::RefMode::HasRef);
 
     GValue list = {};
     g_value_init(&list, GST_TYPE_LIST);
@@ -312,11 +327,11 @@ void QGstCaps::addPixelFormats(const QList<QVideoFrameFormat::PixelFormat> &form
                                         "height"   , GST_TYPE_INT_RANGE, 1, INT_MAX,
                                         nullptr);
     gst_structure_set_value(structure, "format", &list);
-    gst_caps_append_structure(caps, structure);
+    gst_caps_append_structure(get(), structure);
     g_value_unset(&list);
 
     if (modifier)
-        gst_caps_set_features(caps, size() - 1, gst_caps_features_from_string(modifier));
+        gst_caps_set_features(get(), size() - 1, gst_caps_features_from_string(modifier));
 }
 
 QGstCaps QGstCaps::fromCameraFormat(const QCameraFormat &format)
@@ -340,7 +355,7 @@ QGstCaps QGstCaps::fromCameraFormat(const QCameraFormat &format)
                                       nullptr);
     }
     auto caps = QGstCaps::create();
-    gst_caps_append_structure(caps.caps, structure);
+    gst_caps_append_structure(caps.get(), structure);
     return caps;
 }
 
@@ -444,6 +459,41 @@ QGRange<float> QGstStructure::frameRateRange() const
     }
 
     return {minRate, maxRate};
+}
+
+QGstreamerMessage QGstStructure::getMessage()
+{
+    GstMessage *message = nullptr;
+    gst_structure_get(structure, "message", GST_TYPE_MESSAGE, &message, nullptr);
+    return QGstreamerMessage(message, QGstreamerMessage::HasRef);
+}
+
+std::optional<Fraction> QGstStructure::pixelAspectRatio() const
+{
+    gint numerator;
+    gint denominator;
+    if (gst_structure_get_fraction(structure, "pixel-aspect-ratio", &numerator, &denominator)) {
+        return Fraction{
+            numerator,
+            denominator,
+        };
+    }
+
+    return std::nullopt;
+}
+
+QSize QGstStructure::nativeSize() const
+{
+    QSize size = resolution();
+    if (!size.isValid()) {
+        qWarning() << Q_FUNC_INFO << "invalid resolution when querying nativeSize";
+        return size;
+    }
+
+    std::optional<Fraction> par = pixelAspectRatio();
+    if (par)
+        size = qCalculateFrameSize(size, *par);
+    return size;
 }
 
 GList *qt_gst_video_sinks()

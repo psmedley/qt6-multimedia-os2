@@ -14,17 +14,18 @@
 #include <mmddk.h>
 #include <mfobjects.h>
 #include <mfidl.h>
-#include <Mferror.h>
+#include <mferror.h>
 #include <mmdeviceapi.h>
 #include <qwindowsmfdefs_p.h>
 
 #include <QtCore/qmap.h>
+#include <private/qcomobject_p.h>
+#include <private/qsystemerror_p.h>
 
 QT_BEGIN_NAMESPACE
 
-class CMMNotificationClient : public IMMNotificationClient
+class CMMNotificationClient : public QComObject<IMMNotificationClient>
 {
-    LONG m_cRef;
     ComPtr<IMMDeviceEnumerator> m_enumerator;
     QWindowsMediaDevices *m_windowsMediaDevices;
     QMap<QString, DWORD> m_deviceState;
@@ -32,44 +33,11 @@ class CMMNotificationClient : public IMMNotificationClient
 public:
     CMMNotificationClient(QWindowsMediaDevices *windowsMediaDevices,
                           ComPtr<IMMDeviceEnumerator> enumerator,
-                          QMap<QString, DWORD> &&deviceState) :
-        m_cRef(1),
-        m_enumerator(enumerator),
-        m_windowsMediaDevices(windowsMediaDevices),
-        m_deviceState(deviceState)
+                          QMap<QString, DWORD> &&deviceState)
+        : m_enumerator(enumerator),
+          m_windowsMediaDevices(windowsMediaDevices),
+          m_deviceState(deviceState)
     {}
-
-    virtual ~CMMNotificationClient() {}
-
-    // IUnknown methods -- AddRef, Release, and QueryInterface
-    ULONG STDMETHODCALLTYPE AddRef() override
-    {
-        return InterlockedIncrement(&m_cRef);
-    }
-
-    ULONG STDMETHODCALLTYPE Release() override
-    {
-        ULONG ulRef = InterlockedDecrement(&m_cRef);
-        if (0 == ulRef) {
-            delete this;
-        }
-        return ulRef;
-    }
-
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, VOID **ppvInterface) override
-    {
-        if (IID_IUnknown == riid) {
-            AddRef();
-            *ppvInterface = (IUnknown*)this;
-        } else if (__uuidof(IMMNotificationClient) == riid) {
-            AddRef();
-            *ppvInterface = (IMMNotificationClient*)this;
-        } else {
-            *ppvInterface = NULL;
-            return E_NOINTERFACE;
-        }
-        return S_OK;
-    }
 
     HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR) override
     {
@@ -144,51 +112,57 @@ public:
                     emitAudioDevicesChanged(flow);
         }
     }
+
+private:
+    // Destructor is not public. Caller should call Release.
+    ~CMMNotificationClient() override = default;
 };
 
 QWindowsMediaDevices::QWindowsMediaDevices()
     : QPlatformMediaDevices()
 {
-    CoInitialize(nullptr);
-
     auto hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
                 CLSCTX_INPROC_SERVER,__uuidof(IMMDeviceEnumerator),
                 (void**)&m_deviceEnumerator);
 
-    if (SUCCEEDED(hr)) {
-        QMap<QString, DWORD> devState;
-        ComPtr<IMMDeviceCollection> devColl;
-        UINT count = 0;
+    if (FAILED(hr)) {
+        qWarning("Failed to instantiate IMMDeviceEnumerator (%s)."
+                 "Audio device change notification will be disabled",
+            qPrintable(QSystemError::windowsComString(hr)));
+        return;
+    }
 
-        if (SUCCEEDED(m_deviceEnumerator->EnumAudioEndpoints(EDataFlow::eAll, DEVICE_STATEMASK_ALL, devColl.GetAddressOf()))
-            && SUCCEEDED(devColl->GetCount(&count)))
-        {
-            for (UINT i = 0; i < count; i++) {
-                ComPtr<IMMDevice> device;
-                DWORD state = 0;
-                QComTaskResource<WCHAR> id;
+    QMap<QString, DWORD> devState;
+    ComPtr<IMMDeviceCollection> devColl;
+    UINT count = 0;
 
-                if (SUCCEEDED(devColl->Item(i, device.GetAddressOf()))
-                    && SUCCEEDED(device->GetState(&state))
-                    && SUCCEEDED(device->GetId(id.address()))) {
-                    devState.insert(QString::fromWCharArray(id.get()), state);
-                }
+    if (SUCCEEDED(m_deviceEnumerator->EnumAudioEndpoints(EDataFlow::eAll, DEVICE_STATEMASK_ALL, devColl.GetAddressOf()))
+        && SUCCEEDED(devColl->GetCount(&count)))
+    {
+        for (UINT i = 0; i < count; i++) {
+            ComPtr<IMMDevice> device;
+            DWORD state = 0;
+            QComTaskResource<WCHAR> id;
+
+            if (SUCCEEDED(devColl->Item(i, device.GetAddressOf()))
+                && SUCCEEDED(device->GetState(&state))
+                && SUCCEEDED(device->GetId(id.address()))) {
+                devState.insert(QString::fromWCharArray(id.get()), state);
             }
         }
-
-
-        m_notificationClient =
-                makeComObject<CMMNotificationClient>(this, m_deviceEnumerator, std::move(devState));
-        m_deviceEnumerator->RegisterEndpointNotificationCallback(m_notificationClient.Get());
-
-    } else {
-        qWarning() << "Audio device change notification disabled";
     }
+
+
+    m_notificationClient = makeComObject<CMMNotificationClient>(this, m_deviceEnumerator, std::move(devState));
+    m_deviceEnumerator->RegisterEndpointNotificationCallback(m_notificationClient.Get());
 }
 
 QWindowsMediaDevices::~QWindowsMediaDevices()
 {
     if (m_deviceEnumerator) {
+        // Note: Calling UnregisterEndpointNotificationCallback after CoUninitialize
+        // will abruptly terminate application, preventing remaining destructors from
+        // being called (QTBUG-120198).
         m_deviceEnumerator->UnregisterEndpointNotificationCallback(m_notificationClient.Get());
     }
     if (m_warmUpAudioClient) {
@@ -201,12 +175,13 @@ QWindowsMediaDevices::~QWindowsMediaDevices()
     m_deviceEnumerator.Reset();
     m_notificationClient.Reset();
     m_warmUpAudioClient.Reset();
-
-    CoUninitialize();
 }
 
 QList<QAudioDevice> QWindowsMediaDevices::availableDevices(QAudioDevice::Mode mode) const
 {
+    if (!m_deviceEnumerator)
+        return {};
+
     const auto audioOut = mode == QAudioDevice::Output;
 
     const auto defaultAudioDeviceID = [this, audioOut]{
@@ -291,8 +266,20 @@ QPlatformAudioSink *QWindowsMediaDevices::createAudioSink(const QAudioDevice &de
     return new QWindowsAudioSink(devInfo->immDev(), parent);
 }
 
+static bool isPrepareAudioEnabled()
+{
+    static bool isDisableAudioPrepareSet = false;
+    static const int disableAudioPrepare =
+            qEnvironmentVariableIntValue("QT_DISABLE_AUDIO_PREPARE", &isDisableAudioPrepareSet);
+
+    return !isDisableAudioPrepareSet || disableAudioPrepare == 0;
+}
+
 void QWindowsMediaDevices::prepareAudio()
 {
+    if (!isPrepareAudioEnabled())
+        return;
+
     if (m_isAudioClientWarmedUp.exchange(true))
         return;
 
@@ -308,7 +295,8 @@ void QWindowsMediaDevices::prepareAudio()
     ComPtr<IMMDevice> device;
     hr = deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, device.GetAddressOf());
     if (FAILED(hr)) {
-        qWarning() << "Failed to retrieve default audio endpoint" << hr;
+        if (hr != E_NOTFOUND)
+            qWarning() << "Failed to retrieve default audio endpoint" << hr;
         return;
     }
 

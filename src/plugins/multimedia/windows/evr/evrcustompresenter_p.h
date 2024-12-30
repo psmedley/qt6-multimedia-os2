@@ -23,6 +23,8 @@
 #include <qvideoframeformat.h>
 #include <qvideosink.h>
 #include <qpointer.h>
+#include <private/qcomptr_p.h>
+#include "evrhelpers_p.h"
 
 #include <d3d9.h>
 #include <dxva2api.h>
@@ -108,15 +110,12 @@ public:
     void setFrameRate(const MFRatio &fps);
     void setClockRate(float rate) { m_playbackRate = rate; }
 
-    const LONGLONG &lastSampleTime() const { return m_lastSampleTime; }
-    const LONGLONG &frameDuration() const { return m_perFrameInterval; }
-
-    HRESULT startScheduler(IMFClock *clock);
+    HRESULT startScheduler(ComPtr<IMFClock> clock);
     HRESULT stopScheduler();
 
-    HRESULT scheduleSample(IMFSample *sample, bool presentNow);
+    HRESULT scheduleSample(const ComPtr<IMFSample> &sample, bool presentNow);
     HRESULT processSamplesInQueue(LONG *nextSleep);
-    HRESULT processSample(IMFSample *sample, LONG *nextSleep);
+    HRESULT processSample(const ComPtr<IMFSample> &sample, LONG *nextSleep);
     HRESULT flush();
 
     bool areSamplesScheduled();
@@ -129,19 +128,17 @@ private:
 
     EVRCustomPresenter *m_presenter;
 
-    QQueue<IMFSample*> m_scheduledSamples; // Samples waiting to be presented.
+    QQueue<ComPtr<IMFSample>> m_scheduledSamples; // Samples waiting to be presented.
 
-    IMFClock *m_clock; // Presentation clock. Can be NULL.
+    ComPtr<IMFClock> m_clock; // Presentation clock. Can be NULL.
 
     DWORD m_threadID;
-    HANDLE m_schedulerThread;
-    HANDLE m_threadReadyEvent;
-    HANDLE m_flushEvent;
+    ThreadHandle m_schedulerThread;
+    EventHandle m_threadReadyEvent;
+    EventHandle m_flushEvent;
 
     float m_playbackRate;
-    MFTIME m_perFrameInterval; // Duration of each frame.
     LONGLONG m_perFrame_1_4th; // 1/4th of the frame duration.
-    MFTIME m_lastSampleTime; // Most recent sample time.
 
     QMutex m_mutex;
 };
@@ -153,15 +150,15 @@ public:
     SamplePool();
     ~SamplePool();
 
-    HRESULT initialize(QList<IMFSample*> &samples);
+    HRESULT initialize(QList<ComPtr<IMFSample>> &&samples);
     HRESULT clear();
 
-    HRESULT getSample(IMFSample **sample);
-    HRESULT returnSample(IMFSample *sample);
+    ComPtr<IMFSample> takeSample();
+    void returnSample(const ComPtr<IMFSample> &sample);
 
 private:
     QMutex m_mutex;
-    QList<IMFSample*> m_videoSampleQueue;
+    QList<ComPtr<IMFSample>> m_videoSampleQueue;
     bool m_initialized;
 };
 
@@ -243,7 +240,7 @@ public:
 
     void startSurface();
     void stopSurface();
-    void presentSample(IMFSample *sample);
+    void presentSample(const ComPtr<IMFSample> &sample);
 
     bool event(QEvent *) override;
 
@@ -296,15 +293,15 @@ private:
     // Managing samples
     void processOutputLoop();
     HRESULT processOutput();
-    HRESULT deliverSample(IMFSample *sample, bool repaint);
-    HRESULT trackSample(IMFSample *sample);
+    HRESULT deliverSample(const ComPtr<IMFSample> &sample);
+    HRESULT trackSample(const ComPtr<IMFSample> &sample);
     void releaseResources();
 
     // Frame-stepping
     HRESULT prepareFrameStep(DWORD steps);
     HRESULT startFrameStep();
-    HRESULT deliverFrameStepSample(IMFSample *sample);
-    HRESULT completeFrameStep(IMFSample *sample);
+    HRESULT deliverFrameStepSample(const ComPtr<IMFSample> &sample);
+    HRESULT completeFrameStep(const ComPtr<IMFSample> &sample);
     HRESULT cancelFrameStep();
 
     // Callback when a video sample is released.
@@ -315,7 +312,7 @@ private:
     struct FrameStep
     {
         FrameStepState state = FrameStepNone;
-        QList<IMFSample*> samples;
+        QList<ComPtr<IMFSample>> samples;
         DWORD steps = 0;
         DWORD_PTR sampleNoRef = 0;
     };
@@ -334,7 +331,6 @@ private:
 
     // Rendering state
     bool m_sampleNotify; // Did the mixer signal it has an input sample?
-    bool m_repaint; // Do we need to repaint the last sample?
     bool m_prerolled; // Have we presented at least one sample?
     bool m_endStreaming; // Did we reach the end of the stream (EOS)?
 
@@ -343,10 +339,10 @@ private:
 
     D3DPresentEngine *m_presentEngine; // Rendering engine. (Never null if the constructor succeeds.)
 
-    IMFClock *m_clock; // The EVR's clock.
-    IMFTransform *m_mixer; // The EVR's mixer.
-    IMediaEventSink *m_mediaEventSink; // The EVR's event-sink interface.
-    IMFMediaType *m_mediaType; // Output media type
+    ComPtr<IMFClock> m_clock; // The EVR's clock.
+    ComPtr<IMFTransform> m_mixer; // The EVR's mixer.
+    ComPtr<IMediaEventSink> m_mediaEventSink; // The EVR's event-sink interface.
+    ComPtr<IMFMediaType> m_mediaType; // Output media type
 
     QPointer<QVideoSink> m_videoSink;
     bool m_canRenderToSurface;

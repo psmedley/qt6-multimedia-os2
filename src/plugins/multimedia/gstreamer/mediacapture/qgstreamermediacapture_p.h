@@ -33,7 +33,7 @@ class QGstreamerAudioOutput;
 class QGstreamerVideoOutput;
 class QGstreamerVideoSink;
 
-class QGstreamerMediaCapture : public QPlatformMediaCaptureSession
+class QGstreamerMediaCapture final : public QPlatformMediaCaptureSession
 {
     Q_OBJECT
 
@@ -64,7 +64,9 @@ public:
     QGstreamerVideoSink *gstreamerVideoSink() const;
 
 private:
-    QGstreamerMediaCapture(QGstreamerVideoOutput *videoOutput);
+    void setCameraActive(bool activate);
+
+    explicit QGstreamerMediaCapture(QGstreamerVideoOutput *videoOutput);
 
     friend QGstreamerMediaEncoder;
     // Gst elements
@@ -72,6 +74,7 @@ private:
 
     QGstreamerAudioInput *gstAudioInput = nullptr;
     QGstreamerCamera *gstCamera = nullptr;
+    QMetaObject::Connection gstCameraActiveConnection;
 
     QGstElement gstAudioTee;
     QGstElement gstVideoTee;

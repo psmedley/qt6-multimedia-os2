@@ -1,8 +1,8 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#ifndef QFFMPEGCAMERA_H
-#define QFFMPEGCAMERA_H
+#ifndef QV4L2CAMERA_H
+#define QV4L2CAMERA_H
 
 //
 //  W A R N I N G
@@ -16,51 +16,40 @@
 //
 
 #include <private/qplatformcamera_p.h>
-#include <private/qplatformvideodevices_p.h>
-#include <private/qplatformmediaintegration_p.h>
-
-#include <qfilesystemwatcher.h>
-#include <qsocketnotifier.h>
-#include <qmutex.h>
+#include <sys/time.h>
 
 QT_BEGIN_NAMESPACE
 
-class QV4L2CameraDevices : public QPlatformVideoDevices
+class QV4L2FileDescriptor;
+class QV4L2MemoryTransfer;
+class QSocketNotifier;
+
+struct V4L2CameraInfo
 {
-    Q_OBJECT
-public:
-    QV4L2CameraDevices(QPlatformMediaIntegration *integration);
+    bool formatInitialized = false;
 
-    QList<QCameraDevice> videoDevices() const override;
+    bool autoWhiteBalanceSupported = false;
+    bool colorTemperatureSupported = false;
+    bool autoExposureSupported = false;
+    bool manualExposureSupported = false;
+    bool flashSupported = false;
+    bool torchSupported = false;
+    qint32 minColorTemp = 5600; // Daylight...
+    qint32 maxColorTemp = 5600;
+    qint32 minExposure = 0;
+    qint32 maxExposure = 0;
+    qint32 minExposureAdjustment = 0;
+    qint32 maxExposureAdjustment = 0;
+    qint32 minFocus = 0;
+    qint32 maxFocus = 0;
+    qint32 rangedFocus = false;
 
-public Q_SLOTS:
-    void checkCameras();
-
-private:
-    bool doCheckCameras();
-
-private:
-    QList<QCameraDevice> m_cameras;
-    QFileSystemWatcher m_deviceWatcher;
+    int minZoom = 0;
+    int maxZoom = 0;
 };
 
-struct QV4L2CameraBuffers
-{
-public:
-    ~QV4L2CameraBuffers();
-
-    void release(int index);
-    void unmapBuffers();
-
-    QAtomicInt ref;
-    QMutex mutex;
-    struct MappedBuffer {
-        void *data;
-        qsizetype size;
-    };
-    QList<MappedBuffer> mappedBuffers;
-    int v4l2FileDescriptor = -1;
-};
+QVideoFrameFormat::PixelFormat formatForV4L2Format(uint32_t v4l2Format);
+uint32_t v4l2FormatForPixelFormat(QVideoFrameFormat::PixelFormat format);
 
 class Q_MULTIMEDIA_EXPORT QV4L2Camera : public QPlatformCamera
 {
@@ -103,18 +92,13 @@ public:
     void setWhiteBalanceMode(QCamera::WhiteBalanceMode /*mode*/) override;
     void setColorTemperature(int /*temperature*/) override;
 
-    void releaseBuffer(int index);
+    QVideoFrameFormat frameFormat() const override;
 
 private Q_SLOTS:
     void readFrame();
 
 private:
     void setCameraBusy();
-
-    bool m_active = false;
-
-    QCameraDevice m_cameraDevice;
-
     void initV4L2Controls();
     void closeV4L2Fd();
     int setV4L2ColorTemperature(int temperature);
@@ -122,39 +106,28 @@ private:
     int getV4L2Parameter(quint32 id) const;
 
     void setV4L2CameraFormat();
-    void initMMap();
+    void initV4L2MemoryTransfer();
     void startCapturing();
     void stopCapturing();
 
-    QSocketNotifier *notifier = nullptr;
-    QExplicitlySharedDataPointer<QV4L2CameraBuffers> d;
+private:
+    bool m_active = false;
+    QCameraDevice m_cameraDevice;
 
-    bool v4l2AutoWhiteBalanceSupported = false;
-    bool v4l2ColorTemperatureSupported = false;
-    bool v4l2AutoExposureSupported = false;
-    bool v4l2ManualExposureSupported = false;
-    qint32 v4l2MinColorTemp = 5600; // Daylight...
-    qint32 v4l2MaxColorTemp = 5600;
-    qint32 v4l2MinExposure = 0;
-    qint32 v4l2MaxExposure = 0;
-    qint32 v4l2MinExposureAdjustment = 0;
-    qint32 v4l2MaxExposureAdjustment = 0;
-    qint32 v4l2MinFocus = 0;
-    qint32 v4l2MaxFocus = 0;
-    qint32 v4l2RangedFocus = false;
-    bool v4l2FlashSupported = false;
-    bool v4l2TorchSupported = false;
-    int v4l2MinZoom = 0;
-    int v4l2MaxZoom = 0;
-    timeval firstFrameTime = {-1, -1};
-    int bytesPerLine = -1;
-    QVideoFrameFormat::ColorSpace colorSpace = QVideoFrameFormat::ColorSpace_Undefined;
-    qint64 frameDuration = -1;
-    bool cameraBusy = false;
+    std::unique_ptr<QSocketNotifier> m_notifier;
+    std::unique_ptr<QV4L2MemoryTransfer> m_memoryTransfer;
+    std::shared_ptr<QV4L2FileDescriptor> m_v4l2FileDescriptor;
+
+    V4L2CameraInfo m_v4l2Info;
+
+    timeval m_firstFrameTime = { -1, -1 };
+    quint32 m_bytesPerLine = 0;
+    quint32 m_imageSize = 0;
+    QVideoFrameFormat::ColorSpace m_colorSpace = QVideoFrameFormat::ColorSpace_Undefined;
+    qint64 m_frameDuration = -1;
+    bool m_cameraBusy = false;
 };
 
 QT_END_NAMESPACE
 
-
-#endif  // QFFMPEGCAMERA_H
-
+#endif // QV4L2CAMERA_H

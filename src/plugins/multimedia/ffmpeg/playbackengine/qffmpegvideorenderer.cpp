@@ -9,8 +9,8 @@ QT_BEGIN_NAMESPACE
 
 namespace QFFmpeg {
 
-VideoRenderer::VideoRenderer(const TimeController &tc, QVideoSink *sink, QVideoFrame::RotationAngle rotationAngle)
-    : Renderer(tc), m_sink(sink), m_rotationAngle(rotationAngle)
+VideoRenderer::VideoRenderer(const TimeController &tc, QVideoSink *sink, QtVideo::Rotation rotation)
+    : Renderer(tc), m_sink(sink), m_rotation(rotation)
 {
 }
 
@@ -34,14 +34,17 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
 
     //        qCDebug(qLcVideoRenderer) << "RHI:" << accel.isNull() << accel.rhi() << sink->rhi();
 
+    const auto codec = frame.codec();
+    Q_ASSERT(codec);
+
 #ifdef Q_OS_ANDROID
     // QTBUG-108446
     // In general case, just creation of frames context is not correct since
     //   frames may require additional specific data for hw contexts, so
     //   just setting of hw_frames_ctx is not enough.
     // TODO: investigate the case in order to remove or fix the code.
-    if (frame.codec()->hwAccel() && !frame.avFrame()->hw_frames_ctx) {
-        HWAccel *hwaccel = frame.codec()->hwAccel();
+    if (codec->hwAccel() && !frame.avFrame()->hw_frames_ctx) {
+        HWAccel *hwaccel = codec->hwAccel();
         AVFrame *avframe = frame.avFrame();
         if (!hwaccel->hwFramesContext())
             hwaccel->createFramesContext(AVPixelFormat(avframe->format),
@@ -52,7 +55,8 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
     }
 #endif
 
-    auto buffer = std::make_unique<QFFmpegVideoBuffer>(frame.takeAVFrame());
+    const auto pixelAspectRatio = codec->pixelAspectRatio(frame.avFrame());
+    auto buffer = std::make_unique<QFFmpegVideoBuffer>(frame.takeAVFrame(), pixelAspectRatio);
     QVideoFrameFormat format(buffer->size(), buffer->pixelFormat());
     format.setColorSpace(buffer->colorSpace());
     format.setColorTransfer(buffer->colorTransfer());
@@ -61,7 +65,7 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
     QVideoFrame videoFrame(buffer.release(), format);
     videoFrame.setStartTime(frame.pts());
     videoFrame.setEndTime(frame.end());
-    videoFrame.setRotationAngle(m_rotationAngle);
+    videoFrame.setRotationAngle(QVideoFrame::RotationAngle(m_rotation));
     m_sink->setVideoFrame(videoFrame);
 
     return {};

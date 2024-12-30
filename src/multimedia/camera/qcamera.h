@@ -248,9 +248,8 @@ Q_SIGNALS:
     void exposureCompensationChanged(float);
     void exposureModeChanged();
 
-    void whiteBalanceModeChanged() const;
-    void colorTemperatureChanged() const;
-
+    void whiteBalanceModeChanged() QT6_ONLY(const);
+    void colorTemperatureChanged() QT6_ONLY(const);
     void brightnessChanged();
     void contrastChanged();
     void saturationChanged();

@@ -3,15 +3,10 @@
 
 #include "qplatformmediadevices_p.h"
 #include "qplatformmediaintegration_p.h"
-#include "qmediadevices.h"
-#include "qaudiodevice.h"
 #include "qcameradevice.h"
 #include "qaudiosystem_p.h"
 #include "qaudiodevice.h"
 #include "qplatformvideodevices_p.h"
-
-#include <qmutex.h>
-#include <qloggingcategory.h>
 
 #if defined(Q_OS_ANDROID)
 #include <qandroidmediadevices_p.h>
@@ -32,67 +27,35 @@
 
 QT_BEGIN_NAMESPACE
 
-namespace {
-struct DevicesHolder {
-    ~DevicesHolder()
-    {
-        QMutexLocker locker(&mutex);
-        delete nativeInstance;
-        nativeInstance = nullptr;
-        instance = nullptr;
-    }
-    QBasicMutex mutex;
-    QPlatformMediaDevices *instance = nullptr;
-    QPlatformMediaDevices *nativeInstance = nullptr;
-} devicesHolder;
-
-}
-
-QPlatformMediaDevices *QPlatformMediaDevices::instance()
+std::unique_ptr<QPlatformMediaDevices> QPlatformMediaDevices::create()
 {
-    QMutexLocker locker(&devicesHolder.mutex);
-    if (devicesHolder.instance)
-        return devicesHolder.instance;
-
 #ifdef Q_OS_DARWIN
-    devicesHolder.nativeInstance = new QDarwinMediaDevices;
+    return std::make_unique<QDarwinMediaDevices>();
 #elif defined(Q_OS_WINDOWS)
-    devicesHolder.nativeInstance = new QWindowsMediaDevices;
+    return std::make_unique<QWindowsMediaDevices>();
 #elif defined(Q_OS_ANDROID)
-    devicesHolder.nativeInstance = new QAndroidMediaDevices;
+    return std::make_unique<QAndroidMediaDevices>();
 #elif QT_CONFIG(alsa)
-    devicesHolder.nativeInstance = new QAlsaMediaDevices;
+    return std::make_unique<QAlsaMediaDevices>();
 #elif QT_CONFIG(pulseaudio)
-    devicesHolder.nativeInstance = new QPulseAudioMediaDevices;
+    return std::make_unique<QPulseAudioMediaDevices>();
 #elif defined(Q_OS_QNX)
-    devicesHolder.nativeInstance = new QQnxMediaDevices;
+    return std::make_unique<QQnxMediaDevices>();
 #elif defined(Q_OS_WASM)
-    devicesHolder.nativeInstance = new QWasmMediaDevices;
+    return std::make_unique<QWasmMediaDevices>();
 #else
-    devicesHolder.nativeInstance = new QPlatformMediaDevices;
+    return std::make_unique<QPlatformMediaDevices>();
 #endif
-
-    devicesHolder.instance = devicesHolder.nativeInstance;
-    return devicesHolder.instance;
 }
-
 
 QPlatformMediaDevices::QPlatformMediaDevices() = default;
 
-void QPlatformMediaDevices::initVideoDevicesConnection() {
-    std::call_once(m_videoDevicesConnectionFlag, [this]() {
-        QMetaObject::invokeMethod(this, [this]() {
-            auto videoDevices = QPlatformMediaIntegration::instance()->videoDevices();
-            if (videoDevices)
-                connect(videoDevices, &QPlatformVideoDevices::videoInputsChanged, this,
-                        &QPlatformMediaDevices::videoInputsChanged);
-        }, Qt::QueuedConnection);
-    });
-}
-
-void QPlatformMediaDevices::setDevices(QPlatformMediaDevices *devices)
+void QPlatformMediaDevices::initVideoDevicesConnection()
 {
-    devicesHolder.instance = devices;
+    // Make sure we are notified if video inputs changed
+    if (const auto videoDevices = QPlatformMediaIntegration::instance()->videoDevices())
+        connect(videoDevices, &QPlatformVideoDevices::videoInputsChanged, this,
+                &QPlatformMediaDevices::videoInputsChanged, Qt::UniqueConnection);
 }
 
 QPlatformMediaDevices::~QPlatformMediaDevices() = default;

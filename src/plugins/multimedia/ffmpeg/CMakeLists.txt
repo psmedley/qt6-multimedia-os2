@@ -16,9 +16,11 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
     PLUGIN_TYPE multimedia
     SOURCES
         qffmpeg.cpp qffmpeg_p.h
+        qffmpegdefs_p.h
+        qffmpegioutils.cpp qffmpegioutils_p.h
+        qffmpegavaudioformat.cpp qffmpegavaudioformat_p.h
         qffmpegaudiodecoder.cpp qffmpegaudiodecoder_p.h
         qffmpegaudioinput.cpp qffmpegaudioinput_p.h
-        qffmpegclock.cpp qffmpegclock_p.h
         qffmpeghwaccel.cpp qffmpeghwaccel_p.h
         qffmpegencoderoptions.cpp qffmpegencoderoptions_p.h
         qffmpegmediametadata.cpp qffmpegmediametadata_p.h
@@ -33,13 +35,16 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
         qffmpegencoder.cpp qffmpegencoder_p.h
         qffmpegthread.cpp qffmpegthread_p.h
         qffmpegresampler.cpp qffmpegresampler_p.h
+        qffmpegencodingformatcontext.cpp qffmpegencodingformatcontext_p.h
         qffmpegvideoframeencoder.cpp qffmpegvideoframeencoder_p.h
         qffmpegvideoencoderutils.cpp qffmpegvideoencoderutils_p.h
+        qffmpegaudioencoderutils.cpp qffmpegaudioencoderutils_p.h
         qgrabwindowsurfacecapture.cpp qgrabwindowsurfacecapture_p.h
-        qffmpegsurfacecapturethread.cpp qffmpegsurfacecapturethread_p.h
+        qffmpegsurfacecapturegrabber.cpp qffmpegsurfacecapturegrabber_p.h
         qffmpegsymbolsresolve_p.h
 
         qffmpegplaybackengine.cpp qffmpegplaybackengine_p.h
+        playbackengine/qffmpegplaybackenginedefs_p.h
         playbackengine/qffmpegplaybackengineobject.cpp playbackengine/qffmpegplaybackengineobject_p.h
         playbackengine/qffmpegdemuxer.cpp playbackengine/qffmpegdemuxer_p.h
         playbackengine/qffmpegstreamdecoder.cpp playbackengine/qffmpegstreamdecoder_p.h
@@ -58,8 +63,13 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
     LIBRARIES
         Qt::MultimediaPrivate
         Qt::CorePrivate
-        FFmpeg::avformat FFmpeg::avcodec FFmpeg::swresample FFmpeg::swscale FFmpeg::avutil
 )
+
+if(DYNAMIC_RESOLVE_OPENSSL_SYMBOLS)
+    if(NOT OPENSSL_INCLUDE_DIR AND OPENSSL_ROOT_DIR)
+        set(OPENSSL_INCLUDE_DIR "${OPENSSL_ROOT_DIR}/include")
+    endif()
+endif()
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION DYNAMIC_RESOLVE_OPENSSL_SYMBOLS
     SOURCES
@@ -70,16 +80,18 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION DYNAMIC_RESOLVE_OPENSSL_S
 
 if (ENABLE_DYNAMIC_RESOLVE_VAAPI_SYMBOLS)
     if (QT_FEATURE_vaapi AND NOT DYNAMIC_RESOLVE_VAAPI_SYMBOLS)
-        message(WARNING
-               "QT_FEATURE_vaapi is found but ffmpeg doesn't include vaapi,"
-               "however dynamic symbols resolve is possible.")
+        if (NOT FFMPEG_SHARED_LIBRARIES)
+            message(WARNING
+                   "QT_FEATURE_vaapi is found but statically built FFmpeg doesn't include vaapi,"
+                   "however dynamic symbols resolve is possible.")
+        endif()
 
         set(DYNAMIC_RESOLVE_VAAPI_SYMBOLS TRUE CACHE INTERNAL "")
     elseif (NOT QT_FEATURE_vaapi AND DYNAMIC_RESOLVE_VAAPI_SYMBOLS)
 
         message(FATAL_ERROR
                "QT_FEATURE_vaapi is not found "
-               "but ffmpeg includes VAAPI and dynamic symbols resolve is enabled.")
+               "but FFmpeg includes VAAPI and dynamic symbols resolve is enabled.")
     endif()
 endif()
 
@@ -148,6 +160,8 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION APPLE
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION MACOS
     SOURCES
         qavfscreencapture.mm qavfscreencapture_p.h
+        qcgwindowcapture.mm qcgwindowcapture_p.h
+        qcgcapturablewindows.mm qcgcapturablewindows_p.h
 )
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION WIN32
@@ -155,7 +169,9 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION WIN32
         ../windows/qwindowsvideodevices.cpp ../windows/qwindowsvideodevices_p.h
         qwindowscamera.cpp qwindowscamera_p.h
         qffmpeghwaccel_d3d11.cpp qffmpeghwaccel_d3d11_p.h
+        qgdiwindowcapture.cpp qgdiwindowcapture_p.h
         qffmpegscreencapture_dxgi.cpp qffmpegscreencapture_dxgi_p.h
+        qwincapturablewindows.cpp qwincapturablewindows_p.h
     INCLUDE_DIRECTORIES
         ../windows
     LIBRARIES
@@ -165,6 +181,8 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION WIN32
 )
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_cpp_winrt
+    SOURCES
+        qffmpegwindowcapture_uwp.cpp qffmpegwindowcapture_uwp_p.h
     INCLUDE_DIRECTORIES
         ../windows
     LIBRARIES
@@ -176,18 +194,30 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_cpp_winrt
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_xlib
     SOURCES
         qx11surfacecapture.cpp qx11surfacecapture_p.h
+        qx11capturablewindows.cpp qx11capturablewindows_p.h
     LIBRARIES
         X11
         Xrandr
         Xext
 )
 
-set_source_files_properties(qx11surfacecapture.cpp # X headers
+qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_eglfs
+    SOURCES
+        qeglfsscreencapture.cpp qeglfsscreencapture_p.h
+    LIBRARIES
+        Qt::OpenGLPrivate
+        Qt::Quick
+)
+
+set_source_files_properties(qx11surfacecapture.cpp qx11capturablewindows.cpp # X headers
                             PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION QT_FEATURE_linux_v4l
     SOURCES
         qv4l2camera.cpp qv4l2camera_p.h
+        qv4l2filedescriptor.cpp qv4l2filedescriptor_p.h
+        qv4l2memorytransfer.cpp qv4l2memorytransfer_p.h
+        qv4l2cameradevices.cpp qv4l2cameradevices_p.h
 )
 
 if (ANDROID)
@@ -225,3 +255,17 @@ if (ANDROID)
         android.permission.MODIFY_AUDIO_SETTINGS
     )
 endif()
+
+# TODO: get libs from FindFFmpeg.cmake
+set(ffmpeg_libs FFmpeg::avformat FFmpeg::avcodec FFmpeg::swresample FFmpeg::swscale FFmpeg::avutil)
+
+if (QT_DEPLOY_FFMPEG AND NOT BUILD_SHARED_LIBS)
+    message(FATAL_ERROR "QT_DEPLOY_FFMPEG is not implemented yet for static builds")
+endif()
+
+if (QT_DEPLOY_FFMPEG AND FFMPEG_SHARED_LIBRARIES AND BUILD_SHARED_LIBS)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/QtDeployFFmpeg.cmake")
+    qt_internal_multimedia_copy_or_install_ffmpeg()
+endif()
+
+qt_internal_extend_target(QFFmpegMediaPlugin LIBRARIES ${ffmpeg_libs})

@@ -4,10 +4,11 @@
 #include "qgstreamervideooverlay_p.h"
 
 #include <QtGui/qguiapplication.h>
-#include "qgstutils_p.h"
+#include "qglist_helper_p.h"
 #include "qgst_p.h"
 #include "qgstreamermessage_p.h"
 #include "qgstreamervideosink_p.h"
+#include "qgstutils_p.h"
 
 #include <gst/video/videooverlay.h>
 
@@ -50,7 +51,7 @@ static QGstElement findBestVideoSink()
     for (auto i : elementMap) {
         if (platform != QLatin1String(i.qtPlatform))
             continue;
-        QGstElement choice(i.gstreamerElement, i.gstreamerElement);
+        QGstElement choice = QGstElement::createFromFactory(i.gstreamerElement, i.gstreamerElement);
         if (choice.isNull())
             continue;
 
@@ -67,9 +68,7 @@ static QGstElement findBestVideoSink()
     // If none of the known video sinks are available, try to find one that implements the
     // GstVideoOverlay interface and has autoplugging rank.
     GList *list = qt_gst_video_sinks();
-    for (GList *item = list; item != nullptr; item = item->next) {
-        GstElementFactory *f = GST_ELEMENT_FACTORY(item->data);
-
+    for (GstElementFactory *f : QGstUtils::GListRangeAdaptor<GstElementFactory *>(list)) {
         if (!gst_element_factory_has_interface(f, "GstVideoOverlay"))
             continue;
 
@@ -96,7 +95,7 @@ QGstreamerVideoOverlay::QGstreamerVideoOverlay(QGstreamerVideoSink *parent, cons
 {
     QGstElement sink;
     if (!elementName.isEmpty())
-        sink = QGstElement(elementName.constData(), nullptr);
+        sink = QGstElement::createFromFactory(elementName.constData());
     else
         sink = findBestVideoSink();
 
@@ -208,7 +207,7 @@ void QGstreamerVideoOverlay::setFullScreen(bool fullscreen)
 
 bool QGstreamerVideoOverlay::processSyncMessage(const QGstreamerMessage &message)
 {
-    if (!gst_is_video_overlay_prepare_window_handle_message(message.rawMessage()))
+    if (!gst_is_video_overlay_prepare_window_handle_message(message.message()))
         return false;
     gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(m_videoSink.object()), m_windowId);
     return true;

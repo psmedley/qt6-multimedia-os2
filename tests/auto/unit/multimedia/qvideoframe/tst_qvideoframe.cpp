@@ -582,7 +582,12 @@ void tst_QVideoFrame::map()
 void tst_QVideoFrame::mapPlanes_data()
 {
     QTest::addColumn<QVideoFrame>("frame");
+
+    // Distance between subsequent lines within a color plane in bytes
     QTest::addColumn<QList<int> >("strides");
+
+    // Distance from first pixel of first color plane to first pixel
+    // of n'th plane in bytes
     QTest::addColumn<QList<int> >("offsets");
 
     static uchar bufferData[1024];
@@ -605,6 +610,10 @@ void tst_QVideoFrame::mapPlanes_data()
         << QVideoFrame(QVideoFrameFormat(QSize(60, 64), QVideoFrameFormat::Format_YUV420P))
         << (QList<int>() << 64 << 32 << 32)
         << (QList<int>() << 4096 << 5120);
+    QTest::newRow("Format_YUV422P")
+        << QVideoFrame(QVideoFrameFormat(QSize(60, 64), QVideoFrameFormat::Format_YUV422P))
+        << (QList<int>() << 64 << 64 / 2 << 64 / 2)
+        << (QList<int>() << 64 * 64 << 64 * 64 + 64 / 2 * 64);
     QTest::newRow("Format_YV12")
         << QVideoFrame(QVideoFrameFormat(QSize(60, 64), QVideoFrameFormat::Format_YV12))
         << (QList<int>() << 64 << 32 << 32)
@@ -779,6 +788,11 @@ void tst_QVideoFrame::formatConversion_data()
     QTest::newRow("QVideoFrameFormat::Format_Jpeg")
             << QImage::Format_Invalid
             << QVideoFrameFormat::Format_Jpeg;
+    QTest::newRow("QVideoFrameFormat::Format_RGBX8888")
+            << QImage::Format_RGBX8888 << QVideoFrameFormat::Format_RGBX8888;
+    QTest::newRow("QImage::Format_RGBA8888_Premultiplied => QVideoFrameFormat::Format_RGBX8888 "
+                  "(workaround)")
+            << QImage::Format_RGBA8888_Premultiplied << QVideoFrameFormat::Format_RGBX8888;
 }
 
 void tst_QVideoFrame::formatConversion()
@@ -788,6 +802,12 @@ void tst_QVideoFrame::formatConversion()
 
     if (imageFormat != QImage::Format_Invalid)
         QCOMPARE(QVideoFrameFormat::pixelFormatFromImageFormat(imageFormat), pixelFormat);
+
+    if (imageFormat == QImage::Format_RGBA8888_Premultiplied) {
+        qWarning() << "Workaround: convert QImage::Format_RGBA8888_Premultiplied to "
+                      "QVideoFrameFormat::Format_RGBX8888; to be removed in 6.8";
+        return;
+    }
 
     if (pixelFormat != QVideoFrameFormat::Format_Invalid)
         QCOMPARE(QVideoFrameFormat::imageFormatFromPixelFormat(pixelFormat), imageFormat);

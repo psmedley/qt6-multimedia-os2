@@ -13,6 +13,7 @@
 #include <QDebug>
 #include <qloggingcategory.h>
 #include <QtCore/qcoreapplication.h>
+#include <QtCore/qpermissions.h>
 #include <QtCore/private/qandroidextras_p.h>
 #include <private/qcameradevice_p.h>
 #include <QReadWriteLock>
@@ -60,19 +61,15 @@ QCameraFormat getDefaultCameraFormat()
     return defaultFormat->create();
 }
 
-bool checkAndRequestCameraPermission()
+bool checkCameraPermission()
 {
-    const auto key = QStringLiteral("android.permission.CAMERA");
+    QCameraPermission permission;
 
-    if (QtAndroidPrivate::checkPermission(key).result() == QtAndroidPrivate::Authorized)
-        return true;
+    const bool granted = qApp->checkPermission(permission) == Qt::PermissionStatus::Granted;
+    if (!granted)
+        qCWarning(qLCAndroidCamera) << "Access to camera not granted!";
 
-    if (QtAndroidPrivate::requestPermission(key).result() != QtAndroidPrivate::Authorized) {
-        qCWarning(qLCAndroidCamera) << "User has denied access to camera";
-        return false;
-    }
-
-    return true;
+    return granted;
 }
 
 int sensorOrientation(QString cameraId)
@@ -113,23 +110,29 @@ QAndroidCamera::QAndroidCamera(QCamera *camera) : QPlatformCamera(camera)
 
 QAndroidCamera::~QAndroidCamera()
 {
-    QWriteLocker locker(rwLock);
-    g_qcameras->remove(m_cameraDevice.id());
+    {
+        QWriteLocker locker(rwLock);
+        g_qcameras->remove(m_cameraDevice.id());
 
-    m_jniCamera.callMethod<void>("stopAndClose");
+        m_jniCamera.callMethod<void>("stopAndClose");
+        setState(State::Closed);
+    }
+
     m_jniCamera.callMethod<void>("stopBackgroundThread");
-    setState(State::Closed);
 }
 
 void QAndroidCamera::setCamera(const QCameraDevice &camera)
 {
-    setActive(false);
+    const bool active = isActive();
+    if (active)
+        setActive(false);
 
     m_cameraDevice = camera;
     updateCameraCharacteristics();
     m_cameraFormat = getDefaultCameraFormat();
 
-    setActive(true);
+    if (active)
+        setActive(true);
 }
 
 std::optional<int> QAndroidCamera::ffmpegHWPixelFormat() const
@@ -198,7 +201,7 @@ void QAndroidCamera::frameAvailable(QJniObject image, bool takePhoto)
     if (lastTimestamp == 0)
         lastTimestamp = timestamp;
 
-    videoFrame.setRotationAngle(rotation());
+    videoFrame.setRotationAngle(QVideoFrame::RotationAngle(rotation()));
     videoFrame.setMirrored(m_cameraDevice.position() == QCameraDevice::Position::FrontFace);
 
     videoFrame.setStartTime(lastTimestamp);
@@ -212,7 +215,7 @@ void QAndroidCamera::frameAvailable(QJniObject image, bool takePhoto)
     lastTimestamp = timestamp;
 }
 
-QVideoFrame::RotationAngle QAndroidCamera::rotation()
+QtVideo::Rotation QAndroidCamera::rotation()
 {
     auto screen = QGuiApplication::primaryScreen();
     auto screenOrientation = screen->orientation();
@@ -240,7 +243,7 @@ QVideoFrame::RotationAngle QAndroidCamera::rotation()
     int sign = (m_cameraDevice.position() == QCameraDevice::Position::FrontFace) ? 1 : -1;
     int rotation = (sensorOrientation(m_cameraDevice.id()) - deviceOrientation * sign + 360) % 360;
 
-    return QVideoFrame::RotationAngle(rotation);
+    return QtVideo::Rotation(rotation);
 }
 
 void QAndroidCamera::setActive(bool active)
@@ -253,7 +256,7 @@ void QAndroidCamera::setActive(bool active)
         return;
     }
 
-    if (active && checkAndRequestCameraPermission()) {
+    if (active && checkCameraPermission()) {
         QWriteLocker locker(rwLock);
         int width = m_cameraFormat.resolution().width();
         int height = m_cameraFormat.resolution().height();
@@ -282,7 +285,7 @@ void QAndroidCamera::setActive(bool active)
 
         // this should use the camera format.
         // but there is only 2 fully supported formats on android - JPG and YUV420P
-        // and JPEG is not supported for encoding in FFMpeg, so it's locked for YUV for now.
+        // and JPEG is not supported for encoding in FFmpeg, so it's locked for YUV for now.
         const static int imageFormat =
                 QJniObject::getStaticField<QtJniTypes::AndroidImageFormat, jint>("YUV_420_888");
         m_jniCamera.callMethod<jboolean>("addImageReader", jint(width), jint(height),

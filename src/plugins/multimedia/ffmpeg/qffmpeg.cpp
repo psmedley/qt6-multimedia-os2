@@ -11,6 +11,7 @@
 #include <vector>
 #include <array>
 #include <optional>
+#include <unordered_set>
 
 extern "C" {
 #include <libavutil/pixdesc.h>
@@ -21,7 +22,17 @@ extern "C" {
 #endif
 }
 
+#ifdef Q_OS_ANDROID
+#include <QtCore/qjniobject.h>
+#endif
+
 QT_BEGIN_NAMESPACE
+
+#ifdef Q_OS_ANDROID
+Q_DECLARE_JNI_CLASS(QtVideoDeviceManager,
+                    "org/qtproject/qt/android/multimedia/QtVideoDeviceManager");
+Q_DECLARE_JNI_TYPE(StringArray, "[Ljava/lang/String;")
+#endif
 
 static Q_LOGGING_CATEGORY(qLcFFmpegUtils, "qt.multimedia.ffmpeg.utils");
 
@@ -42,13 +53,17 @@ using CodecsStorage = std::vector<const AVCodec *>;
 
 struct CodecsComparator
 {
-    bool operator()(const AVCodec *a, const AVCodec *b) const { return a->id < b->id; }
+    bool operator()(const AVCodec *a, const AVCodec *b) const
+    {
+        return a->id < b->id
+                || (a->id == b->id && isAVCodecExperimental(a) < isAVCodecExperimental(b));
+    }
 
     bool operator()(const AVCodec *a, AVCodecID id) const { return a->id < id; }
 };
 
 template<typename FlagNames>
-static QString flagsToString(int flags, const FlagNames &flagNames)
+QString flagsToString(int flags, const FlagNames &flagNames)
 {
     QString result;
     int leftover = flags;
@@ -68,7 +83,7 @@ static QString flagsToString(int flags, const FlagNames &flagNames)
     return result;
 }
 
-static void dumpCodecInfo(const AVCodec *codec)
+void dumpCodecInfo(const AVCodec *codec)
 {
     using FlagNames = std::initializer_list<std::pair<int, const char *>>;
     const auto mediaType = codec->type == AVMEDIA_TYPE_VIDEO ? "video"
@@ -167,17 +182,25 @@ static void dumpCodecInfo(const AVCodec *codec)
     }
 }
 
-static bool isCodecValid(const AVCodec *codec,
-                         const std::vector<AVHWDeviceType> &availableHwDeviceTypes)
+bool isCodecValid(const AVCodec *codec, const std::vector<AVHWDeviceType> &availableHwDeviceTypes,
+                  const std::optional<std::unordered_set<AVCodecID>> &codecAvailableOnDevice)
 {
     if (codec->type != AVMEDIA_TYPE_VIDEO)
         return true;
 
     const auto pixFmts = codec->pix_fmts;
 
-    if (!pixFmts)
+    if (!pixFmts) {
+#if defined(Q_OS_LINUX) || defined(Q_OS_ANDROID)
+        // Disable V4L2 M2M codecs for encoding for now,
+        // TODO: Investigate on how to get them working
+        if (std::strstr(codec->name, "_v4l2m2m") && av_codec_is_encoder(codec))
+            return false;
+#endif
+
         return true; // To be investigated. This happens for RAW_VIDEO, that is supposed to be OK,
-                     // and with v4l2m2m codecs, that is suspicious.
+        // and with v4l2m2m codecs, that is suspicious.
+    }
 
     if (findAVFormat(pixFmts, &isHwPixelFormat) == AV_PIX_FMT_NONE)
         return true;
@@ -189,8 +212,43 @@ static bool isCodecValid(const AVCodec *codec,
         return hasAVFormat(pixFmts, pixelFormatForHwDevice(type));
     };
 
+    if (codecAvailableOnDevice && codecAvailableOnDevice->count(codec->id) == 0)
+        return false;
+
     return std::any_of(availableHwDeviceTypes.begin(), availableHwDeviceTypes.end(),
                        checkDeviceType);
+}
+
+std::optional<std::unordered_set<AVCodecID>> availableHWCodecs(const CodecStorageType type)
+{
+#ifdef Q_OS_ANDROID
+    std::unordered_set<AVCodecID> availabeCodecs;
+
+    auto getCodecId = [] (const QString& codecName) {
+        if (codecName == QStringLiteral("3gpp")) return AV_CODEC_ID_H263;
+        if (codecName == QStringLiteral("avc")) return AV_CODEC_ID_H264;
+        if (codecName == QStringLiteral("hevc")) return AV_CODEC_ID_HEVC;
+        if (codecName == QStringLiteral("mp4v-es")) return AV_CODEC_ID_MPEG4;
+        if (codecName == QStringLiteral("x-vnd.on2.vp8")) return AV_CODEC_ID_VP8;
+        if (codecName == QStringLiteral("x-vnd.on2.vp9")) return AV_CODEC_ID_VP9;
+        return AV_CODEC_ID_NONE;
+    };
+
+    const QJniObject jniCodecs = QJniObject::callStaticMethod<QtJniTypes::StringArray>(
+                QtJniTypes::className<QtJniTypes::QtVideoDeviceManager>(),
+                type == ENCODERS ? "getHWVideoEncoders" : "getHWVideoDecoders");
+
+    QJniEnvironment env;
+    const jobjectArray arrCodecs = jniCodecs.object<jobjectArray>();
+    for (int i = 0; i < env->GetArrayLength(arrCodecs); ++i) {
+        const QString codec = QJniObject(env->GetObjectArrayElement(arrCodecs, i)).toString();
+        availabeCodecs.insert(getCodecId(codec));
+    }
+    return availabeCodecs;
+#else
+    Q_UNUSED(type);
+    return {};
+#endif
 }
 
 const CodecsStorage &codecsStorage(CodecStorageType codecsType)
@@ -198,6 +256,8 @@ const CodecsStorage &codecsStorage(CodecStorageType codecsType)
     static const auto &storages = []() {
         std::array<CodecsStorage, CODEC_STORAGE_TYPE_COUNT> result;
         void *opaque = nullptr;
+        const auto platformHwEncoders = availableHWCodecs(ENCODERS);
+        const auto platformHwDecoders = availableHWCodecs(DECODERS);
 
         while (auto codec = av_codec_iterate(&opaque)) {
             // TODO: to be investigated
@@ -205,25 +265,32 @@ const CodecsStorage &codecsStorage(CodecStorageType codecsType)
             // find experimental codecs in the last order,
             // now we don't consider them at all since they are supposed to
             // be not stable, maybe we shouldn't.
-            if (codec->capabilities & AV_CODEC_CAP_EXPERIMENTAL) {
+            // Currently, it's possible to turn them on for testing purposes.
+
+            static const auto experimentalCodecsEnabled =
+                    qEnvironmentVariableIntValue("QT_ENABLE_EXPERIMENTAL_CODECS");
+
+            if (!experimentalCodecsEnabled && isAVCodecExperimental(codec)) {
                 qCDebug(qLcFFmpegUtils) << "Skip experimental codec" << codec->name;
                 continue;
             }
 
             if (av_codec_is_decoder(codec)) {
-                if (isCodecValid(codec, HWAccel::decodingDeviceTypes()))
+                if (isCodecValid(codec, HWAccel::decodingDeviceTypes(), platformHwDecoders))
                     result[DECODERS].emplace_back(codec);
                 else
-                    qCDebug(qLcFFmpegUtils) << "Skip decoder" << codec->name
-                                            << "due to disabled matching hw acceleration";
+                    qCDebug(qLcFFmpegUtils)
+                            << "Skip decoder" << codec->name
+                            << "due to disabled matching hw acceleration, or dysfunctional codec";
             }
 
             if (av_codec_is_encoder(codec)) {
-                if (isCodecValid(codec, HWAccel::encodingDeviceTypes()))
+                if (isCodecValid(codec, HWAccel::encodingDeviceTypes(), platformHwEncoders))
                     result[ENCODERS].emplace_back(codec);
                 else
-                    qCDebug(qLcFFmpegUtils) << "Skip encoder" << codec->name
-                                            << "due to disabled matching hw acceleration";
+                    qCDebug(qLcFFmpegUtils)
+                            << "Skip encoder" << codec->name
+                            << "due to disabled matching hw acceleration, or dysfunctional codec";
             }
         }
 
@@ -239,7 +306,7 @@ const CodecsStorage &codecsStorage(CodecStorageType codecsType)
                 && qEnvironmentVariableIsSet("QT_FFMPEG_DEBUG");
 
         if (shouldDumpCodecsInfo) {
-            qCDebug(qLcFFmpegUtils) << "Advanced ffmpeg codecs info:";
+            qCDebug(qLcFFmpegUtils) << "Advanced FFmpeg codecs info:";
             for (auto &storage : result) {
                 std::for_each(storage.begin(), storage.end(), &dumpCodecInfo);
                 qCDebug(qLcFFmpegUtils) << "---------------------------";
@@ -252,7 +319,7 @@ const CodecsStorage &codecsStorage(CodecStorageType codecsType)
     return storages[codecsType];
 }
 
-static const char *preferredHwCodecNameSuffix(bool isEncoder, AVHWDeviceType deviceType)
+const char *preferredHwCodecNameSuffix(bool isEncoder, AVHWDeviceType deviceType)
 {
     switch (deviceType) {
     case AV_HWDEVICE_TYPE_VAAPI:
@@ -381,6 +448,20 @@ bool isHwPixelFormat(AVPixelFormat format)
     return desc && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) != 0;
 }
 
+bool isAVCodecExperimental(const AVCodec *codec)
+{
+    return (codec->capabilities & AV_CODEC_CAP_EXPERIMENTAL) != 0;
+}
+
+void applyExperimentalCodecOptions(const AVCodec *codec, AVDictionary** opts)
+{
+    if (isAVCodecExperimental(codec)) {
+        qCWarning(qLcFFmpegUtils) << "Applying the option 'strict -2' for the experimental codec"
+                                  << codec->name << ". it's unlikely to work properly";
+        av_dict_set(opts, "strict", "-2", 0);
+    }
+}
+
 AVPixelFormat pixelFormatForHwDevice(AVHWDeviceType deviceType)
 {
     switch (deviceType) {
@@ -411,6 +492,58 @@ AVPixelFormat pixelFormatForHwDevice(AVHWDeviceType deviceType)
     default:
         return AV_PIX_FMT_NONE;
     }
+}
+
+const AVPacketSideData *streamSideData(const AVStream *stream, AVPacketSideDataType type)
+{
+    Q_ASSERT(stream);
+
+#if QT_FFMPEG_STREAM_SIDE_DATA_DEPRECATED
+    return av_packet_side_data_get(stream->codecpar->coded_side_data,
+                                   stream->codecpar->nb_coded_side_data, type);
+#else
+    auto checkType = [type](const auto &item) { return item.type == type; };
+    const auto end = stream->side_data + stream->nb_side_data;
+    const auto found = std::find_if(stream->side_data, end, checkType);
+    return found == end ? nullptr : found;
+#endif
+}
+
+SwrContextUPtr createResampleContext(const AVAudioFormat &inputFormat,
+                                     const AVAudioFormat &outputFormat)
+{
+    SwrContext *resampler = nullptr;
+#if QT_FFMPEG_OLD_CHANNEL_LAYOUT
+    resampler = swr_alloc_set_opts(nullptr,
+                                   outputFormat.channelLayoutMask,
+                                   outputFormat.sampleFormat,
+                                   outputFormat.sampleRate,
+                                   inputFormat.channelLayoutMask,
+                                   inputFormat.sampleFormat,
+                                   inputFormat.sampleRate,
+                                   0,
+                                   nullptr);
+#else
+
+#if QT_FFMPEG_SWR_CONST_CH_LAYOUT
+    using AVChannelLayoutPrm = const AVChannelLayout*;
+#else
+    using AVChannelLayoutPrm = AVChannelLayout*;
+#endif
+
+    swr_alloc_set_opts2(&resampler,
+                        const_cast<AVChannelLayoutPrm>(&outputFormat.channelLayout),
+                        outputFormat.sampleFormat,
+                        outputFormat.sampleRate,
+                        const_cast<AVChannelLayoutPrm>(&inputFormat.channelLayout),
+                        inputFormat.sampleFormat,
+                        inputFormat.sampleRate,
+                        0,
+                        nullptr);
+#endif
+
+    swr_init(resampler);
+    return SwrContextUPtr(resampler);
 }
 
 #ifdef Q_OS_DARWIN

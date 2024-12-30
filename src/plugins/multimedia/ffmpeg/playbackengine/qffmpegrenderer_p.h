@@ -45,6 +45,8 @@ public:
     bool isStepForced() const;
 
 public slots:
+    void setInitialPosition(TimePoint tp, qint64 trackPos);
+
     void onFinalFrameReceived();
 
     void render(Frame);
@@ -65,6 +67,8 @@ protected:
 
     bool canDoNextStep() const override;
 
+    int timerInterval() const override;
+
     virtual void onPlaybackRateChanged() { }
 
     struct RenderingResult
@@ -77,7 +81,8 @@ protected:
 
     float playbackRate() const;
 
-    std::chrono::microseconds frameDelay(const Frame &frame) const;
+    std::chrono::microseconds frameDelay(const Frame &frame,
+                                         TimePoint timePoint = Clock::now()) const;
 
     void changeRendererTime(std::chrono::microseconds offset);
 
@@ -98,12 +103,12 @@ protected:
 private:
     void doNextStep() override;
 
-    int timerInterval() const override;
-
 private:
     TimeController m_timeController;
+    qint64 m_lastFrameEnd = 0;
     QAtomicInteger<qint64> m_lastPosition = 0;
     QAtomicInteger<qint64> m_seekPos = 0;
+
     int m_loopIndex = 0;
     QQueue<Frame> m_frames;
 

@@ -3,15 +3,18 @@
 
 #include <qvideoframe.h>
 #include <qvideosink.h>
-#include <QDebug>
-#include <QMap>
-#include <QThread>
-#include <QEvent>
-#include <QCoreApplication>
+#include <QtCore/QDebug>
+#include <QtCore/QMap>
+#include <QtCore/QThread>
+#include <QtCore/QEvent>
+#include <QtCore/QCoreApplication>
+#include <QtCore/private/quniquehandle_p.h>
 
 #include <private/qfactoryloader_p.h>
-#include "qgstvideobuffer_p.h"
-#include "qgstreamervideosink_p.h"
+#include <qgstvideobuffer_p.h>
+#include <qgstreamervideosink_p.h>
+#include <qgst_debug_p.h>
+#include <qgstutils_p.h>
 
 #include "qgstvideorenderersink_p.h"
 
@@ -20,9 +23,8 @@
 #include <qloggingcategory.h>
 #include <qdebug.h>
 
-#include "qgstutils_p.h"
 
-#include <QtGui/private/qrhi_p.h>
+#include <rhi/qrhi.h>
 #if QT_CONFIG(gstreamer_gl)
 #include <gst/gl/gl.h>
 #endif // #if QT_CONFIG(gstreamer_gl)
@@ -39,21 +41,17 @@ static Q_LOGGING_CATEGORY(qLcGstVideoRenderer, "qt.multimedia.gstvideorenderer")
 QT_BEGIN_NAMESPACE
 
 QGstVideoRenderer::QGstVideoRenderer(QGstreamerVideoSink *sink)
-    : m_sink(sink)
+    : m_sink(sink), m_surfaceCaps(createSurfaceCaps(sink))
 {
-    createSurfaceCaps();
 }
 
 QGstVideoRenderer::~QGstVideoRenderer()
 {
 }
 
-void QGstVideoRenderer::createSurfaceCaps()
+QGstCaps QGstVideoRenderer::createSurfaceCaps(QGstreamerVideoSink *sink)
 {
-    QRhi *rhi = m_sink->rhi();
-    Q_UNUSED(rhi);
-
-    auto caps = QGstCaps::create();
+    QGstCaps caps = QGstCaps::create();
 
     // All the formats that both we and gstreamer support
     auto formats = QList<QVideoFrameFormat::PixelFormat>()
@@ -78,10 +76,11 @@ void QGstVideoRenderer::createSurfaceCaps()
                    << QVideoFrameFormat::Format_Y16
         ;
 #if QT_CONFIG(gstreamer_gl)
+    QRhi *rhi = sink->rhi();
     if (rhi && rhi->backend() == QRhi::OpenGLES2) {
         caps.addPixelFormats(formats, GST_CAPS_FEATURE_MEMORY_GL_MEMORY);
 #if QT_CONFIG(linux_dmabuf)
-        if (m_sink->eglDisplay() && m_sink->eglImageTargetTexture2D()) {
+        if (sink->eglDisplay() && sink->eglImageTargetTexture2D()) {
             // We currently do not handle planar DMA buffers, as it's somewhat unclear how to
             // convert the planar EGLImage into something we can use from OpenGL
             auto singlePlaneFormats = QList<QVideoFrameFormat::PixelFormat>()
@@ -105,24 +104,21 @@ void QGstVideoRenderer::createSurfaceCaps()
     }
 #endif
     caps.addPixelFormats(formats);
-
-    m_surfaceCaps = caps;
+    return caps;
 }
 
-QGstCaps QGstVideoRenderer::caps()
+const QGstCaps &QGstVideoRenderer::caps()
 {
-    QMutexLocker locker(&m_mutex);
-
     return m_surfaceCaps;
 }
 
 bool QGstVideoRenderer::start(const QGstCaps& caps)
 {
-    qCDebug(qLcGstVideoRenderer) << "QGstVideoRenderer::start" << caps.toString();
+    qCDebug(qLcGstVideoRenderer) << "QGstVideoRenderer::start" << caps;
     QMutexLocker locker(&m_mutex);
 
     m_frameMirrored = false;
-    m_frameRotationAngle = QVideoFrame::Rotation0;
+    m_frameRotationAngle = QtVideo::Rotation::None;
 
     if (m_active) {
         m_flush = true;
@@ -240,7 +236,7 @@ void QGstVideoRenderer::gstEvent(GstEvent *event)
     if (!taglist)
         return;
 
-    gchar *value = nullptr;
+    QGString value;
     if (!gst_tag_list_get_string(taglist, GST_TAG_IMAGE_ORIENTATION, &value))
         return;
 
@@ -252,23 +248,23 @@ void QGstVideoRenderer::gstEvent(GstEvent *event)
     bool mirrored = false;
     int rotationAngle = 0;
 
-    if (!strncmp(rotate, value, rotateLen)) {
-        rotationAngle = atoi(value + rotateLen);
-    } else if (!strncmp(flipRotate, value, flipRotateLen)) {
+    if (!strncmp(rotate, value.get(), rotateLen)) {
+        rotationAngle = atoi(value.get() + rotateLen);
+    } else if (!strncmp(flipRotate, value.get(), flipRotateLen)) {
         // To flip by horizontal axis is the same as to mirror by vertical axis
         // and rotate by 180 degrees.
         mirrored = true;
-        rotationAngle = (180 + atoi(value + flipRotateLen)) % 360;
+        rotationAngle = (180 + atoi(value.get() + flipRotateLen)) % 360;
     }
 
     QMutexLocker locker(&m_mutex);
     m_frameMirrored = mirrored;
     switch (rotationAngle) {
-    case 0: m_frameRotationAngle = QVideoFrame::Rotation0; break;
-    case 90: m_frameRotationAngle = QVideoFrame::Rotation90; break;
-    case 180: m_frameRotationAngle = QVideoFrame::Rotation180; break;
-    case 270: m_frameRotationAngle = QVideoFrame::Rotation270; break;
-    default: m_frameRotationAngle = QVideoFrame::Rotation0;
+    case 0: m_frameRotationAngle = QtVideo::Rotation::None; break;
+    case 90: m_frameRotationAngle = QtVideo::Rotation::Clockwise90; break;
+    case 180: m_frameRotationAngle = QtVideo::Rotation::Clockwise180; break;
+    case 270: m_frameRotationAngle = QtVideo::Rotation::Clockwise270; break;
+    default: m_frameRotationAngle = QtVideo::Rotation::None;
     }
 }
 
@@ -316,7 +312,14 @@ bool QGstVideoRenderer::handleEvent(QMutexLocker<QMutex> *locker)
             locker->unlock();
 
             m_flushed = true;
-            m_format = startCaps.formatForCaps(&m_videoInfo);
+            auto optionalFormatAndVideoInfo = startCaps.formatAndVideoInfo();
+            if (optionalFormatAndVideoInfo) {
+                std::tie(m_format, m_videoInfo) = std::move(*optionalFormatAndVideoInfo);
+            } else {
+                m_format = {};
+                m_videoInfo = {};
+            }
+
             memoryFormat = startCaps.memoryFormat();
 
             locker->relock();
@@ -339,7 +342,7 @@ bool QGstVideoRenderer::handleEvent(QMutexLocker<QMutex> *locker)
 
             m_flushed = false;
 
-            auto meta = gst_buffer_get_video_crop_meta (buffer);
+            GstVideoCropMeta *meta = gst_buffer_get_video_crop_meta(buffer);
             if (meta) {
                 QRect vp(meta->x, meta->y, meta->width, meta->height);
                 if (m_format.viewport() != vp) {
@@ -357,7 +360,7 @@ bool QGstVideoRenderer::handleEvent(QMutexLocker<QMutex> *locker)
                 QVideoFrame frame(videoBuffer, m_format);
                 QGstUtils::setFrameTimeStamps(&frame, buffer);
                 frame.setMirrored(m_frameMirrored);
-                frame.setRotationAngle(m_frameRotationAngle);
+                frame.setRotationAngle(QVideoFrame::RotationAngle(m_frameRotationAngle));
 
                 qCDebug(qLcGstVideoRenderer) << "    sending video frame";
                 m_sink->setVideoFrame(frame);
@@ -562,10 +565,9 @@ GstCaps *QGstVideoRendererSink::get_caps(GstBaseSink *base, GstCaps *filter)
 
     QGstCaps caps = sink->renderer->caps();
     if (filter)
-        caps = QGstCaps(gst_caps_intersect(caps.get(), filter), QGstCaps::HasRef);
+        caps = QGstCaps(gst_caps_intersect(caps.caps(), filter), QGstCaps::HasRef);
 
-    gst_caps_ref(caps.get());
-    return caps.get();
+    return caps.release();
 }
 
 gboolean QGstVideoRendererSink::set_caps(GstBaseSink *base, GstCaps *gcaps)
@@ -574,7 +576,7 @@ gboolean QGstVideoRendererSink::set_caps(GstBaseSink *base, GstCaps *gcaps)
 
     auto caps = QGstCaps(gcaps, QGstCaps::NeedsRef);
 
-    qCDebug(qLcGstVideoRenderer) << "set_caps:" << caps.toString();
+    qCDebug(qLcGstVideoRenderer) << "set_caps:" << caps;
 
     if (caps.isNull()) {
         sink->renderer->stop();

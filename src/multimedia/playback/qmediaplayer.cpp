@@ -97,15 +97,15 @@ QT_BEGIN_NAMESPACE
     \sa AudioOutput, VideoOutput
 */
 
-void QMediaPlayerPrivate::setState(QMediaPlayer::PlaybackState ps)
+void QMediaPlayerPrivate::setState(QMediaPlayer::PlaybackState toState)
 {
     Q_Q(QMediaPlayer);
 
-    if (ps != state) {
-        if (ps == QMediaPlayer::PlayingState || state == QMediaPlayer::PlayingState)
-            emit q->playingChanged(ps == QMediaPlayer::PlayingState);
-        state = ps;
-        emit q->playbackStateChanged(ps);
+    if (toState != state) {
+        const auto fromState = std::exchange(state, toState);
+        if (toState == QMediaPlayer::PlayingState || fromState == QMediaPlayer::PlayingState)
+            emit q->playingChanged(toState == QMediaPlayer::PlayingState);
+        emit q->playbackStateChanged(toState);
     }
 }
 
@@ -120,14 +120,7 @@ void QMediaPlayerPrivate::setError(QMediaPlayer::Error error, const QString &err
 {
     Q_Q(QMediaPlayer);
 
-    auto prevError = std::exchange(this->error, error);
-    auto prevErrorString = std::exchange(this->errorString, errorString);
-
-    if (prevError != error || prevErrorString != errorString)
-        emit q->errorChanged();
-
-    if (error != QMediaPlayer::NoError)
-        emit q->errorOccurred(error, errorString);
+    this->error.setAndNotify(error, errorString, *q);
 }
 
 void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
@@ -249,9 +242,13 @@ QMediaPlayer::~QMediaPlayer()
 {
     Q_D(QMediaPlayer);
 
-    // Disconnect everything to prevent notifying
-    // when a receiver is already destroyed.
-    disconnect();
+    // prevents emitting audioOutputChanged and videoOutputChanged.
+    QSignalBlocker blocker(this);
+
+    // Reset audio output and video sink to ensure proper unregistering of the source
+    // To be investigated: registering of the source might be removed after switching on the ffmpeg
+    // backend;
+
     setAudioOutput(nullptr);
 
     d->setVideoSink(nullptr);
@@ -469,7 +466,7 @@ void QMediaPlayer::setLoops(int loops)
 */
 QMediaPlayer::Error QMediaPlayer::error() const
 {
-    return d_func()->error;
+    return d_func()->error.code();
 }
 
 /*!
@@ -486,7 +483,7 @@ QMediaPlayer::Error QMediaPlayer::error() const
 */
 QString QMediaPlayer::errorString() const
 {
-    return d_func()->errorString;
+    return d_func()->error.description();
 }
 
 /*!
@@ -1026,6 +1023,12 @@ QMediaMetaData QMediaPlayer::metaData() const
 */
 
 /*!
+    \qmlsignal QtMultimedia::MediaPlayer::playingChanged()
+
+    This signal is emitted when the \l playing property changes.
+*/
+
+/*!
     \enum QMediaPlayer::MediaStatus
 
     Defines the status of a media player's current media.
@@ -1232,7 +1235,7 @@ QMediaMetaData QMediaPlayer::metaData() const
 
     Playback can start or resume only when the buffer is entirely filled.
     When the buffer is filled, \c MediaPlayer.Buffered is true.
-    When buffer progress is between \c 0.0 and \c 0.1, \c MediaPlayer.Buffering
+    When buffer progress is between \c 0.0 and \c 1.0, \c MediaPlayer.Buffering
     is set to \c{true}.
 
     A value lower than \c 1.0 implies that the property \c MediaPlayer.StalledMedia
@@ -1302,11 +1305,11 @@ QMediaMetaData QMediaPlayer::metaData() const
     \property QMediaPlayer::playbackRate
     \brief the playback rate of the current media.
 
-    This value is a multiplier applied to the media's standard play rate. By
-    default this value is 1.0, indicating that the media is playing at the
-    standard pace. Values higher than 1.0 will increase the rate of play.
-    Values less than zero can be set and indicate the media should rewind at the
-    multiplier of the standard pace.
+    This value is a multiplier applied to the media's standard playback
+    rate. By default this value is 1.0, indicating that the media is
+    playing at the standard speed. Values higher than 1.0 will increase
+    the playback speed, while values between 0.0 and 1.0 results in
+    slower playback. Negative playback rates are not supported.
 
     Not all playback services support change of the playback rate. It is
     framework defined as to the status and quality of audio and video

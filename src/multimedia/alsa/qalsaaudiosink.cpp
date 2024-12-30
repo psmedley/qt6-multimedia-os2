@@ -115,21 +115,21 @@ int QAlsaAudioSink::setFormat()
         break;
     case QAudioFormat::Int16:
         if constexpr (QSysInfo::ByteOrder == QSysInfo::BigEndian)
-            pcmformat = SND_PCM_FORMAT_S16_LE;
-        else
             pcmformat = SND_PCM_FORMAT_S16_BE;
+        else
+            pcmformat = SND_PCM_FORMAT_S16_LE;
         break;
     case QAudioFormat::Int32:
         if constexpr (QSysInfo::ByteOrder == QSysInfo::BigEndian)
-            pcmformat = SND_PCM_FORMAT_S32_LE;
-        else
             pcmformat = SND_PCM_FORMAT_S32_BE;
+        else
+            pcmformat = SND_PCM_FORMAT_S32_LE;
         break;
     case QAudioFormat::Float:
         if constexpr (QSysInfo::ByteOrder == QSysInfo::BigEndian)
-            pcmformat = SND_PCM_FORMAT_FLOAT_LE;
-        else
             pcmformat = SND_PCM_FORMAT_FLOAT_BE;
+        else
+            pcmformat = SND_PCM_FORMAT_FLOAT_LE;
     default:
         break;
     }
@@ -157,6 +157,11 @@ void QAlsaAudioSink::start(QIODevice* device)
     pullMode = true;
     audioSource = device;
 
+    connect(audioSource, &QIODevice::readyRead, timer, [this] {
+        if (!timer->isActive()) {
+            timer->start(period_time / 1000);
+        }
+    });
     deviceState = QAudio::ActiveState;
 
     open();
@@ -606,11 +611,13 @@ bool QAlsaAudioSink::deviceReady()
 
         } else if(l == 0) {
             // Did not get any data to output
+            timer->stop();
+            snd_pcm_drain(handle);
             bytesAvailable = bytesFree();
             if(bytesAvailable > snd_pcm_frames_to_bytes(handle, buffer_frames-period_frames)) {
                 // Underrun
                 if (deviceState != QAudio::IdleState) {
-                    errorState = QAudio::UnderrunError;
+                    errorState = audioSource->atEnd() ? QAudio::NoError : QAudio::UnderrunError;
                     emit errorChanged(errorState);
                     deviceState = QAudio::IdleState;
                     emit stateChanged(deviceState);

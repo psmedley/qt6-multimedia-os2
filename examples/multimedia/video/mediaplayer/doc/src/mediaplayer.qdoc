@@ -6,7 +6,7 @@
     \title QML Media Player Example
     \ingroup multimedia_examples
     \ingroup video_examples_qml
-    \examplecategory {Graphics & Multimedia}
+    \examplecategory {Multimedia}
     \brief Playing audio and video using Qt Quick.
     \meta {tag} {quick}
     \meta {tag} {player}
@@ -21,7 +21,7 @@
     At its core this is a QML application, see
     \l{Getting Started Programming with Qt Quick} for information specific to
     that. This documentation is focused on how this example utilizes the
-    \l{Qt Multimedia QML types}.
+    \l{Qt Multimedia QML Types}.
 
     \image architecture-overview.gif
 

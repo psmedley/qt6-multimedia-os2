@@ -38,7 +38,7 @@
  * OBJECTS WEAK CONNECTIVITY
  *
  * - The objects know nothing about others and about PlaybackEngine.
- *   For any interractions the objects use slots/signals.
+ *   For any interactions the objects use slots/signals.
  *
  * - PlaybackEngine knows the objects object and is able to create/delete them and
  *   call their public methods.
@@ -63,7 +63,7 @@ class QFFmpegMediaPlayer;
 namespace QFFmpeg
 {
 
-class PlaybackEngine : public QObject, public MediaDataHolder
+class PlaybackEngine : public QObject
 {
     Q_OBJECT
 public:
@@ -71,7 +71,7 @@ public:
 
     ~PlaybackEngine() override;
 
-    bool setMedia(const QUrl &media, QIODevice *stream);
+    void setMedia(MediaDataHolder media);
 
     void setVideoSink(QVideoSink *sink);
 
@@ -101,14 +101,24 @@ public:
 
     void setActiveTrack(QPlatformMediaPlayer::TrackType type, int streamNumber);
 
-    using MediaDataHolder::activeTrack;
-
     qint64 currentPosition(bool topPos = true) const;
+
+    qint64 duration() const;
+
+    bool isSeekable() const;
+
+    const QList<MediaDataHolder::StreamInfo> &
+    streamInfo(QPlatformMediaPlayer::TrackType trackType) const;
+
+    const QMediaMetaData &metaData() const;
+
+    int activeTrack(QPlatformMediaPlayer::TrackType type) const;
 
 signals:
     void endOfStream();
     void errorOccured(int, const QString &);
     void loopChanged();
+    void buffered();
 
 protected: // objects managing
     struct ObjectDeleter
@@ -179,7 +189,11 @@ private:
 
     void updateVideoSinkSize(QVideoSink *prevSink = nullptr);
 
+    qint64 boundPosition(qint64 position) const;
+
 private:
+    MediaDataHolder m_media;
+
     TimeController m_timeController;
 
     std::unordered_map<QString, std::unique_ptr<QThread>> m_threads;

@@ -45,7 +45,7 @@ QT_BEGIN_NAMESPACE
 
     After the file has finished playing, we need to stop the device:
 
-    \snippet multimedia-snippets/audio.cpp Audio output state changed
+    \snippet multimedia-snippets/audio.cpp Audio output stop
 
     At any given time, the QAudioSink will be in one of four states:
     active, suspended, stopped, or idle. These states are described
@@ -87,7 +87,7 @@ QAudioSink::QAudioSink(const QAudioFormat &format, QObject *parent)
 QAudioSink::QAudioSink(const QAudioDevice &audioDevice, const QAudioFormat &format, QObject *parent):
     QObject(parent)
 {
-    d = QPlatformMediaDevices::instance()->audioOutputDevice(format, audioDevice, parent);
+    d = QPlatformMediaIntegration::instance()->mediaDevices()->audioOutputDevice(format, audioDevice, parent);
     if (d)
         connect(d, &QPlatformAudioSink::stateChanged, this, [this](QAudio::State state) {
             // if the signal has been emitted from another thread,

@@ -23,15 +23,16 @@ static Q_LOGGING_CATEGORY(qLcImageCaptureGst, "qt.multimedia.imageCapture")
 
 QMaybe<QPlatformImageCapture *> QGstreamerImageCapture::create(QImageCapture *parent)
 {
-    QGstElement videoconvert("videoconvert", "imageCaptureConvert");
+    QGstElement videoconvert =
+            QGstElement::createFromFactory("videoconvert", "imageCaptureConvert");
     if (!videoconvert)
         return errorMessageCannotFindElement("videoconvert");
 
-    QGstElement jpegenc("jpegenc", "jpegEncoder");
+    QGstElement jpegenc = QGstElement::createFromFactory("jpegenc", "jpegEncoder");
     if (!jpegenc)
         return errorMessageCannotFindElement("jpegenc");
 
-    QGstElement jifmux("jifmux", "jpegMuxer");
+    QGstElement jifmux = QGstElement::createFromFactory("jifmux", "jpegMuxer");
     if (!jifmux)
         return errorMessageCannotFindElement("jifmux");
 
@@ -46,9 +47,9 @@ QGstreamerImageCapture::QGstreamerImageCapture(QGstElement videoconvert, QGstEle
       encoder(std::move(jpegenc)),
       muxer(std::move(jifmux))
 {
-    bin = QGstBin("imageCaptureBin");
+    bin = QGstBin::create("imageCaptureBin");
 
-    queue = QGstElement("queue", "imageCaptureQueue");
+    queue = QGstElement::createFromFactory("queue", "imageCaptureQueue");
     // configures the queue to be fast, lightweight and non blocking
     queue.set("leaky", 2 /*downstream*/);
     queue.set("silent", true);
@@ -56,14 +57,14 @@ QGstreamerImageCapture::QGstreamerImageCapture(QGstElement videoconvert, QGstEle
     queue.set("max-size-bytes", uint(0));
     queue.set("max-size-time", quint64(0));
 
-    sink = QGstElement("fakesink","imageCaptureSink");
-    filter = QGstElement("capsfilter", "filter");
+    sink = QGstElement::createFromFactory("fakesink", "imageCaptureSink");
+    filter = QGstElement::createFromFactory("capsfilter", "filter");
     // imageCaptureSink do not wait for a preroll buffer when going READY -> PAUSED
     // as no buffer will arrive until capture() is called
     sink.set("async", false);
 
     bin.add(queue, filter, videoConvert, encoder, muxer, sink);
-    queue.link(filter, videoConvert, encoder, muxer, sink);
+    qLinkGstElements(queue, filter, videoConvert, encoder, muxer, sink);
     bin.addGhostPad(queue, "sink");
 
     addProbeToPad(queue.staticPad("src").pad(), false);
@@ -146,14 +147,12 @@ void QGstreamerImageCapture::setResolution(const QSize &resolution)
         qDebug() << "Camera not ready";
         return;
     }
-    auto caps = QGstCaps(gst_caps_copy(padCaps.get()), QGstCaps::HasRef);
+    auto caps = QGstCaps(gst_caps_copy(padCaps.caps()), QGstCaps::HasRef);
     if (caps.isNull()) {
         return;
     }
-    gst_caps_set_simple(caps.get(),
-        "width", G_TYPE_INT, resolution.width(),
-        "height", G_TYPE_INT, resolution.height(),
-        nullptr);
+    gst_caps_set_simple(caps.caps(), "width", G_TYPE_INT, resolution.width(), "height", G_TYPE_INT,
+                        resolution.height(), nullptr);
     filter.set("caps", caps);
 }
 
@@ -168,11 +167,15 @@ bool QGstreamerImageCapture::probeBuffer(GstBuffer *buffer)
     emit readyForCaptureChanged(isReadyForCapture());
 
     auto caps = QGstCaps(gst_pad_get_current_caps(bin.staticPad("sink").pad()), QGstCaps::HasRef);
-    GstVideoInfo previewInfo;
-    gst_video_info_from_caps(&previewInfo, caps.get());
 
     auto memoryFormat = caps.memoryFormat();
-    auto fmt = caps.formatForCaps(&previewInfo);
+
+    GstVideoInfo previewInfo;
+    QVideoFrameFormat fmt;
+    auto optionalFormatAndVideoInfo = caps.formatAndVideoInfo();
+    if (optionalFormatAndVideoInfo)
+        std::tie(fmt, previewInfo) = std::move(*optionalFormatAndVideoInfo);
+
     auto *sink = m_session->gstreamerVideoSink();
     auto *gstBuffer = new QGstVideoBuffer(buffer, previewInfo, sink, fmt, memoryFormat);
     QVideoFrame frame(gstBuffer, fmt);

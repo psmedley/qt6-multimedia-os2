@@ -99,6 +99,9 @@
     \row
      \li \l {QtMultimedia::ScreenCapture}{ScreenCapture}
      \li Captures a screen.
+    \row
+     \li \l {QtMultimedia::WindowCapture}{WindowCapture}
+     \li Captures a top-level window.
     \endtable
 
     \section1 C++ classes
@@ -142,6 +145,9 @@
     \row
      \li QScreenCapture
      \li Captures a screen.
+    \row
+     \li QWindowCapture
+     \li Captures a top-level window.
     \endtable
 
     For playback QMediaPlayer, QAudioOutput and QVideoOutput contain all the required functionality.
@@ -158,18 +164,16 @@
     the \l{GNU General Public License, version 2}.
     See \l{Qt Licensing} for further details.
 
-    The FFmpeg backend uses the \l {https://ffmpeg.org}{FFmpeg framework}.
-    FFmpeg is licensed under LGPLv2.1, GPLv2, or later versions of the licenses.
-    Some optional components of FFmpeg are only available under GPL. The FFmpeg
-    backend shipped with the Qt binary packages is configured to not contain any
-    of the components that are available under GPLv2 only.
+    Furthermore, Qt Multimedia in Qt \QtVersion may contain third-party modules
+    under following permissive licenses:
 
-    See the \l {https://ffmpeg.org/legal.html}{FFmpeg licensing page} for further
-    details.
+    \generatelist{groupsbymodule attributions-qtmultimedia}
 
     Note that video compression standards, such as the H.264 media compression
-    standard, may be covered by patents and can incur royalty fees. Such fees
-    are not covered by the Qt licenses.
+    standard, may be covered by patents and can incur royalty fees. This can
+    apply to any implementation, also if the implementation is provided as an
+    operating system service, through a third party library, or through any of
+    Qt Multimedia's backends. Such fees are not covered by the Qt licenses.
 
     \section1 Target platform and backend notes
     We aim to align the behavior on all the platforms but there are some issues
@@ -183,7 +187,7 @@
     In this release the \l {http://ffmpeg.org}{FFmpeg framework} is set as the
     default backend on Windows, macOS, Android, and Linux except Yocto distribution.
 
-    The version shipped with Qt binary packages is \b{FFmpeg 6.0} and is tested
+    The version shipped with Qt binary packages is \b{FFmpeg 6.1} and is tested
     by the maintainers.
 
     \note See \l{Licenses and Attributions} regarding what components are removed
@@ -193,12 +197,13 @@
     These are:
     \list
         \li gstreamer on Linux
-        \li AVFoundation on macOS
+        \li AVFoundation on macOS and iOS
         \li WMF Windows
         \li MediaCodec framework on Android
     \endlist
 
-    \note These are still available but with \b limited support.
+    \note These are still available but with \b limited support. The gstreamer
+    backend is only available on Linux.
 
     \section2 Backend support
     Maintainers will strive to fix critical issues with the native backends but
@@ -221,7 +226,7 @@
 
     In the case of issues with the default FFmpeg backend, we suggest testing with a native backend.
     You can switch to native backends by setting the \c{QT_MEDIA_BACKEND} environment variable
-    to \c windows, \c gstreamer (on Linux), \c darwin (on macOS), or \c android:
+    to \c windows, \c gstreamer (on Linux), \c darwin (on macOS and iOS), or \c android:
 
     \code
     export QT_MEDIA_BACKEND=darwin

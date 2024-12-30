@@ -6,13 +6,14 @@
 
 #include "qwasmcamera_p.h"
 #include <private/qplatformmediadevices_p.h>
+#include <private/qplatformmediaintegration_p.h>
 #include <private/qwasmmediadevices_p.h>
 
 Q_LOGGING_CATEGORY(qWasmMediaCaptureSession, "qt.multimedia.wasm.capturesession")
 
 QWasmMediaCaptureSession::QWasmMediaCaptureSession()
 {
-    QWasmMediaDevices *wasmMediaDevices = static_cast<QWasmMediaDevices *>(QPlatformMediaDevices::instance());
+    QWasmMediaDevices *wasmMediaDevices = static_cast<QWasmMediaDevices *>(QPlatformMediaIntegration::instance()->mediaDevices());
     wasmMediaDevices->initDevices();
 }
 
@@ -86,8 +87,13 @@ void QWasmMediaCaptureSession::setAudioInput(QPlatformAudioInput *input)
     if (m_audioInput == input)
         return;
 
-    m_needsAudio = !input;
+    m_needsAudio = (bool)input;
     m_audioInput = input;
+}
+
+bool QWasmMediaCaptureSession::hasAudio()
+{
+    return m_needsAudio;
 }
 
 void QWasmMediaCaptureSession::setVideoPreview(QVideoSink *sink)

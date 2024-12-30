@@ -13,7 +13,6 @@
 
 QT_BEGIN_NAMESPACE
 
-
 class QMediaCaptureSession;
 class QPlatformSurfaceCapture;
 class QScreenCapturePrivate;
@@ -28,11 +27,11 @@ class Q_MULTIMEDIA_EXPORT QScreenCapture : public QObject
 
 public:
     enum Error {
-        NoError,
-        InternalError,
-        CapturingNotSupported,
-        CaptureFailed,
-        NotFound,
+        NoError = 0,
+        InternalError = 1,
+        CapturingNotSupported = 2,
+        CaptureFailed = 4,
+        NotFound = 5,
     };
     Q_ENUM(Error)
 

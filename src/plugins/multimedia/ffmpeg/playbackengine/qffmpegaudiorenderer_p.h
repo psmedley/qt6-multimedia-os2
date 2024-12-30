@@ -22,10 +22,7 @@ QT_BEGIN_NAMESPACE
 
 class QAudioOutput;
 class QAudioSink;
-
-namespace QFFmpeg {
-class Resampler;
-};
+class QFFmpegResampler;
 
 namespace QFFmpeg {
 
@@ -40,9 +37,47 @@ public:
     ~AudioRenderer() override;
 
 protected:
+    using Microseconds = std::chrono::microseconds;
+    struct SynchronizationStamp
+    {
+        QAudio::State audioSinkState = QAudio::IdleState;
+        qsizetype audioSinkBytesFree = 0;
+        qsizetype bufferBytesWritten = 0;
+        TimePoint timePoint = TimePoint::max();
+    };
+
+    struct BufferLoadingInfo
+    {
+        enum Type { Low, Moderate, High };
+        Type type = Moderate;
+        TimePoint timePoint = TimePoint::max();
+        Microseconds delay = Microseconds(0);
+    };
+
+    struct AudioTimings
+    {
+        Microseconds actualBufferDuration = Microseconds(0);
+        Microseconds maxSoundDelay = Microseconds(0);
+        Microseconds minSoundDelay = Microseconds(0);
+    };
+
+    struct BufferedDataWithOffset
+    {
+        QAudioBuffer buffer;
+        qsizetype offset = 0;
+
+        bool isValid() const { return buffer.isValid(); }
+        qsizetype size() const { return buffer.byteCount() - offset; }
+        const char *data() const { return buffer.constData<char>() + offset; }
+    };
+
     RenderingResult renderInternal(Frame frame) override;
 
     void onPlaybackRateChanged() override;
+
+    int timerInterval() const override;
+
+    void onPauseChanged() override;
 
     void freeOutput();
 
@@ -54,21 +89,28 @@ protected:
 
     void updateVolume();
 
-    void updateSynchronization(const Frame &currentFrame);
+    void updateSynchronization(const SynchronizationStamp &stamp, const Frame &frame);
 
-    std::chrono::microseconds currentBufferLoadingTime() const;
+    Microseconds bufferLoadingTime(const SynchronizationStamp &syncStamp) const;
+
+    void onAudioSinkStateChanged(QAudio::State state);
+
+    Microseconds durationForBytes(qsizetype bytes) const;
 
 private:
     QPointer<QAudioOutput> m_output;
     std::unique_ptr<QAudioSink> m_sink;
-    std::unique_ptr<Resampler> m_resampler;
+    AudioTimings m_timings;
+    BufferLoadingInfo m_bufferLoadingInfo;
+    std::unique_ptr<QFFmpegResampler> m_resampler;
     QAudioFormat m_format;
 
-    QAudioBuffer m_bufferedData;
-    qsizetype m_bufferWritten = 0;
+    BufferedDataWithOffset m_bufferedData;
     QIODevice *m_ioDevice = nullptr;
 
     bool m_deviceChanged = false;
+    bool m_drained = false;
+    bool m_firstFrame = true;
 };
 
 } // namespace QFFmpeg

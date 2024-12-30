@@ -28,25 +28,30 @@ public:
     \ingroup multimedia_video
     \since 6.5
 
-    \brief The QScreenCapture class is used for capturing a screen.
+    \brief This class is used for capturing a screen.
 
-    The class captures a screen. It is managed by the QMediaCaptureSession
-    class where the captured view can be displayed in a window or recorded to a
-    file.
+    The class captures a screen. It is managed by
+    the QMediaCaptureSession class where the captured screen can be displayed
+    in a video preview object or recorded to a file.
 
     \snippet multimedia-snippets/media.cpp Media recorder
+
+    \include qscreencapture-limitations.qdocinc {content} {Q}
+
+    \sa QWindowCapture, QMediaCaptureSession
 */
 /*!
     \qmltype ScreenCapture
     \instantiates QScreenCapture
-    \brief The ScreenCapture type is used for capturing a screen.
+    \brief This type is used for capturing a screen.
 
     \inqmlmodule QtMultimedia
     \ingroup multimedia_qml
     \ingroup multimedia_video_qml
 
-    ScreenCapture captures a screen. It is managed by MediaCaptureSession where
-    the captured view can be displayed in a window or recorded to a file.
+    ScreenCapture captures a screen. It is managed by
+    MediaCaptureSession where the captured screen can be displayed
+    in a video preview object or recorded to a file.
 
     \since 6.5
     The code below shows a simple capture session with ScreenCapture playing
@@ -65,7 +70,9 @@ public:
     }
 \endqml
 
-    \sa ScreenCapture, CaptureSession
+    \include qscreencapture-limitations.qdocinc {content} {}
+
+    \sa WindowCapture, CaptureSession
 */
 
 QScreenCapture::QScreenCapture(QObject *parent)
@@ -182,7 +189,7 @@ QScreen *QScreenCapture::screen() const
 }
 
 /*!
-    \qmlproperty string QtMultimedia::ScreenCapture::error
+    \qmlproperty enumeration QtMultimedia::ScreenCapture::error
     Returns a code of the last error.
 */
 

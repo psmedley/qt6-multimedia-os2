@@ -23,9 +23,12 @@
 #include "qscopedvaluerollback.h"
 #include "QtCore/qfile.h"
 
-#include <private/qrhi_p.h>
+#include <rhi/qrhi.h>
 #include <qloggingcategory.h>
 #include <unordered_set>
+#ifdef Q_OS_LINUX
+#include <QLibrary>
+#endif
 
 /* Infrastructure for HW acceleration goes into this file. */
 
@@ -74,8 +77,18 @@ static bool precheckDriver(AVHWDeviceType type)
 {
     // precheckings might need some improvements
 #if defined(Q_OS_LINUX)
-    if (type == AV_HWDEVICE_TYPE_CUDA)
-        return QFile::exists(QLatin1String("/proc/driver/nvidia/version"));
+    if (type == AV_HWDEVICE_TYPE_CUDA) {
+        if (!QFile::exists(QLatin1String("/proc/driver/nvidia/version")))
+            return false;
+
+        // QTBUG-122199
+        // CUDA backend requires libnvcuvid in libavcodec
+        QLibrary lib("libnvcuvid.so");
+        if (!lib.load())
+            return false;
+        lib.unload();
+        return true;
+    }
 #elif defined(Q_OS_WINDOWS)
     if (type == AV_HWDEVICE_TYPE_D3D11VA)
         return QSystemLibrary(QLatin1String("d3d11.dll")).load();
@@ -97,7 +110,7 @@ static bool checkHwType(AVHWDeviceType type)
 {
     const auto deviceName = av_hwdevice_get_type_name(type);
     if (!deviceName) {
-        qWarning() << "Internal ffmpeg error, unknow hw type:" << type;
+        qWarning() << "Internal FFmpeg error, unknow hw type:" << type;
         return false;
     }
 
@@ -152,7 +165,8 @@ static const std::vector<AVHWDeviceType> &deviceTypes()
                 std::rotate(it++, found, std::next(found));
         }
 
-        qCDebug(qLHWAccel) << "Device types checked. Spent time:" << timer.nsecsElapsed() / 1000 << "us";
+        using namespace std::chrono;
+        qCDebug(qLHWAccel) << "Device types checked. Spent time:" << duration_cast<microseconds>(timer.durationElapsed());
 
         return result;
     }();
@@ -227,36 +241,20 @@ static bool isNoConversionFormat(AVPixelFormat f)
 
 namespace {
 
-bool hwTextureConversionEnabled(AVPixelFormat fmt)
+bool hwTextureConversionEnabled()
 {
 
     // HW textures conversions are not stable in specific cases, dependent on the hardware and OS.
     // We need the env var for testing with no textures conversion on the user's side.
-    static bool isDisableConversionSet = false;
-    static const int disableHwConversion = qEnvironmentVariableIntValue(
-            "QT_DISABLE_HW_TEXTURES_CONVERSION", &isDisableConversionSet);
+    static const int disableHwConversion =
+            qEnvironmentVariableIntValue("QT_DISABLE_HW_TEXTURES_CONVERSION");
 
-    if (disableHwConversion)
-        return false;
-
-#if QT_CONFIG(wmf)
-    if (fmt == AV_PIX_FMT_D3D11) {
-        // On Windows, HW texture conversion currently causes stuttering video display and possibly
-        // crash on AMD GPUs. See for example QTBUG-113832 and QTBUG-111543. On this platform, HW
-        // texture conversions have to be explicitly enabled for debugging and testing.
-        if (!isDisableConversionSet)
-            return false;
-    }
-#else
-    Q_UNUSED(fmt);
-#endif
-
-    return true;
+    return !disableHwConversion;
 }
 
 void setupDecoder(const AVPixelFormat format, AVCodecContext *const codecContext)
 {
-    if (!hwTextureConversionEnabled(format))
+    if (!hwTextureConversionEnabled())
         return;
 
 #if QT_CONFIG(wmf)
@@ -267,6 +265,7 @@ void setupDecoder(const AVPixelFormat format, AVCodecContext *const codecContext
         QFFmpeg::MediaCodecTextureConverter::setupDecoderSurface(codecContext);
 #else
     Q_UNUSED(codecContext);
+    Q_UNUSED(format);
 #endif
 }
 
@@ -334,11 +333,6 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *sugge
 
     // take the native format, this will involve one additional format conversion on the CPU side
     return *suggestedFormats;
-}
-
-TextureConverter::Data::~Data()
-{
-    delete backend;
 }
 
 HWAccel::~HWAccel() = default;
@@ -464,28 +458,28 @@ void TextureConverter::updateBackend(AVPixelFormat fmt)
     if (!d->rhi)
         return;
 
-    if (!hwTextureConversionEnabled(fmt))
+    if (!hwTextureConversionEnabled())
         return;
 
     switch (fmt) {
 #if QT_CONFIG(vaapi)
     case AV_PIX_FMT_VAAPI:
-        d->backend = new VAAPITextureConverter(d->rhi);
+        d->backend = std::make_unique<VAAPITextureConverter>(d->rhi);
         break;
 #endif
 #ifdef Q_OS_DARWIN
     case AV_PIX_FMT_VIDEOTOOLBOX:
-        d->backend = new VideoToolBoxTextureConverter(d->rhi);
+        d->backend = std::make_unique<VideoToolBoxTextureConverter>(d->rhi);
         break;
 #endif
 #if QT_CONFIG(wmf)
     case AV_PIX_FMT_D3D11:
-        d->backend = new D3D11TextureConverter(d->rhi);
+        d->backend = std::make_unique<D3D11TextureConverter>(d->rhi);
         break;
 #endif
 #ifdef Q_OS_ANDROID
     case AV_PIX_FMT_MEDIACODEC:
-        d->backend = new MediaCodecTextureConverter(d->rhi);
+        d->backend = std::make_unique<MediaCodecTextureConverter>(d->rhi);
         break;
 #endif
     default:

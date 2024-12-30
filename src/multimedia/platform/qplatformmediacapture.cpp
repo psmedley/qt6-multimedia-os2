@@ -23,6 +23,7 @@ std::vector<QPlatformVideoSource *> QPlatformMediaCaptureSession::activeVideoSou
 
     checkSource(camera());
     checkSource(screenCapture());
+    checkSource(windowCapture());
 
     return result;
 }

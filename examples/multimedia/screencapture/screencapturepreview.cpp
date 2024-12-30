@@ -3,6 +3,7 @@
 
 #include "screencapturepreview.h"
 #include "screenlistmodel.h"
+#include "windowlistmodel.h"
 
 #include <QMediaCaptureSession>
 #include <QScreenCapture>
@@ -14,70 +15,160 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
-
-#include <QGuiApplication>
+#include <QAction>
 
 ScreenCapturePreview::ScreenCapturePreview(QWidget *parent)
     : QWidget(parent),
       screenListView(new QListView(this)),
+      windowListView(new QListView(this)),
       screenCapture(new QScreenCapture(this)),
+      windowCapture(new QWindowCapture(this)),
       mediaCaptureSession(new QMediaCaptureSession(this)),
       videoWidget(new QVideoWidget(this)),
       gridLayout(new QGridLayout(this)),
-      startStopButton(new QPushButton("Stop screencapture", this)),
-      screenLabel(new QLabel("Double-click screen to capture:", this)),
-      videoWidgetLabel(new QLabel("QScreenCapture output:", this))
+      startStopButton(new QPushButton(this)),
+      screenLabel(new QLabel(tr("Select screen to capture:"), this)),
+      windowLabel(new QLabel(tr("Select window to capture:"), this)),
+      videoWidgetLabel(new QLabel(tr("Capture output:"), this))
 {
-    // Get list of screens:
+    // Get lists of screens and windows:
     screenListModel = new ScreenListModel(this);
+    windowListModel = new WindowListModel(this);
 
     // Setup QScreenCapture with initial source:
 
-    screenCapture->setScreen(QGuiApplication::primaryScreen());
-    screenCapture->start();
     mediaCaptureSession->setScreenCapture(screenCapture);
+    mediaCaptureSession->setWindowCapture(windowCapture);
     mediaCaptureSession->setVideoOutput(videoWidget);
 
     // Setup UI:
 
     screenListView->setModel(screenListModel);
+    windowListView->setModel(windowListModel);
+
+    auto updateAction = new QAction(tr("Update Windows List"), this);
+    connect(updateAction, &QAction::triggered, windowListModel, &WindowListModel::populate);
+    windowListView->addAction(updateAction);
+    windowListView->setContextMenuPolicy(Qt::ActionsContextMenu);
+
     gridLayout->addWidget(screenLabel, 0, 0);
     gridLayout->addWidget(screenListView, 1, 0);
-    gridLayout->addWidget(startStopButton, 2, 0);
+    gridLayout->addWidget(windowLabel, 2, 0);
+    gridLayout->addWidget(windowListView, 3, 0);
+    gridLayout->addWidget(startStopButton, 4, 0);
     gridLayout->addWidget(videoWidgetLabel, 0, 1);
-    gridLayout->addWidget(videoWidget, 1, 1, 2, 1);
+    gridLayout->addWidget(videoWidget, 1, 1, 4, 1);
 
     gridLayout->setColumnStretch(1, 1);
     gridLayout->setRowStretch(1, 1);
     gridLayout->setColumnMinimumWidth(0, 400);
     gridLayout->setColumnMinimumWidth(1, 400);
+    gridLayout->setRowMinimumHeight(3, 1);
 
-    connect(screenListView, &QAbstractItemView::activated, this, &ScreenCapturePreview::onScreenSelectionChanged);
-    connect(startStopButton, &QPushButton::clicked, this, &ScreenCapturePreview::onStartStopButtonClicked);
-    connect(screenCapture, &QScreenCapture::errorOccurred, this, &ScreenCapturePreview::onScreenCaptureErrorOccured);
+    connect(screenListView->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+            &ScreenCapturePreview::onCurrentScreenSelectionChanged);
+    connect(windowListView->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+            &ScreenCapturePreview::onCurrentWindowSelectionChanged);
+    connect(startStopButton, &QPushButton::clicked, this,
+            &ScreenCapturePreview::onStartStopButtonClicked);
+    connect(screenCapture, &QScreenCapture::errorOccurred, this,
+            &ScreenCapturePreview::onScreenCaptureErrorOccured, Qt::QueuedConnection);
+    connect(windowCapture, &QWindowCapture::errorOccurred, this,
+            &ScreenCapturePreview::onWindowCaptureErrorOccured, Qt::QueuedConnection);
+
+    updateActive(SourceType::Screen, true);
 }
 
 ScreenCapturePreview::~ScreenCapturePreview() = default;
 
-void ScreenCapturePreview::onScreenSelectionChanged(QModelIndex index)
+void ScreenCapturePreview::onCurrentScreenSelectionChanged(QItemSelection selection)
 {
-    screenCapture->setScreen(screenListModel->screen(index));
+    if (auto indexes = selection.indexes(); !indexes.empty()) {
+        screenCapture->setScreen(screenListModel->screen(indexes.front()));
+        updateActive(SourceType::Screen, isActive());
+
+        windowListView->clearSelection();
+    } else {
+        screenCapture->setScreen(nullptr);
+    }
 }
 
-void ScreenCapturePreview::onScreenCaptureErrorOccured([[maybe_unused]] QScreenCapture::Error error,
+void ScreenCapturePreview::onCurrentWindowSelectionChanged(QItemSelection selection)
+{
+    if (auto indexes = selection.indexes(); !indexes.empty()) {
+        auto window = windowListModel->window(indexes.front());
+        if (!window.isValid()) {
+            const auto questionResult = QMessageBox::question(
+                    this, tr("Invalid window"),
+                    tr("The window is no longer valid. Update the list of windows?"));
+            if (questionResult == QMessageBox::Yes) {
+                updateActive(SourceType::Window, false);
+
+                windowListView->clearSelection();
+                windowListModel->populate();
+                return;
+            }
+        }
+
+        windowCapture->setWindow(window);
+        updateActive(SourceType::Window, isActive());
+
+        screenListView->clearSelection();
+    } else {
+        windowCapture->setWindow({});
+    }
+}
+
+void ScreenCapturePreview::onWindowCaptureErrorOccured(QWindowCapture::Error,
                                                        const QString &errorString)
 {
-    QMessageBox::warning(this, "QScreenCapture: Error occurred", errorString);
+    QMessageBox::warning(this, tr("QWindowCapture: Error occurred"), errorString);
+}
+
+void ScreenCapturePreview::onScreenCaptureErrorOccured(QScreenCapture::Error,
+                                                       const QString &errorString)
+{
+    QMessageBox::warning(this, tr("QScreenCapture: Error occurred"), errorString);
 }
 
 void ScreenCapturePreview::onStartStopButtonClicked()
 {
-    if (screenCapture->isActive()) {
-        screenCapture->stop();
-        startStopButton->setText(tr("Start screencapture"));
-    } else {
-        screenCapture->start();
-        startStopButton->setText(tr("Stop screencapture"));
+    updateActive(sourceType, !isActive());
+}
+
+void ScreenCapturePreview::updateStartStopButtonText()
+{
+    switch (sourceType) {
+    case SourceType::Window:
+        startStopButton->setText(isActive() ? tr("Stop window capture")
+                                            : tr("Start window capture"));
+        break;
+    case SourceType::Screen:
+        startStopButton->setText(isActive() ? tr("Stop screen capture")
+                                            : tr("Start screen capture"));
+        break;
+    }
+}
+
+void ScreenCapturePreview::updateActive(SourceType sourceType, bool active)
+{
+    this->sourceType = sourceType;
+
+    screenCapture->setActive(active && sourceType == SourceType::Screen);
+    windowCapture->setActive(active && sourceType == SourceType::Window);
+
+    updateStartStopButtonText();
+}
+
+bool ScreenCapturePreview::isActive() const
+{
+    switch (sourceType) {
+    case SourceType::Window:
+        return windowCapture->isActive();
+    case SourceType::Screen:
+        return screenCapture->isActive();
+    default:
+        return false;
     }
 }
 

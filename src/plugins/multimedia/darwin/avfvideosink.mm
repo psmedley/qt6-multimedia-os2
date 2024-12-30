@@ -3,9 +3,7 @@
 
 #include "avfvideosink_p.h"
 
-#include <private/qrhi_p.h>
-#include <private/qrhimetal_p.h>
-#include <private/qrhigles2_p.h>
+#include <rhi/qrhi.h>
 #include <QtGui/qopenglcontext.h>
 
 #include <AVFoundation/AVFoundation.h>
@@ -85,7 +83,11 @@ void AVFVideoSinkInterface::setVideoSink(AVFVideoSink *sink)
     if (sink == m_sink)
         return;
 
+    if (m_sink)
+        m_sink->setVideoSinkInterface(nullptr);
+
     m_sink = sink;
+
     if (m_sink) {
         m_sink->setVideoSinkInterface(this);
         reconfigure();

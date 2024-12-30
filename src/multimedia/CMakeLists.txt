@@ -40,6 +40,7 @@ qt_internal_add_module(Multimedia
         platform/qplatformaudiodecoder.cpp platform/qplatformaudiodecoder_p.h
         platform/qplatformaudioinput_p.h
         platform/qplatformaudiooutput_p.h
+        platform/qplatformaudioresampler_p.h
         platform/qplatformcamera.cpp platform/qplatformcamera_p.h
         platform/qplatformvideosource.cpp platform/qplatformvideosource_p.h
         platform/qplatformsurfacecapture.cpp platform/qplatformsurfacecapture_p.h
@@ -54,6 +55,7 @@ qt_internal_add_module(Multimedia
         platform/qplatformvideodevices.cpp platform/qplatformvideodevices_p.h
         platform/qplatformvideosink.cpp platform/qplatformvideosink_p.h
         playback/qmediaplayer.cpp playback/qmediaplayer.h playback/qmediaplayer_p.h
+        platform/qplatformcapturablewindows_p.h
         qmediadevices.cpp qmediadevices.h
         qmediaenumdebug.h
         qmediaformat.cpp  qmediaformat.h
@@ -62,12 +64,16 @@ qt_internal_add_module(Multimedia
         qmediatimerange.cpp qmediatimerange.h
         qmultimediautils.cpp qmultimediautils_p.h
         qtmultimediaglobal.h qtmultimediaglobal_p.h
+        qerrorinfo_p.h
         recording/qmediacapturesession.cpp recording/qmediacapturesession.h
         recording/qmediarecorder.cpp recording/qmediarecorder.h recording/qmediarecorder_p.h
         recording/qscreencapture.cpp recording/qscreencapture.h
+        recording/qwindowcapture.cpp recording/qwindowcapture.h
+        recording/qcapturablewindow.cpp recording/qcapturablewindow.h recording/qcapturablewindow_p.h
         video/qabstractvideobuffer.cpp video/qabstractvideobuffer_p.h
         video/qmemoryvideobuffer.cpp video/qmemoryvideobuffer_p.h
-        video/qvideoframe.cpp video/qvideoframe.h
+        video/qimagevideobuffer.cpp video/qimagevideobuffer_p.h
+        video/qvideoframe.cpp video/qvideoframe.h video/qvideoframe_p.h
         video/qvideosink.cpp video/qvideosink.h
         video/qvideotexturehelper.cpp video/qvideotexturehelper_p.h
         video/qvideoframeconversionhelper.cpp video/qvideoframeconversionhelper_p.h
@@ -75,6 +81,7 @@ qt_internal_add_module(Multimedia
         video/qvideoframeconverter.cpp video/qvideoframeconverter_p.h
         video/qvideoframeformat.cpp video/qvideoframeformat.h
         video/qvideowindow.cpp video/qvideowindow_p.h
+        video/qtvideo_p.h
     INCLUDE_DIRECTORIES
         audio
         camera
@@ -282,7 +289,7 @@ set(VIDEO_SHADERS
     "shaders/nv12_bt2020_hlg.frag"
 )
 
-qt_internal_add_shaders(Multimedia "shaders"
+qt_internal_add_shaders(Multimedia "qtmultimedia_shaders"
     SILENT
     BATCHABLE
     PRECOMPILE
@@ -296,7 +303,7 @@ qt_internal_add_shaders(Multimedia "shaders"
 
 string(REPLACE ".frag" "_linear.frag.qsb" LINEAR_VIDEO_SHADERS "${VIDEO_SHADERS}")
 
-qt_internal_add_shaders(Multimedia "shaders_linear"
+qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_linear"
     SILENT
     BATCHABLE
     PRECOMPILE
@@ -311,7 +318,7 @@ qt_internal_add_shaders(Multimedia "shaders_linear"
         QMM_OUTPUTSURFACE_LINEAR
 )
 
-qt_internal_add_shaders(Multimedia "shaders_gl_macos"
+qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_gl_macos"
     SILENT
     BATCHABLE
     PRECOMPILE
@@ -327,7 +334,7 @@ qt_internal_add_shaders(Multimedia "shaders_gl_macos"
         "shaders/rectsampler_bgra.frag"
 )
 
-qt_internal_add_shaders(Multimedia "shaders_gl_macos_linear"
+qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_gl_macos_linear"
     SILENT
     BATCHABLE
     PRECOMPILE

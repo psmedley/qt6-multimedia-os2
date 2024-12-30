@@ -66,7 +66,8 @@ protected:
     void timerEvent(QTimerEvent *event) override;
 
 private:
-    void startReading();
+    void startPulling();
+    void stopTimer();
 
     bool open();
     void close();
@@ -79,6 +80,8 @@ private Q_SLOTS:
     PAOperationUPtr exchangeDrainOperation(pa_operation *newOperation);
 
 private:
+    qsizetype defaultBufferSize() const;
+
     pa_sample_spec m_spec = {};
     // calculate timing manually, as pulseaudio doesn't give us good enough data
     mutable timeval lastTimingInfo = {};
@@ -101,12 +104,12 @@ private:
     qreal m_volume = 1.0;
 
     std::atomic<pa_operation *> m_drainOperation = nullptr;
-    int m_periodSize = 0;
-    int m_bufferSize = 0;
-    int m_periodTime = 0;
+    qsizetype m_bufferSize = 0;
+    std::optional<qsizetype> m_userBufferSize = std::nullopt;
+    int m_pullingPeriodSize = 0;
+    int m_pullingPeriodTime = 0;
     bool m_pullMode = true;
     bool m_opened = false;
-    bool m_resuming = false;
 
     QAudioStateMachine m_stateMachine;
 };

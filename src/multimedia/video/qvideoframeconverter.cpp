@@ -4,21 +4,7 @@
 #include "qvideoframeconverter_p.h"
 #include "qvideoframeconversionhelper_p.h"
 #include "qvideoframeformat.h"
-
-#include <QtGui/private/qrhinull_p.h>
-#if QT_CONFIG(opengl)
-#include <QtGui/private/qrhigles2_p.h>
-#include <QOffscreenSurface>
-#endif
-#if QT_CONFIG(vulkan)
-#include <QtGui/private/qrhivulkan_p.h>
-#endif
-#ifdef Q_OS_WIN
-#include <QtGui/private/qrhid3d11_p.h>
-#endif
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
-#include <QtGui/private/qrhimetal_p.h>
-#endif
+#include "qvideoframe_p.h"
 
 #include <QtCore/qcoreapplication.h>
 #include <QtCore/qsize.h>
@@ -26,11 +12,12 @@
 #include <QtCore/qfile.h>
 #include <QtCore/qthreadstorage.h>
 #include <QtGui/qimage.h>
+#include <QtGui/qoffscreensurface.h>
 #include <qpa/qplatformintegration.h>
 #include <private/qvideotexturehelper_p.h>
 #include <private/qabstractvideobuffer_p.h>
 #include <private/qguiapplication_p.h>
-#include <private/qrhi_p.h>
+#include <rhi/qrhi.h>
 
 #ifdef Q_OS_DARWIN
 #include <QtCore/private/qcore_mac_p.h>
@@ -49,11 +36,21 @@ struct State
     QOffscreenSurface *fallbackSurface = nullptr;
 #endif
     bool cpuOnly = false;
+#if defined(Q_OS_ANDROID)
+    QMetaObject::Connection appStateChangedConnection;
+#endif
     ~State() {
+        resetRhi();
+    }
+
+    void resetRhi() {
         delete rhi;
+        rhi = nullptr;
 #if QT_CONFIG(opengl)
         delete fallbackSurface;
+        fallbackSurface = nullptr;
 #endif
+        cpuOnly = false;
     }
 };
 
@@ -118,13 +115,13 @@ static QShader vfcGetShader(const QString &name)
     return shader;
 }
 
-static void rasterTransform(QImage &image, QVideoFrame::RotationAngle rotation,
+static void rasterTransform(QImage &image, QtVideo::Rotation rotation,
                             bool mirrorX, bool mirrorY)
 {
     QTransform t;
     if (mirrorX)
         t.scale(-1.f, 1.f);
-    if (rotation != QVideoFrame::Rotation0)
+    if (rotation != QtVideo::Rotation::None)
         t.rotate(float(rotation));
     if (mirrorY)
         t.scale(1.f, -1.f);
@@ -173,6 +170,16 @@ static QRhi *initializeRHI(QRhi *videoFrameRhi)
                 if (backend == QRhi::OpenGLES2)
                     params.shareContext = static_cast<const QRhiGles2NativeHandles*>(videoFrameRhi->nativeHandles())->context;
                 g_state.localData().rhi = QRhi::create(QRhi::OpenGLES2, &params);
+
+#if defined(Q_OS_ANDROID)
+                // reset RHI state on application suspension, as this will be invalid after resuming
+                if (!g_state.localData().appStateChangedConnection) {
+                    g_state.localData().appStateChangedConnection = QObject::connect(qApp, &QGuiApplication::applicationStateChanged, qApp, [](auto state) {
+                        if (state == Qt::ApplicationSuspended)
+                            g_state.localData().resetRhi();
+                    });
+                }
+#endif
             }
         }
 #endif
@@ -243,7 +250,7 @@ static bool updateTextures(QRhi *rhi,
     return true;
 }
 
-static QImage convertJPEG(const QVideoFrame &frame, QVideoFrame::RotationAngle rotation, bool mirrorX, bool mirrorY)
+static QImage convertJPEG(const QVideoFrame &frame, QtVideo::Rotation rotation, bool mirrorX, bool mirrorY)
 {
     QVideoFrame varFrame = frame;
     if (!varFrame.map(QVideoFrame::ReadOnly)) {
@@ -257,7 +264,7 @@ static QImage convertJPEG(const QVideoFrame &frame, QVideoFrame::RotationAngle r
     return image;
 }
 
-static QImage convertCPU(const QVideoFrame &frame, QVideoFrame::RotationAngle rotation, bool mirrorX, bool mirrorY)
+static QImage convertCPU(const QVideoFrame &frame, QtVideo::Rotation rotation, bool mirrorX, bool mirrorY)
 {
     VideoFrameConvertFunc convert = qConverterForFormat(frame.pixelFormat());
     if (!convert) {
@@ -278,7 +285,7 @@ static QImage convertCPU(const QVideoFrame &frame, QVideoFrame::RotationAngle ro
     }
 }
 
-QImage qImageFromVideoFrame(const QVideoFrame &frame, QVideoFrame::RotationAngle rotation, bool mirrorX, bool mirrorY)
+QImage qImageFromVideoFrame(const QVideoFrame &frame, QtVideo::Rotation rotation, bool mirrorX, bool mirrorY)
 {
 #ifdef Q_OS_DARWIN
     QMacAutoReleasePool releasePool;
@@ -315,7 +322,7 @@ QImage qImageFromVideoFrame(const QVideoFrame &frame, QVideoFrame::RotationAngle
 
     // Do conversion using shaders
 
-    const int rotationIndex = (rotation / 90) % 4;
+    const int rotationIndex = (qToUnderlying(rotation) / 90) % 4;
 
     QSize frameSize = frame.size();
     if (rotationIndex % 2)
@@ -415,6 +422,38 @@ QImage qImageFromVideoFrame(const QVideoFrame &frame, QVideoFrame::RotationAngle
     return QImage(reinterpret_cast<const uchar *>(imageData->constData()),
                   readResult.pixelSize.width(), readResult.pixelSize.height(),
                   QImage::Format_RGBA8888_Premultiplied, imageCleanupHandler, imageData);
+}
+
+QImage videoFramePlaneAsImage(QVideoFrame &frame, int plane, QImage::Format targetFormat,
+                              QSize targetSize)
+{
+    if (plane >= frame.planeCount())
+        return {};
+
+    if (!frame.map(QVideoFrame::ReadOnly)) {
+        qWarning() << "Cannot map a video frame in ReadOnly mode!";
+        return {};
+    }
+
+    auto frameHandle = QVideoFramePrivate::handle(frame);
+
+    // With incrementing the reference counter, we share the mapped QVideoFrame
+    // with the target QImage. The function imageCleanupFunction is going to adopt
+    // the frameHandle by QVideoFrame and dereference it upon the destruction.
+    frameHandle->ref.ref();
+
+    auto imageCleanupFunction = [](void *data) {
+        QVideoFrame frame = reinterpret_cast<QVideoFramePrivate *>(data)->adoptThisByVideoFrame();
+        Q_ASSERT(frame.isMapped());
+        frame.unmap();
+    };
+
+    const auto bytesPerLine = frame.bytesPerLine(plane);
+    const auto height =
+            bytesPerLine ? qMin(targetSize.height(), frame.mappedBytes(plane) / bytesPerLine) : 0;
+
+    return QImage(reinterpret_cast<const uchar *>(frame.bits(plane)), targetSize.width(), height,
+                  bytesPerLine, targetFormat, imageCleanupFunction, frameHandle);
 }
 
 QT_END_NAMESPACE

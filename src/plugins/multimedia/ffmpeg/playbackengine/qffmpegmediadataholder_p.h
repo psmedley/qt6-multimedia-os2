@@ -19,6 +19,7 @@
 #include "private/qplatformmediaplayer_p.h"
 #include "qffmpeg_p.h"
 #include "qvideoframe.h"
+#include <private/qmultimediautils_p.h>
 
 #include <array>
 #include <optional>
@@ -27,10 +28,13 @@ QT_BEGIN_NAMESPACE
 
 namespace QFFmpeg {
 
-struct AVFormatContextDeleter
+struct ICancelToken
 {
-    void operator()(AVFormatContext *avFormat) const { avformat_close_input(&avFormat); }
+    virtual ~ICancelToken() = default;
+    virtual bool isCancelled() const = 0;
 };
+
+using AVFormatContextUPtr = std::unique_ptr<AVFormatContext, AVDeleter<decltype(&avformat_close_input), &avformat_close_input>>;
 
 class MediaDataHolder
 {
@@ -51,6 +55,9 @@ public:
     using StreamsMap = std::array<QList<StreamInfo>, QPlatformMediaPlayer::NTrackTypes>;
     using StreamIndexes = std::array<int, QPlatformMediaPlayer::NTrackTypes>;
 
+    MediaDataHolder() = default;
+    MediaDataHolder(AVFormatContextUPtr context, const std::shared_ptr<ICancelToken> &cancelToken);
+
     static QPlatformMediaPlayer::TrackType trackTypeFromMediaType(int mediaType);
 
     int activeTrack(QPlatformMediaPlayer::TrackType type) const;
@@ -63,26 +70,34 @@ public:
 
     bool isSeekable() const { return m_isSeekable; }
 
-    QVideoFrame::RotationAngle getRotationAngle() const;
+    QtVideo::Rotation rotation() const;
 
-protected:
-    std::optional<ContextError> recreateAVFormatContext(const QUrl &media, QIODevice *stream);
+    AVFormatContext *avContext();
 
-    void updateStreams();
+    int currentStreamIndex(QPlatformMediaPlayer::TrackType trackType) const;
 
-    void updateMetaData();
+    using Maybe = QMaybe<QSharedPointer<MediaDataHolder>, ContextError>;
+    static Maybe create(const QUrl &url, QIODevice *stream,
+                        const std::shared_ptr<ICancelToken> &cancelToken);
 
     bool setActiveTrack(QPlatformMediaPlayer::TrackType type, int streamNumber);
 
-protected:
-    std::unique_ptr<AVFormatContext, AVFormatContextDeleter> m_context;
+private:
+    void updateMetaData();
+
+    std::shared_ptr<ICancelToken> m_cancelToken; // NOTE: Cancel token may be accessed by
+                                                 // AVFormatContext during destruction and
+                                                 // must outlive the context object
+    AVFormatContextUPtr m_context;
+
     bool m_isSeekable = false;
 
-    StreamIndexes m_currentAVStreamIndex = { { -1, -1, -1 } };
+    StreamIndexes m_currentAVStreamIndex = { -1, -1, -1 };
     StreamsMap m_streamMap;
-    StreamIndexes m_requestedStreams = { { -1, -1, -1 } };
+    StreamIndexes m_requestedStreams = { -1, -1, -1 };
     qint64 m_duration = 0;
     QMediaMetaData m_metaData;
+    std::optional<QImage> m_cachedThumbnail;
 };
 
 } // namespace QFFmpeg

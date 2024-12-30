@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideotexturehelper_p.h"
-#include "qvideoframe.h"
 #include "qabstractvideobuffer_p.h"
+#include "qvideoframeconverter_p.h"
 
 #include <qpainter.h>
 #include <qloggingcategory.h>
@@ -100,7 +100,7 @@ static const TextureDescription descriptions[QVideoFrameFormat::NPixelFormats] =
     },
      // Format_YUV422P
     { 3, 1,
-      [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
+      [](int stride, int height) { return stride * height * 2; },
      { QRhiTexture::R8, QRhiTexture::R8, QRhiTexture::R8 },
      { { 1, 1 }, { 2, 1 }, { 2, 1 } }
     },
@@ -370,6 +370,8 @@ QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhiSwapChain::F
 // d = 1.42
 // e = 1.772
 //
+
+// clang-format off
 static QMatrix4x4 colorMatrix(const QVideoFrameFormat &format)
 {
     auto colorSpace = format.colorSpace();
@@ -383,86 +385,60 @@ static QMatrix4x4 colorMatrix(const QVideoFrameFormat &format)
     }
     switch (colorSpace) {
     case QVideoFrameFormat::ColorSpace_AdobeRgb:
-        return QMatrix4x4(
+        return {
             1.0f,  0.000f,  1.402f, -0.701f,
             1.0f, -0.344f, -0.714f,  0.529f,
             1.0f,  1.772f,  0.000f, -0.886f,
-            0.0f,  0.000f,  0.000f,  1.0000f);
+            0.0f,  0.000f,  0.000f,  1.000f
+        };
     default:
     case QVideoFrameFormat::ColorSpace_BT709:
         if (format.colorRange() == QVideoFrameFormat::ColorRange_Full)
-            return QMatrix4x4(
-                1.f,  0.000f,  1.5748f, -0.8774f,
-                1.f, -0.187324f, -0.468124f,  0.327724f,
-                1.f,  1.8556f,  0.000f, -0.9278f,
-                0.0f,    0.000f,  0.000f,  1.0000f);
-        return QMatrix4x4(
-            1.1644f,  0.000f,  1.7928f, -0.9731f,
+            return {
+                1.0f,  0.0f,       1.5748f,   -0.790488f,
+                1.0f, -0.187324f, -0.468124f,  0.329010f,
+                1.0f,  1.855600f,  0.0f,      -0.931439f,
+                0.0f,  0.0f,       0.0f,       1.0f
+            };
+        return {
+            1.1644f,  0.0000f,  1.7927f, -0.9729f,
             1.1644f, -0.2132f, -0.5329f,  0.3015f,
-            1.1644f,  2.1124f,  0.000f, -1.1335f,
-            0.0f,    0.000f,  0.000f,  1.0000f);
+            1.1644f,  2.1124f,  0.0000f, -1.1334f,
+            0.0000f,  0.0000f,  0.0000f,  1.0000f
+        };
     case QVideoFrameFormat::ColorSpace_BT2020:
         if (format.colorRange() == QVideoFrameFormat::ColorRange_Full)
-            return QMatrix4x4(
-                1.f,  0.000f,  1.4746f, -0.7373f,
-                1.f, -0.2801f, -0.91666f,  0.5984f,
-                1.f,  1.8814f,  0.000f, -0.9407f,
-                0.0f,    0.000f,  0.000f,  1.0000f);
-        return QMatrix4x4(
-            1.1644f,  0.000f,  1.6787f, -0.9158f,
-            1.1644f, -0.1874f, -0.6511f,  0.3478f,
-            1.1644f,  2.1418f,  0.000f, -1.1483f,
-            0.0f,  0.000f,  0.000f,  1.0000f);
+            return {
+                1.f,  0.0000f,  1.4746f, -0.7402f,
+                1.f, -0.1646f, -0.5714f,  0.3694f,
+                1.f,  1.8814f,  0.000f,  -0.9445f,
+                0.0f, 0.0000f,  0.000f,   1.0000f
+            };
+        return {
+            1.1644f,  0.000f,   1.6787f, -0.9157f,
+            1.1644f, -0.1874f, -0.6504f,  0.3475f,
+            1.1644f,  2.1418f,  0.0000f, -1.1483f,
+            0.0000f,  0.0000f,  0.0000f,  1.0000f
+        };
     case QVideoFrameFormat::ColorSpace_BT601:
         // Corresponds to the primaries used by NTSC BT601. For PAL BT601, we use the BT709 conversion
         // as those are very close.
         if (format.colorRange() == QVideoFrameFormat::ColorRange_Full)
-            return QMatrix4x4(
-                1.f,  0.000f,  1.772f, -0.886f,
+            return {
+                1.f,  0.000f,   1.772f,   -0.886f,
                 1.f, -0.1646f, -0.57135f,  0.36795f,
-                1.f,  1.42f,  0.000f, -0.71f,
-                0.0f,    0.000f,  0.000f,  1.0000f);
-        return QMatrix4x4(
+                1.f,  1.42f,    0.000f,   -0.71f,
+                0.0f, 0.000f,   0.000f,    1.0000f
+            };
+        return {
             1.164f,  0.000f,  1.596f, -0.8708f,
             1.164f, -0.392f, -0.813f,  0.5296f,
-            1.164f,  2.017f,  0.000f, -1.081f,
-            0.0f,    0.000f,  0.000f,  1.0000f);
+            1.164f,  2.017f,  0.000f, -1.0810f,
+            0.000f,  0.000f,  0.000f,  1.0000f
+        };
     }
 }
-
-#if 0
-static QMatrix4x4 yuvColorCorrectionMatrix(float brightness, float contrast, float hue, float saturation)
-{
-    // Color correction in YUV space is done as follows:
-
-    // The formulas assumes values in range 0-255, and a blackpoint of Y=16, whitepoint of Y=235
-    //
-    // Bightness: b
-    // Contrast: c
-    // Hue: h
-    // Saturation: s
-    //
-    // Y' = (Y - 16)*c + b + 16
-    // U' = ((U - 128)*cos(h) + (V - 128)*sin(h))*c*s + 128
-    // V' = ((V - 128)*cos(h) - (U - 128)*sin(h))*c*s + 128
-    //
-    // For normalized YUV values (0-1 range) as we have them in the pixel shader, this translates to:
-    //
-    // Y' = (Y - .0625)*c + b + .0625
-    // U' = ((U - .5)*cos(h) + (V - .5)*sin(h))*c*s + .5
-    // V' = ((V - .5)*cos(h) - (U - .5)*sin(h))*c*s + .5
-    //
-    // The values need to be clamped to 0-1 after the correction and before converting to RGB
-    // The transformation can be encoded in a 4x4 matrix assuming we have an A component of 1
-
-    float chcs = cos(hue)*contrast*saturation;
-    float shcs = sin(hue)*contrast*saturation;
-    return QMatrix4x4(contrast,     0,    0, .0625*(1 - contrast) + brightness,
-                      0,         chcs, shcs,              .5*(1 - chcs - shcs),
-                      0,        -shcs, chcs,              .5*(1 + shcs - chcs),
-                      0,            0,    0,                                1);
-}
-#endif
+// clang-format on
 
 // PQ transfer function, see also https://en.wikipedia.org/wiki/Perceptual_quantizer
 // or https://ieeexplore.ieee.org/document/7291452
@@ -585,13 +561,31 @@ void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const Q
     ud->maxLum = fromLinear(float(maxNits)/100.f);
 }
 
-static bool updateTextureWithMap(QVideoFrame frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, int plane, std::unique_ptr<QRhiTexture> &tex)
+// There's no maping between QRhiTexture formats and QImage formats.
+// The function gets a size compatible format; it works fine as
+// QRhi relies on the given QRhiTexture format instead of the image format.
+static QImage::Format sizeCompatibleImageFormat(QRhiTexture::Format rhiFromat)
 {
-    if (!frame.map(QVideoFrame::ReadOnly)) {
-        qWarning() << "could not map data of QVideoFrame for upload";
-        return false;
+    switch (rhiFromat) {
+    case QRhiTexture::RGBA8:
+    case QRhiTexture::BGRA8:
+    case QRhiTexture::RG16:
+        return QImage::Format_ARGB32;
+    case QRhiTexture::R16:
+    case QRhiTexture::RG8:
+        return QImage::Format_Grayscale16;
+    case QRhiTexture::R8:
+        return QImage::Format_Grayscale8;
+    default:
+        qWarning() << "QRhiTexture::Format" << rhiFromat
+                   << "must be mapped to a size-compatible QImage::Format";
+        Q_ASSERT(!"QRhiTexture::Format is not mapped to a size-compatible QImage::Format");
+        return QImage::Format_Grayscale8;
     }
+}
 
+static bool updateTextureWithMap(QVideoFrame& frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, int plane, std::unique_ptr<QRhiTexture> &tex)
+{
     QVideoFrameFormat fmt = frame.surfaceFormat();
     QVideoFrameFormat::PixelFormat pixelFormat = fmt.pixelFormat();
     QSize size = fmt.frameSize();
@@ -620,14 +614,24 @@ static bool updateTextureWithMap(QVideoFrame frame, QRhi *rhi, QRhiResourceUpdat
     QRhiTextureSubresourceUploadDescription subresDesc;
     QImage image;
     if (pixelFormat == QVideoFrameFormat::Format_Jpeg) {
+        Q_ASSERT(plane == 0);
+
+        // calling QVideoFrame::toImage is not accurate. To be fixed.
         image = frame.toImage();
         image.convertTo(QImage::Format_ARGB32);
-        subresDesc.setData(QByteArray((const char *)image.bits(), image.bytesPerLine()*image.height()));
-        subresDesc.setDataStride(image.bytesPerLine());
+
     } else {
-        subresDesc.setData(QByteArray::fromRawData((const char *)frame.bits(plane), frame.mappedBytes(plane)));
-        subresDesc.setDataStride(frame.bytesPerLine(plane));
+        image = videoFramePlaneAsImage(
+                frame, plane, sizeCompatibleImageFormat(texDesc.textureFormat[plane]), planeSize);
     }
+
+    if (image.isNull()) {
+        qWarning() << "Cannot represent the plane" << plane << "as an image";
+        return false;
+    }
+
+    subresDesc.setImage(image);
+    subresDesc.setDataStride(image.bytesPerLine());
 
     QRhiTextureUploadEntry entry(0, 0, subresDesc);
     QRhiTextureUploadDescription desc({ entry });
@@ -703,7 +707,7 @@ static std::unique_ptr<QVideoFrameTextures> createTexturesFromHandles(const QVid
         return {};
 }
 
-std::unique_ptr<QVideoFrameTextures> createTexturesFromMemory(const QVideoFrame &frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, QVideoFrameTextures *old)
+static std::unique_ptr<QVideoFrameTextures> createTexturesFromMemory(QVideoFrame frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, QVideoFrameTextures *old)
 {
     const TextureDescription &texDesc = descriptions[frame.surfaceFormat().pixelFormat()];
     QVideoFrameTexturesArray::TextureArray textures;

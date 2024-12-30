@@ -51,9 +51,9 @@ void AudioInputExample::setup()
     }
 
     audio = new QAudioSource(format, this);
-    connect(audio, SIGNAL(stateChanged(QAudio::State)), this, SLOT(handleStateChanged(QAudio::State)));
+    connect(audio, &QAudioSource::stateChanged, this, &AudioInputExample::handleStateChanged);
 
-    QTimer::singleShot(3000, this, SLOT(stopRecording()));
+    QTimer::singleShot(3000, this, &AudioInputExample::stopRecording);
     audio->start(&destinationFile);
     // Records audio for 3000ms
 }
@@ -99,6 +99,7 @@ public:
 
 public Q_SLOTS:
     void handleStateChanged(QAudio::State newState);
+    void stopAudioOutput();
 
 private:
     //! [Audio output class members]
@@ -127,10 +128,19 @@ void AudioOutputExample::setup()
     }
 
     audio = new QAudioSink(format, this);
-    connect(audio, SIGNAL(stateChanged(QAudio::State)), this, SLOT(handleStateChanged(QAudio::State)));
+    connect(audio, QAudioSink::stateChanged, this, &AudioInputExample::handleStateChanged);
     audio->start(&sourceFile);
 }
 //! [Audio output setup]
+
+//! [Audio output stop]
+void AudioOutputExample::stopAudioOutput()
+{
+    audio->stop();
+    sourceFile.close();
+    delete audio;
+}
+//! [Audio output stop]
 
 //! [Audio output state changed]
 void AudioOutputExample::handleStateChanged(QAudio::State newState)
@@ -138,9 +148,7 @@ void AudioOutputExample::handleStateChanged(QAudio::State newState)
     switch (newState) {
         case QAudio::IdleState:
             // Finished playing (no more data)
-            audio->stop();
-            sourceFile.close();
-            delete audio;
+            AudioOutputExample::stopAudioOutput();
             break;
 
         case QAudio::StoppedState:
@@ -195,7 +203,7 @@ void AudioDecodingExample::decode()
     decoder->setAudioFormat(desiredFormat);
     decoder->setSource("level1.mp3");
 
-    connect(decoder, SIGNAL(bufferReady()), this, SLOT(readBuffer()));
+    connect(decoder, &QAudioDecoder::bufferReady, this, &AudioDecodingExample::readBuffer);
     decoder->start();
 
     // Now wait for bufferReady() signal and call decoder->read()

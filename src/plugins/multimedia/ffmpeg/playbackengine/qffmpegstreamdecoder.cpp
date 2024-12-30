@@ -31,6 +31,11 @@ void StreamDecoder::onFinalPacketReceived()
     decode({});
 }
 
+void StreamDecoder::setInitialPosition(TimePoint, qint64 trackPos)
+{
+    m_absSeekPos = trackPos;
+}
+
 void StreamDecoder::decode(Packet packet)
 {
     m_packets.enqueue(packet);
@@ -123,7 +128,7 @@ void StreamDecoder::decodeMedia(Packet packet)
         sendPacketResult = sendAVPacket(packet);
 
         if (sendPacketResult != AVERROR(EAGAIN))
-            qWarning() << "Unexpected ffmpeg behavior";
+            qWarning() << "Unexpected FFmpeg behavior";
     }
 
     if (sendPacketResult == 0)

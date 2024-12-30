@@ -46,6 +46,9 @@ public:
     virtual QPlatformSurfaceCapture *screenCapture() { return nullptr; }
     virtual void setScreenCapture(QPlatformSurfaceCapture *) {}
 
+    virtual QPlatformSurfaceCapture *windowCapture() { return nullptr; }
+    virtual void setWindowCapture(QPlatformSurfaceCapture *) { }
+
     virtual QPlatformImageCapture *imageCapture() = 0;
     virtual void setImageCapture(QPlatformImageCapture *) {}
 
@@ -64,6 +67,7 @@ public:
 Q_SIGNALS:
     void cameraChanged();
     void screenCaptureChanged();
+    void windowCaptureChanged();
     void imageCaptureChanged();
     void encoderChanged();
 

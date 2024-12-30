@@ -9,7 +9,7 @@
 #include <private/qplatformvideosink_p.h>
 #include <private/qwindowsmfdefs_p.h>
 
-#include <QtGui/private/qrhi_p.h>
+#include <rhi/qrhi.h>
 
 #include <QtCore/qmutex.h>
 #include <QtCore/qvarlengtharray.h>
@@ -17,7 +17,7 @@
 #include <qthread.h>
 #include <qcoreapplication.h>
 #include <qmath.h>
-#include <QtCore/qdebug.h>
+#include <qloggingcategory.h>
 
 #include <mutex>
 
@@ -26,14 +26,14 @@
 
 QT_BEGIN_NAMESPACE
 
+static Q_LOGGING_CATEGORY(qLcEvrCustomPresenter, "qt.multimedia.evrcustompresenter")
+
 const static MFRatio g_DefaultFrameRate = { 30, 1 };
 static const DWORD SCHEDULER_TIMEOUT = 5000;
 static const MFTIME ONE_SECOND = 10000000;
 static const LONG   ONE_MSEC = 1000;
 
 // Function declarations.
-static HRESULT setDesiredSampleTime(IMFSample *sample, const LONGLONG& hnsSampleTime, const LONGLONG& hnsDuration);
-static HRESULT clearDesiredSampleTime(IMFSample *sample);
 static HRESULT setMixerSourceRect(IMFTransform *mixer, const MFVideoNormalizedRect& nrcSource);
 static QVideoFrameFormat::PixelFormat pixelFormatFromMediaType(IMFMediaType *type);
 
@@ -61,45 +61,27 @@ bool qt_evr_setCustomPresenter(IUnknown *evr, EVRCustomPresenter *presenter)
 class PresentSampleEvent : public QEvent
 {
 public:
-    PresentSampleEvent(IMFSample *sample)
-        : QEvent(QEvent::Type(EVRCustomPresenter::PresentSample))
-        , m_sample(sample)
+    explicit PresentSampleEvent(const ComPtr<IMFSample> &sample)
+        : QEvent(static_cast<Type>(EVRCustomPresenter::PresentSample)), m_sample(sample)
     {
-        if (m_sample)
-            m_sample->AddRef();
     }
 
-    ~PresentSampleEvent() override
-    {
-        if (m_sample)
-            m_sample->Release();
-    }
-
-    IMFSample *sample() const { return m_sample; }
+    ComPtr<IMFSample> sample() const { return m_sample; }
 
 private:
-    IMFSample *m_sample;
+    const ComPtr<IMFSample> m_sample;
 };
 
 Scheduler::Scheduler(EVRCustomPresenter *presenter)
     : m_presenter(presenter)
-    , m_clock(NULL)
     , m_threadID(0)
-    , m_schedulerThread(0)
-    , m_threadReadyEvent(0)
-    , m_flushEvent(0)
     , m_playbackRate(1.0f)
-    , m_perFrameInterval(0)
     , m_perFrame_1_4th(0)
-    , m_lastSampleTime(0)
 {
 }
 
 Scheduler::~Scheduler()
 {
-    qt_evr_safe_release(&m_clock);
-    for (int i = 0; i < m_scheduledSamples.size(); ++i)
-        m_scheduledSamples[i]->Release();
     m_scheduledSamples.clear();
 }
 
@@ -110,13 +92,11 @@ void Scheduler::setFrameRate(const MFRatio& fps)
     // Convert to a duration.
     MFFrameRateToAverageTimePerFrame(fps.Numerator, fps.Denominator, &AvgTimePerFrame);
 
-    m_perFrameInterval = (MFTIME)AvgTimePerFrame;
-
     // Calculate 1/4th of this value, because we use it frequently.
-    m_perFrame_1_4th = m_perFrameInterval / 4;
+    m_perFrame_1_4th = AvgTimePerFrame / 4;
 }
 
-HRESULT Scheduler::startScheduler(IMFClock *clock)
+HRESULT Scheduler::startScheduler(ComPtr<IMFClock> clock)
 {
     if (m_schedulerThread)
         return E_UNEXPECTED;
@@ -126,44 +106,39 @@ HRESULT Scheduler::startScheduler(IMFClock *clock)
     HANDLE hObjects[2];
     DWORD dwWait = 0;
 
-    if (m_clock)
-        m_clock->Release();
     m_clock = clock;
-    if (m_clock)
-        m_clock->AddRef();
 
     // Set a high the timer resolution (ie, short timer period).
     timeBeginPeriod(1);
 
     // Create an event to wait for the thread to start.
-    m_threadReadyEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    m_threadReadyEvent = EventHandle{ CreateEvent(NULL, FALSE, FALSE, NULL) };
     if (!m_threadReadyEvent) {
         hr = HRESULT_FROM_WIN32(GetLastError());
         goto done;
     }
 
     // Create an event to wait for flush commands to complete.
-    m_flushEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    m_flushEvent = EventHandle{ CreateEvent(NULL, FALSE, FALSE, NULL) };
     if (!m_flushEvent) {
         hr = HRESULT_FROM_WIN32(GetLastError());
         goto done;
     }
 
     // Create the scheduler thread.
-    m_schedulerThread = CreateThread(NULL, 0, schedulerThreadProc, (LPVOID)this, 0, &dwID);
+    m_schedulerThread = ThreadHandle{ CreateThread(NULL, 0, schedulerThreadProc, (LPVOID)this, 0, &dwID) };
     if (!m_schedulerThread) {
         hr = HRESULT_FROM_WIN32(GetLastError());
         goto done;
     }
 
     // Wait for the thread to signal the "thread ready" event.
-    hObjects[0] = m_threadReadyEvent;
-    hObjects[1] = m_schedulerThread;
+    hObjects[0] = m_threadReadyEvent.get();
+    hObjects[1] = m_schedulerThread.get();
     dwWait = WaitForMultipleObjects(2, hObjects, FALSE, INFINITE);  // Wait for EITHER of these handles.
     if (WAIT_OBJECT_0 != dwWait) {
         // The thread terminated early for some reason. This is an error condition.
-        CloseHandle(m_schedulerThread);
-        m_schedulerThread = NULL;
+        m_schedulerThread = {};
 
         hr = E_UNEXPECTED;
         goto done;
@@ -173,10 +148,8 @@ HRESULT Scheduler::startScheduler(IMFClock *clock)
 
 done:
     // Regardless success/failure, we are done using the "thread ready" event.
-    if (m_threadReadyEvent) {
-        CloseHandle(m_threadReadyEvent);
-        m_threadReadyEvent = NULL;
-    }
+    m_threadReadyEvent = {};
+
     return hr;
 }
 
@@ -189,19 +162,14 @@ HRESULT Scheduler::stopScheduler()
     PostThreadMessage(m_threadID, Terminate, 0, 0);
 
     // Wait for the thread to exit.
-    WaitForSingleObject(m_schedulerThread, INFINITE);
+    WaitForSingleObject(m_schedulerThread.get(), INFINITE);
 
     // Close handles.
-    CloseHandle(m_schedulerThread);
-    m_schedulerThread = NULL;
-
-    CloseHandle(m_flushEvent);
-    m_flushEvent = NULL;
+    m_schedulerThread = {};
+    m_flushEvent = {};
 
     // Discard samples.
     m_mutex.lock();
-    for (int i = 0; i < m_scheduledSamples.size(); ++i)
-        m_scheduledSamples[i]->Release();
     m_scheduledSamples.clear();
     m_mutex.unlock();
 
@@ -219,7 +187,7 @@ HRESULT Scheduler::flush()
 
         // Wait for the scheduler thread to signal the flush event,
         // OR for the thread to terminate.
-        HANDLE objects[] = { m_flushEvent, m_schedulerThread };
+        HANDLE objects[] = { m_flushEvent.get(), m_schedulerThread.get() };
 
         WaitForMultipleObjects(ARRAYSIZE(objects), objects, FALSE, SCHEDULER_TIMEOUT);
     }
@@ -233,7 +201,7 @@ bool Scheduler::areSamplesScheduled()
     return m_scheduledSamples.count() > 0;
 }
 
-HRESULT Scheduler::scheduleSample(IMFSample *sample, bool presentNow)
+HRESULT Scheduler::scheduleSample(const ComPtr<IMFSample> &sample, bool presentNow)
 {
     if (!m_schedulerThread)
         return MF_E_NOT_INITIALIZED;
@@ -241,16 +209,20 @@ HRESULT Scheduler::scheduleSample(IMFSample *sample, bool presentNow)
     HRESULT hr = S_OK;
     DWORD dwExitCode = 0;
 
-    GetExitCodeThread(m_schedulerThread, &dwExitCode);
+    GetExitCodeThread(m_schedulerThread.get(), &dwExitCode);
     if (dwExitCode != STILL_ACTIVE)
         return E_FAIL;
 
     if (presentNow || !m_clock) {
         m_presenter->presentSample(sample);
     } else {
+        if (m_playbackRate > 0.0f && qt_evr_isSampleTimePassed(m_clock.Get(), sample.Get())) {
+            qCDebug(qLcEvrCustomPresenter) << "Discard the sample, it came too late";
+            return hr;
+        }
+
         // Queue the sample and ask the scheduler thread to wake up.
         m_mutex.lock();
-        sample->AddRef();
         m_scheduledSamples.enqueue(sample);
         m_mutex.unlock();
 
@@ -265,20 +237,18 @@ HRESULT Scheduler::processSamplesInQueue(LONG *nextSleep)
 {
     HRESULT hr = S_OK;
     LONG wait = 0;
-    IMFSample *sample = NULL;
 
     // Process samples until the queue is empty or until the wait time > 0.
     while (!m_scheduledSamples.isEmpty()) {
         m_mutex.lock();
-        sample = m_scheduledSamples.dequeue();
+        ComPtr<IMFSample> sample = m_scheduledSamples.dequeue();
         m_mutex.unlock();
 
         // Process the next sample in the queue. If the sample is not ready
         // for presentation. the value returned in wait is > 0, which
         // means the scheduler should sleep for that amount of time.
 
-        hr = processSample(sample, &wait);
-        qt_evr_safe_release(&sample);
+        hr = processSample(sample.Get(), &wait);
 
         if (FAILED(hr) || wait > 0)
             break;
@@ -294,7 +264,7 @@ HRESULT Scheduler::processSamplesInQueue(LONG *nextSleep)
     return hr;
 }
 
-HRESULT Scheduler::processSample(IMFSample *sample, LONG *pNextSleep)
+HRESULT Scheduler::processSample(const ComPtr<IMFSample> &sample, LONG *pNextSleep)
 {
     HRESULT hr = S_OK;
 
@@ -346,7 +316,6 @@ HRESULT Scheduler::processSample(IMFSample *sample, LONG *pNextSleep)
     } else {
         // The sample is not ready yet. Return it to the queue.
         m_mutex.lock();
-        sample->AddRef();
         m_scheduledSamples.prepend(sample);
         m_mutex.unlock();
     }
@@ -376,7 +345,7 @@ DWORD Scheduler::schedulerThreadProcPrivate()
     PeekMessage(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
 
     // Signal to the scheduler that the thread is ready.
-    SetEvent(m_threadReadyEvent);
+    SetEvent(m_threadReadyEvent.get());
 
     while (!exitThread) {
         // Wait for a thread message OR until the wait time expires.
@@ -399,12 +368,10 @@ DWORD Scheduler::schedulerThreadProcPrivate()
             case Flush:
                 // Flushing: Clear the sample queue and set the event.
                 m_mutex.lock();
-                for (int i = 0; i < m_scheduledSamples.size(); ++i)
-                    m_scheduledSamples[i]->Release();
                 m_scheduledSamples.clear();
                 m_mutex.unlock();
                 wait = INFINITE;
-                SetEvent(m_flushEvent);
+                SetEvent(m_flushEvent.get());
                 break;
             case Schedule:
                 // Process as many samples as we can.
@@ -434,47 +401,44 @@ SamplePool::~SamplePool()
     clear();
 }
 
-HRESULT SamplePool::getSample(IMFSample **sample)
+ComPtr<IMFSample> SamplePool::takeSample()
 {
     QMutexLocker locker(&m_mutex);
 
-    if (!m_initialized)
-        return MF_E_NOT_INITIALIZED;
+    Q_ASSERT(m_initialized);
+    if (!m_initialized) {
+        qCWarning(qLcEvrCustomPresenter) << "SamplePool is not initialized yet";
+        return nullptr;
+    }
 
-    if (m_videoSampleQueue.isEmpty())
-        return MF_E_SAMPLEALLOCATOR_EMPTY;
+    if (m_videoSampleQueue.isEmpty()) {
+        qCDebug(qLcEvrCustomPresenter) << "SamplePool is empty";
+        return nullptr;
+    }
 
     // Get a sample from the allocated queue.
 
     // It doesn't matter if we pull them from the head or tail of the list,
     // but when we get it back, we want to re-insert it onto the opposite end.
-    // (see ReturnSample)
+    // (see returnSample)
 
-    IMFSample *taken = m_videoSampleQueue.takeFirst();
-
-    // Give the sample to the caller.
-    *sample = taken;
-    (*sample)->AddRef();
-
-    taken->Release();
-
-    return S_OK;
+    return m_videoSampleQueue.takeFirst();
 }
 
-HRESULT SamplePool::returnSample(IMFSample *sample)
+void SamplePool::returnSample(const ComPtr<IMFSample> &sample)
 {
     QMutexLocker locker(&m_mutex);
 
-    if (!m_initialized)
-        return MF_E_NOT_INITIALIZED;
+    Q_ASSERT(m_initialized);
+    if (!m_initialized) {
+        qCWarning(qLcEvrCustomPresenter) << "SamplePool is not initialized yet";
+        return;
+    }
 
     m_videoSampleQueue.append(sample);
-    sample->AddRef();
-
-    return S_OK;
 }
 
-HRESULT SamplePool::initialize(QList<IMFSample*> &samples)
+HRESULT SamplePool::initialize(QList<ComPtr<IMFSample>> &&samples)
 {
     QMutexLocker locker(&m_mutex);
 
@@ -482,16 +446,10 @@ HRESULT SamplePool::initialize(QList<IMFSample*> &samples)
         return MF_E_INVALIDREQUEST;
 
     // Move these samples into our allocated queue.
-    for (auto sample : std::as_const(samples)) {
-        sample->AddRef();
-        m_videoSampleQueue.append(sample);
-    }
+    m_videoSampleQueue.append(std::move(samples));
 
     m_initialized = true;
 
-    for (auto sample : std::as_const(samples))
-        sample->Release();
-    samples.clear();
     return S_OK;
 }
 
@@ -499,8 +457,6 @@ HRESULT SamplePool::clear()
 {
     QMutexLocker locker(&m_mutex);
 
-    for (auto sample : std::as_const(m_videoSampleQueue))
-        sample->Release();
     m_videoSampleQueue.clear();
     m_initialized = false;
 
@@ -516,14 +472,10 @@ EVRCustomPresenter::EVRCustomPresenter(QVideoSink *sink)
     , m_scheduler(this)
     , m_tokenCounter(0)
     , m_sampleNotify(false)
-    , m_repaint(false)
     , m_prerolled(false)
     , m_endStreaming(false)
     , m_playbackRate(1.0f)
     , m_presentEngine(new D3DPresentEngine(sink))
-    , m_clock(0)
-    , m_mixer(0)
-    , m_mediaEventSink(0)
     , m_mediaType(0)
     , m_videoSink(0)
     , m_canRenderToSurface(false)
@@ -543,11 +495,6 @@ EVRCustomPresenter::~EVRCustomPresenter()
     m_scheduler.flush();
     m_scheduler.stopScheduler();
     m_samplePool.clear();
-
-    qt_evr_safe_release(&m_clock);
-    qt_evr_safe_release(&m_mixer);
-    qt_evr_safe_release(&m_mediaEventSink);
-    qt_evr_safe_release(&m_mediaType);
 
     delete m_presentEngine;
 }
@@ -635,9 +582,9 @@ HRESULT EVRCustomPresenter::InitServicePointers(IMFTopologyServiceLookup *lookup
     if (isActive())
         return MF_E_INVALIDREQUEST;
 
-    qt_evr_safe_release(&m_clock);
-    qt_evr_safe_release(&m_mixer);
-    qt_evr_safe_release(&m_mediaEventSink);
+    m_clock.Reset();
+    m_mixer.Reset();
+    m_mediaEventSink.Reset();
 
     // Ask for the clock. Optional, because the EVR might not have a clock.
     objectCount = 1;
@@ -659,7 +606,7 @@ HRESULT EVRCustomPresenter::InitServicePointers(IMFTopologyServiceLookup *lookup
         return hr;
 
     // Make sure that we can work with this mixer.
-    hr = configureMixer(m_mixer);
+    hr = configureMixer(m_mixer.Get());
     if (FAILED(hr))
         return hr;
 
@@ -693,9 +640,9 @@ HRESULT EVRCustomPresenter::ReleaseServicePointers()
     setMediaType(NULL);
 
     // Release all services that were acquired from InitServicePointers.
-    qt_evr_safe_release(&m_clock);
-    qt_evr_safe_release(&m_mixer);
-    qt_evr_safe_release(&m_mediaEventSink);
+    m_clock.Reset();
+    m_mixer.Reset();
+    m_mediaEventSink.Reset();
 
     return S_OK;
 }
@@ -896,8 +843,6 @@ HRESULT EVRCustomPresenter::OnClockSetRate(MFTIME, float rate)
     // frame-step operation.
     if ((m_playbackRate == 0.0f) && (rate != 0.0f)) {
         cancelFrameStep();
-        for (auto sample : std::as_const(m_frameStep.samples))
-            sample->Release();
         m_frameStep.samples.clear();
     }
 
@@ -1100,13 +1045,11 @@ HRESULT EVRCustomPresenter::flush()
     m_scheduler.flush();
 
     // Flush the frame-step queue.
-    for (auto sample : std::as_const(m_frameStep.samples))
-        sample->Release();
     m_frameStep.samples.clear();
 
     if (m_renderState == RenderStopped && m_videoSink) {
         // Repaint with black.
-        presentSample(NULL);
+        presentSample(nullptr);
     }
 
     return S_OK;
@@ -1194,9 +1137,6 @@ HRESULT EVRCustomPresenter::prepareFrameStep(DWORD steps)
 
 HRESULT EVRCustomPresenter::startFrameStep()
 {
-    HRESULT hr = S_OK;
-    IMFSample *sample = NULL;
-
     if (m_frameStep.state == FrameStepWaitingStart) {
         // We have a frame-step request, and are waiting for the clock to start.
         // Set the state to "pending," which means we are waiting for samples.
@@ -1204,13 +1144,11 @@ HRESULT EVRCustomPresenter::startFrameStep()
 
         // If the frame-step queue already has samples, process them now.
         while (!m_frameStep.samples.isEmpty() && (m_frameStep.state == FrameStepPending)) {
-            sample = m_frameStep.samples.takeFirst();
+            const ComPtr<IMFSample> sample = m_frameStep.samples.takeFirst();
 
-            hr = deliverFrameStepSample(sample);
+            const HRESULT hr = deliverFrameStepSample(sample.Get());
             if (FAILED(hr))
-                goto done;
-
-            qt_evr_safe_release(&sample);
+                return hr;
 
             // We break from this loop when:
             //   (a) the frame-step queue is empty, or
@@ -1220,22 +1158,18 @@ HRESULT EVRCustomPresenter::startFrameStep()
         // We are not frame stepping. Therefore, if the frame-step queue has samples,
         // we need to process them normally.
         while (!m_frameStep.samples.isEmpty()) {
-            sample = m_frameStep.samples.takeFirst();
+            const ComPtr<IMFSample> sample = m_frameStep.samples.takeFirst();
 
-            hr = deliverSample(sample, false);
+            const HRESULT hr = deliverSample(sample.Get());
             if (FAILED(hr))
-                goto done;
-
-            qt_evr_safe_release(&sample);
+                return hr;
         }
     }
 
-done:
-    qt_evr_safe_release(&sample);
-    return hr;
+    return S_OK;
 }
 
-HRESULT EVRCustomPresenter::completeFrameStep(IMFSample *sample)
+HRESULT EVRCustomPresenter::completeFrameStep(const ComPtr<IMFSample> &sample)
 {
     HRESULT hr = S_OK;
     MFTIME sampleTime = 0;
@@ -1326,7 +1260,7 @@ HRESULT EVRCustomPresenter::createOptimalVideoType(IMFMediaType *proposedType, I
         m_sourceRect.bottom = float(m_cropRect.y() + m_cropRect.height()) / height;
 
         if (m_mixer)
-            configureMixer(m_mixer);
+            configureMixer(m_mixer.Get());
     } else {
         rcOutput.left = 0;
         rcOutput.top = 0;
@@ -1377,13 +1311,13 @@ HRESULT EVRCustomPresenter::setMediaType(IMFMediaType *mediaType)
     // Clearing the media type is allowed in any state (including shutdown).
     if (!mediaType) {
         stopSurface();
-        qt_evr_safe_release(&m_mediaType);
+        m_mediaType.Reset();
         releaseResources();
         return S_OK;
     }
 
     MFRatio fps = { 0, 0 };
-    QList<IMFSample*> sampleQueue;
+    QList<ComPtr<IMFSample>> sampleQueue;
 
     // Cannot set the media type after shutdown.
     HRESULT hr = checkShutdown();
@@ -1392,11 +1326,11 @@ HRESULT EVRCustomPresenter::setMediaType(IMFMediaType *mediaType)
 
     // Check if the new type is actually different.
     // Note: This function safely handles NULL input parameters.
-    if (qt_evr_areMediaTypesEqual(m_mediaType, mediaType))
+    if (qt_evr_areMediaTypesEqual(m_mediaType.Get(), mediaType))
         goto done; // Nothing more to do.
 
     // We're really changing the type. First get rid of the old type.
-    qt_evr_safe_release(&m_mediaType);
+    m_mediaType.Reset();
     releaseResources();
 
     // Initialize the presenter engine with the new media type.
@@ -1415,7 +1349,7 @@ HRESULT EVRCustomPresenter::setMediaType(IMFMediaType *mediaType)
     }
 
     // Add the samples to the sample pool.
-    hr = m_samplePool.initialize(sampleQueue);
+    hr = m_samplePool.initialize(std::move(sampleQueue));
     if (FAILED(hr))
         goto done;
 
@@ -1532,21 +1466,9 @@ void EVRCustomPresenter::processOutputLoop()
 
 HRESULT EVRCustomPresenter::processOutput()
 {
-    HRESULT hr = S_OK;
-    DWORD status = 0;
-    LONGLONG mixerStartTime = 0, mixerEndTime = 0;
-    MFTIME systemTime = 0;
-    BOOL repaint = m_repaint; // Temporarily store this state flag.
-
-    MFT_OUTPUT_DATA_BUFFER dataBuffer;
-    ZeroMemory(&dataBuffer, sizeof(dataBuffer));
-
-    IMFSample *sample = NULL;
-
     // If the clock is not running, we present the first sample,
     // and then don't present any more until the clock starts.
-
-    if ((m_renderState != RenderStarted) && !m_repaint && m_prerolled)
+    if ((m_renderState != RenderStarted) && m_prerolled)
         return S_FALSE;
 
     // Make sure we have a pointer to the mixer.
@@ -1554,45 +1476,33 @@ HRESULT EVRCustomPresenter::processOutput()
         return MF_E_INVALIDREQUEST;
 
     // Try to get a free sample from the video sample pool.
-    hr = m_samplePool.getSample(&sample);
-    if (hr == MF_E_SAMPLEALLOCATOR_EMPTY) // No free samples. Try again when a sample is released.
-        return S_FALSE;
-    if (FAILED(hr))
-        return hr;
+    ComPtr<IMFSample> sample = m_samplePool.takeSample();
+    if (!sample)
+        return S_FALSE; // No free samples. Try again when a sample is released.
 
     // From now on, we have a valid video sample pointer, where the mixer will
     // write the video data.
 
-    if (m_repaint) {
-        // Repaint request. Ask the mixer for the most recent sample.
-        setDesiredSampleTime(sample, m_scheduler.lastSampleTime(), m_scheduler.frameDuration());
+    LONGLONG mixerStartTime = 0, mixerEndTime = 0;
+    MFTIME systemTime = 0;
 
-        m_repaint = false; // OK to clear this flag now.
-    } else {
-        // Not a repaint request. Clear the desired sample time; the mixer will
-        // give us the next frame in the stream.
-        clearDesiredSampleTime(sample);
-
-        if (m_clock) {
-            // Latency: Record the starting time for ProcessOutput.
-            m_clock->GetCorrelatedTime(0, &mixerStartTime, &systemTime);
-        }
+    if (m_clock) {
+        // Latency: Record the starting time for ProcessOutput.
+        m_clock->GetCorrelatedTime(0, &mixerStartTime, &systemTime);
     }
 
     // Now we are ready to get an output sample from the mixer.
-    dataBuffer.dwStreamID = 0;
-    dataBuffer.pSample = sample;
-    dataBuffer.dwStatus = 0;
-
-    hr = m_mixer->ProcessOutput(0, 1, &dataBuffer, &status);
+    DWORD status = 0;
+    MFT_OUTPUT_DATA_BUFFER dataBuffer = {};
+    dataBuffer.pSample = sample.Get();
+    HRESULT hr = m_mixer->ProcessOutput(0, 1, &dataBuffer, &status);
+    // Important: Release any events returned from the ProcessOutput method.
+    qt_evr_safe_release(&dataBuffer.pEvents);
 
     if (FAILED(hr)) {
         // Return the sample to the pool.
-        HRESULT hr2 = m_samplePool.returnSample(sample);
-        if (FAILED(hr2)) {
-            hr = hr2;
-            goto done;
-        }
+        m_samplePool.returnSample(sample);
+
         // Handle some known error codes from ProcessOutput.
         if (hr == MF_E_TRANSFORM_TYPE_NOT_SET) {
             // The mixer's format is not set. Negotiate a new format.
@@ -1605,54 +1515,46 @@ HRESULT EVRCustomPresenter::processOutput()
             // We have to wait for the mixer to get more input.
             m_sampleNotify = false;
         }
-    } else {
-        // We got an output sample from the mixer.
 
-        if (m_clock && !repaint) {
-            // Latency: Record the ending time for the ProcessOutput operation,
-            // and notify the EVR of the latency.
-
-            m_clock->GetCorrelatedTime(0, &mixerEndTime, &systemTime);
-
-            LONGLONG latencyTime = mixerEndTime - mixerStartTime;
-            notifyEvent(EC_PROCESSING_LATENCY, reinterpret_cast<LONG_PTR>(&latencyTime), 0);
-        }
-
-        // Set up notification for when the sample is released.
-        hr = trackSample(sample);
-        if (FAILED(hr))
-            goto done;
-
-        // Schedule the sample.
-        if ((m_frameStep.state == FrameStepNone) || repaint) {
-            hr = deliverSample(sample, repaint);
-            if (FAILED(hr))
-                goto done;
-        } else {
-            // We are frame-stepping (and this is not a repaint request).
-            hr = deliverFrameStepSample(sample);
-            if (FAILED(hr))
-                goto done;
-        }
-
-        m_prerolled = true; // We have presented at least one sample now.
+        return hr;
     }
 
-done:
-    qt_evr_safe_release(&sample);
+    // We got an output sample from the mixer.
+    if (m_clock) {
+        // Latency: Record the ending time for the ProcessOutput operation,
+        // and notify the EVR of the latency.
 
-    // Important: Release any events returned from the ProcessOutput method.
-    qt_evr_safe_release(&dataBuffer.pEvents);
-    return hr;
+        m_clock->GetCorrelatedTime(0, &mixerEndTime, &systemTime);
+
+        LONGLONG latencyTime = mixerEndTime - mixerStartTime;
+        notifyEvent(EC_PROCESSING_LATENCY, reinterpret_cast<LONG_PTR>(&latencyTime), 0);
+    }
+
+    // Set up notification for when the sample is released.
+    hr = trackSample(sample);
+    if (FAILED(hr))
+        return hr;
+
+    // Schedule the sample.
+    if (m_frameStep.state == FrameStepNone)
+        hr = deliverSample(sample);
+    else // We are frame-stepping
+        hr = deliverFrameStepSample(sample);
+
+    if (FAILED(hr))
+        return hr;
+
+    m_prerolled = true; // We have presented at least one sample now.
+    return S_OK;
 }
 
-HRESULT EVRCustomPresenter::deliverSample(IMFSample *sample, bool repaint)
+HRESULT EVRCustomPresenter::deliverSample(const ComPtr<IMFSample> &sample)
 {
-    // If we are not actively playing, OR we are scrubbing (rate = 0) OR this is a
-    // repaint request, then we need to present the sample immediately. Otherwise,
+    // If we are not actively playing, OR we are scrubbing (rate = 0),
+    // then we need to present the sample immediately. Otherwise,
     // schedule it normally.
 
-    bool presentNow = ((m_renderState != RenderStarted) ||  isScrubbing() || repaint);
+    bool presentNow = ((m_renderState != RenderStarted) ||  isScrubbing());
 
     HRESULT hr = m_scheduler.scheduleSample(sample, presentNow);
 
@@ -1666,19 +1568,18 @@ HRESULT EVRCustomPresenter::deliverSample(IMFSample *sample, bool repaint)
     return hr;
 }
 
-HRESULT EVRCustomPresenter::deliverFrameStepSample(IMFSample *sample)
+HRESULT EVRCustomPresenter::deliverFrameStepSample(const ComPtr<IMFSample> &sample)
 {
     HRESULT hr = S_OK;
     IUnknown *unk = NULL;
 
     // For rate 0, discard any sample that ends earlier than the clock time.
-    if (isScrubbing() && m_clock && qt_evr_isSampleTimePassed(m_clock, sample)) {
+    if (isScrubbing() && m_clock && qt_evr_isSampleTimePassed(m_clock.Get(), sample.Get())) {
         // Discard this sample.
     } else if (m_frameStep.state >= FrameStepScheduled) {
         // A frame was already submitted. Put this sample on the frame-step queue,
         // in case we are asked to step to the next frame. If frame-stepping is
         // cancelled, this sample will be processed normally.
-        sample->AddRef();
         m_frameStep.samples.append(sample);
     } else {
         // We're ready to frame-step.
@@ -1693,11 +1594,10 @@ HRESULT EVRCustomPresenter::deliverFrameStepSample(IMFSample *sample)
             // This is the right frame, but the clock hasn't started yet. Put the
             // sample on the frame-step queue. When the clock starts, the sample
             // will be processed.
-            sample->AddRef();
             m_frameStep.samples.append(sample);
         } else {
             // This is the right frame *and* the clock has started. Deliver this sample.
-            hr = deliverSample(sample, false);
+            hr = deliverSample(sample);
             if (FAILED(hr))
                 goto done;
 
@@ -1722,7 +1622,7 @@ done:
     return hr;
 }
 
-HRESULT EVRCustomPresenter::trackSample(IMFSample *sample)
+HRESULT EVRCustomPresenter::trackSample(const ComPtr<IMFSample> &sample)
 {
     IMFTrackedSample *tracked = NULL;
 
@@ -1799,11 +1699,9 @@ HRESULT EVRCustomPresenter::onSampleFree(IMFAsyncResult *result)
 
     if (token == m_tokenCounter) {
         // Return the sample to the sample pool.
-        hr = m_samplePool.returnSample(sample);
-        if (SUCCEEDED(hr)) {
-            // A free sample is available. Process more data if possible.
-            processOutputLoop();
-        }
+        m_samplePool.returnSample(sample);
+        // A free sample is available. Process more data if possible.
+        processOutputLoop();
     }
 
     m_mutex.unlock();
@@ -1831,7 +1729,7 @@ float EVRCustomPresenter::getMaxRate(bool thin)
     UINT monitorRateHz = 0;
 
     if (!thin && m_mediaType) {
-        qt_evr_getFrameRate(m_mediaType, &fps);
+        qt_evr_getFrameRate(m_mediaType.Get(), &fps);
         monitorRateHz = m_presentEngine->refreshRate();
 
         if (fps.Denominator && fps.Numerator && monitorRateHz) {
@@ -1877,7 +1775,7 @@ void EVRCustomPresenter::stopSurface()
     }
 }
 
-void EVRCustomPresenter::presentSample(IMFSample *sample)
+void EVRCustomPresenter::presentSample(const ComPtr<IMFSample> &sample)
 {
     if (thread() != QThread::currentThread()) {
         QCoreApplication::postEvent(this, new PresentSampleEvent(sample));
@@ -1916,55 +1814,6 @@ void EVRCustomPresenter::presentSample(IMFSample *sample)
 void EVRCustomPresenter::positionChanged(qint64 position)
 {
     m_positionOffset = position * 1000;
-}
-
-HRESULT setDesiredSampleTime(IMFSample *sample, const LONGLONG &sampleTime, const LONGLONG &duration)
-{
-    if (!sample)
-        return E_POINTER;
-
-    HRESULT hr = S_OK;
-    IMFDesiredSample *desired = NULL;
-
-    hr = sample->QueryInterface(IID_PPV_ARGS(&desired));
-    if (SUCCEEDED(hr))
-        desired->SetDesiredSampleTimeAndDuration(sampleTime, duration);
-
-    qt_evr_safe_release(&desired);
-    return hr;
-}
-
-HRESULT clearDesiredSampleTime(IMFSample *sample)
-{
-    if (!sample)
-        return E_POINTER;
-
-    HRESULT hr = S_OK;
-
-    IMFDesiredSample *desired = NULL;
-    IUnknown *unkSwapChain = NULL;
-
-    // We store some custom attributes on the sample, so we need to cache them
-    // and reset them.
-    //
-    // This works around the fact that IMFDesiredSample::Clear() removes all of the
-    // attributes from the sample.
-
-    UINT32 counter = MFGetAttributeUINT32(sample, MFSamplePresenter_SampleCounter, (UINT32)-1);
-
-    hr = sample->QueryInterface(IID_PPV_ARGS(&desired));
-    if (SUCCEEDED(hr)) {
-        desired->Clear();
-
-        hr = sample->SetUINT32(MFSamplePresenter_SampleCounter, counter);
-        if (FAILED(hr))
-            goto done;
-    }
-
-done:
-    qt_evr_safe_release(&unkSwapChain);
-    qt_evr_safe_release(&desired);
-    return hr;
 }
 
 HRESULT setMixerSourceRect(IMFTransform *mixer, const MFVideoNormalizedRect &sourceRect)

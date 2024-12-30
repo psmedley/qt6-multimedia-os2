@@ -17,7 +17,9 @@
 
 #include "qplatformvideosource_p.h"
 #include "qscreen.h"
+#include "qcapturablewindow.h"
 #include "qpointer.h"
+#include "private/qerrorinfo_p.h"
 
 #include <optional>
 #include <variant>
@@ -40,8 +42,9 @@ public:
     };
 
     using ScreenSource = QPointer<QScreen>;
+    using WindowSource = QCapturableWindow;
 
-    using Source = std::variant<ScreenSource/*, WindowSource in 6.6*/>;
+    using Source = std::variant<ScreenSource, WindowSource>;
 
     explicit QPlatformSurfaceCapture(Source initialSource);
 
@@ -69,13 +72,13 @@ public Q_SLOTS:
     void updateError(Error error, const QString &errorString);
 
 Q_SIGNALS:
+    void sourceChanged(WindowSource);
     void sourceChanged(ScreenSource);
     void errorChanged();
     void errorOccurred(Error error, QString errorString);
 
 private:
-    Error m_error = NoError;
-    QString m_errorString;
+    QErrorInfo<Error> m_error;
     Source m_source;
     bool m_active = false;
 };

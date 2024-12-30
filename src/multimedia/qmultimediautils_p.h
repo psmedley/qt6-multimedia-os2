@@ -18,6 +18,7 @@
 #include <QtMultimedia/qtmultimediaglobal.h>
 #include <QtCore/private/qglobal_p.h>
 #include <qstring.h>
+#include <qsize.h>
 #include <utility>
 #include <optional>
 
@@ -50,6 +51,10 @@ public:
         }
         m_value = std::move(v);
     }
+
+    QMaybe(const QMaybe &other) = default;
+
+    QMaybe &operator=(const QMaybe &other) = default;
 
     QMaybe(const Error& error) : m_error(error) { }
 
@@ -84,7 +89,7 @@ public:
 
 private:
     std::optional<Value> m_value;
-    const Error m_error;
+    Error m_error;
 };
 
 struct Fraction {
@@ -93,6 +98,8 @@ struct Fraction {
 };
 
 Q_MULTIMEDIA_EXPORT Fraction qRealToFraction(qreal value);
+
+Q_MULTIMEDIA_EXPORT QSize qCalculateFrameSize(QSize resolution, Fraction pixelAspectRatio);
 
 QT_END_NAMESPACE
 

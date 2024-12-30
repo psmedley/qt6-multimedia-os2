@@ -3,7 +3,7 @@
 // GPL-3.0-only
 
 #include "qffmpegscreencapture_dxgi_p.h"
-#include "qffmpegsurfacecapturethread_p.h"
+#include "qffmpegsurfacecapturegrabber_p.h"
 #include <private/qabstractvideobuffer_p.h>
 #include <private/qmultimediautils_p.h>
 #include <private/qwindowsmultimediautils_p.h>
@@ -20,6 +20,8 @@
 #include <system_error>
 #include <thread>
 #include <chrono>
+
+#include <mutex> // std::scoped_lock
 
 QT_BEGIN_NAMESPACE
 
@@ -350,7 +352,7 @@ QVideoFrameFormat getFrameFormat(QScreen* screen)
 
 } // namespace
 
-class QFFmpegScreenCaptureDxgi::Grabber : public QFFmpegSurfaceCaptureThread
+class QFFmpegScreenCaptureDxgi::Grabber : public QFFmpegSurfaceCaptureGrabber
 {
 public:
     Grabber(QFFmpegScreenCaptureDxgi &screenCapture, QScreen *screen,
@@ -365,18 +367,6 @@ public:
 
     ~Grabber() {
         stop();
-    }
-
-    void run() override
-    {
-        m_duplication = DxgiDuplication();
-        const ComStatus status = m_duplication.initialize(m_screen);
-        if (!status) {
-            updateError(CaptureFailed, status.str());
-            return;
-        }
-
-        QFFmpegSurfaceCaptureThread::run();
     }
 
     QVideoFrameFormat format() {
@@ -423,6 +413,19 @@ public:
         }
 
         return frame;
+    }
+
+  protected:
+    void initializeGrabbingContext() override
+    {
+        m_duplication = DxgiDuplication();
+        const ComStatus status = m_duplication.initialize(m_screen);
+        if (!status) {
+            updateError(CaptureFailed, status.str());
+            return;
+        }
+
+        QFFmpegSurfaceCaptureGrabber::initializeGrabbingContext();
     }
 
 private:

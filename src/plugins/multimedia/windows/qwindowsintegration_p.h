@@ -25,6 +25,7 @@ class QWindowsFormatInfo;
 
 class QWindowsMediaIntegration : public QPlatformMediaIntegration
 {
+    Q_OBJECT
 public:
     QWindowsMediaIntegration();
     ~QWindowsMediaIntegration();
@@ -41,6 +42,8 @@ public:
 
 protected:
     QPlatformMediaFormatInfo *createFormatInfo() override;
+
+    QPlatformVideoDevices *createVideoDevices() override;
 };
 
 QT_END_NAMESPACE

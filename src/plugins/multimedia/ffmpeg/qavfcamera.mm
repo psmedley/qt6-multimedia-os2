@@ -9,7 +9,9 @@
 #include "avfcameradebug_p.h"
 #include "qavfsamplebufferdelegate_p.h"
 #include <qvideosink.h>
-#include <private/qrhi_p.h>
+#include <rhi/qrhi.h>
+#include <QtCore/qcoreapplication.h>
+#include <QtCore/qpermissions.h>
 #define AVMediaType XAVMediaType
 #include "qffmpegvideobuffer_p.h"
 #include "qffmpegvideosink_p.h"
@@ -18,8 +20,6 @@ extern "C" {
 #include <libavutil/hwcontext.h>
 }
 #undef AVMediaType
-
-static AVAuthorizationStatus m_cameraAuthorizationStatus = AVAuthorizationStatusNotDetermined;
 
 QT_BEGIN_NAMESPACE
 
@@ -41,53 +41,19 @@ QAVFCamera::~QAVFCamera()
     [m_captureSession release];
 }
 
-void QAVFCamera::requestCameraPermissionIfNeeded()
+bool QAVFCamera::checkCameraPermission()
 {
-    if (m_cameraAuthorizationStatus == AVAuthorizationStatusAuthorized)
-        return;
+    const QCameraPermission permission;
+    const bool granted = qApp->checkPermission(permission) == Qt::PermissionStatus::Granted;
+    if (!granted)
+        qWarning() << "Access to camera not granted";
 
-    switch ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo])
-    {
-        case AVAuthorizationStatusAuthorized:
-        {
-            m_cameraAuthorizationStatus = AVAuthorizationStatusAuthorized;
-            break;
-        }
-        case AVAuthorizationStatusNotDetermined:
-        {
-            m_cameraAuthorizationStatus = AVAuthorizationStatusNotDetermined;
-            QPointer<QAVFCamera> guard(this);
-            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (guard)
-                        cameraAuthorizationChanged(granted);
-                });
-            }];
-            break;
-        }
-        case AVAuthorizationStatusDenied:
-        case AVAuthorizationStatusRestricted:
-        {
-            m_cameraAuthorizationStatus = AVAuthorizationStatusDenied;
-            return;
-        }
-    }
-}
-
-void QAVFCamera::cameraAuthorizationChanged(bool authorized)
-{
-    if (authorized) {
-        m_cameraAuthorizationStatus = AVAuthorizationStatusAuthorized;
-    } else {
-        m_cameraAuthorizationStatus = AVAuthorizationStatusDenied;
-        qWarning() << "User has denied access to camera";
-    }
+    return granted;
 }
 
 void QAVFCamera::updateVideoInput()
 {
-    requestCameraPermissionIfNeeded();
-    if (m_cameraAuthorizationStatus != AVAuthorizationStatusAuthorized)
+    if (!checkCameraPermission())
         return;
 
     [m_captureSession beginConfiguration];
@@ -182,8 +148,7 @@ void QAVFCamera::setActive(bool active)
 {
     if (m_active == active)
         return;
-    requestCameraPermissionIfNeeded();
-    if (m_cameraAuthorizationStatus != AVAuthorizationStatusAuthorized)
+    if (!checkCameraPermission())
         return;
 
     m_active = active;
@@ -214,8 +179,7 @@ void QAVFCamera::setCamera(const QCameraDevice &camera)
 
     m_cameraDevice = camera;
 
-    requestCameraPermissionIfNeeded();
-    if (m_cameraAuthorizationStatus == AVAuthorizationStatusAuthorized)
+    if (checkCameraPermission())
         updateVideoInput();
     setCameraFormat({});
 }
@@ -278,7 +242,7 @@ void QAVFCamera::updateCameraFormat()
     }
 
     if (hwAccel) {
-        hwAccel->createFramesContext(avPixelFormat, m_cameraFormat.resolution());
+        hwAccel->createFramesContext(avPixelFormat, adjustedResolution());
         m_hwPixelFormat = hwAccel->hwFormat();
     } else {
         m_hwPixelFormat = AV_PIX_FMT_NONE;
@@ -329,7 +293,7 @@ uint32_t QAVFCamera::setPixelFormat(QVideoFrameFormat::PixelFormat cameraPixelFo
     }
 
     if (bestScore < DefaultAVScore)
-        qWarning() << "QCamera::setCameraFormat: Cannot find hw ffmpeg supported cv pix format";
+        qWarning() << "QCamera::setCameraFormat: Cannot find hw FFmpeg supported cv pix format";
 
     NSDictionary *outputSettings = @{
         (NSString *)kCVPixelBufferPixelFormatTypeKey : bestFormat,
@@ -338,6 +302,25 @@ uint32_t QAVFCamera::setPixelFormat(QVideoFrameFormat::PixelFormat cameraPixelFo
     m_videoDataOutput.videoSettings = outputSettings;
 
     return [bestFormat unsignedIntValue];
+}
+
+QSize QAVFCamera::adjustedResolution() const
+{
+    // Check, that we have matching dimesnions.
+    QSize resolution = m_cameraFormat.resolution();
+    AVCaptureConnection *connection = [m_videoDataOutput connectionWithMediaType:AVMediaTypeVideo];
+    if (!connection.supportsVideoOrientation)
+        return resolution;
+
+    // Either portrait but actually sizes of landscape, or
+    // landscape with dimensions of portrait - not what
+    // sample delegate will report (it depends on videoOrientation set).
+    const bool isPortraitOrientation = connection.videoOrientation == AVCaptureVideoOrientationPortrait;
+    const bool isPortraitResolution = resolution.height() > resolution.width();
+    if (isPortraitOrientation != isPortraitResolution)
+        resolution.transpose();
+
+    return resolution;
 }
 
 void QAVFCamera::syncHandleFrame(const QVideoFrame &frame)

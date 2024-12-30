@@ -6,6 +6,7 @@
 #include "qgstreamerformatinfo_p.h"
 #include "qgstpipeline_p.h"
 #include "qgstreamermessage_p.h"
+#include "qgst_debug_p.h"
 #include <private/qplatformcamera_p.h>
 #include "qaudiodevice.h"
 #include <private/qmediastoragelocation_p.h>
@@ -55,48 +56,61 @@ void QGstreamerMediaEncoder::handleSessionError(QMediaRecorder::Error code, cons
     stop();
 }
 
-bool QGstreamerMediaEncoder::processBusMessage(const QGstreamerMessage &message)
+bool QGstreamerMediaEncoder::processBusMessage(const QGstreamerMessage &msg)
 {
-    if (message.isNull())
-        return false;
-    auto msg = message;
+    constexpr bool traceStateChange = false;
+    constexpr bool traceAllEvents = false;
 
-//    qCDebug(qLcMediaEncoderGst) << "received event from" << message.source().name() << Qt::hex << message.type();
-//    if (message.type() == GST_MESSAGE_STATE_CHANGED) {
-//        GstState    oldState;
-//        GstState    newState;
-//        GstState    pending;
-//        gst_message_parse_state_changed(gm, &oldState, &newState, &pending);
-//        qCDebug(qLcMediaEncoderGst) << "received state change from" << message.source().name() << oldState << newState << pending;
-//    }
-    if (msg.type() == GST_MESSAGE_ELEMENT) {
+    if (msg.isNull())
+        return false;
+
+    if constexpr (traceAllEvents)
+        qCDebug(qLcMediaEncoderGst) << "received event:" << msg;
+
+    switch (msg.type()) {
+    case GST_MESSAGE_ELEMENT: {
         QGstStructure s = msg.structure();
-        qCDebug(qLcMediaEncoderGst) << "received element message from" << msg.source().name() << s.name();
         if (s.name() == "GstBinForwarded")
-            msg = QGstreamerMessage(s);
-        if (msg.isNull())
-            return false;
+            return processBusMessage(s.getMessage());
+
+        qCDebug(qLcMediaEncoderGst)
+                << "received element message from" << msg.source().name() << s.name();
+        return false;
     }
 
-    if (msg.type() == GST_MESSAGE_EOS) {
+    case GST_MESSAGE_EOS: {
         qCDebug(qLcMediaEncoderGst) << "received EOS from" << msg.source().name();
         finalize();
         return false;
     }
 
-    if (msg.type() == GST_MESSAGE_ERROR) {
-        GError *err;
-        gchar *debug;
-        gst_message_parse_error(msg.rawMessage(), &err, &debug);
-        error(QMediaRecorder::ResourceError, QString::fromUtf8(err->message));
-        g_error_free(err);
-        g_free(debug);
+    case GST_MESSAGE_ERROR: {
+        QUniqueGErrorHandle err;
+        QGString debug;
+        gst_message_parse_error(msg.message(), &err, &debug);
+        error(QMediaRecorder::ResourceError, QString::fromUtf8(err.get()->message));
         if (!m_finalizing)
             stop();
         finalize();
+        return false;
     }
 
-    return false;
+    case GST_MESSAGE_STATE_CHANGED: {
+        if constexpr (traceStateChange) {
+            GstState oldState;
+            GstState newState;
+            GstState pending;
+            gst_message_parse_state_changed(msg.message(), &oldState, &newState, &pending);
+            qCDebug(qLcMediaEncoderGst) << "received state change from" << msg.source().name()
+                                        << oldState << newState << pending;
+        }
+
+        return false;
+    }
+
+    default:
+        return false;
+    };
 }
 
 qint64 QGstreamerMediaEncoder::duration() const
@@ -111,11 +125,11 @@ static GstEncodingContainerProfile *createContainerProfile(const QMediaEncoderSe
 
     auto caps = formatInfo->formatCaps(settings.fileFormat());
 
-    GstEncodingContainerProfile *profile = (GstEncodingContainerProfile *)gst_encoding_container_profile_new(
-        "container_profile",
-        (gchar *)"custom container profile",
-        const_cast<GstCaps *>(caps.get()),
-        nullptr); //preset
+    GstEncodingContainerProfile *profile =
+            (GstEncodingContainerProfile *)gst_encoding_container_profile_new(
+                    "container_profile", (gchar *)"custom container profile",
+                    const_cast<GstCaps *>(caps.caps()),
+                    nullptr); // preset
     return profile;
 }
 
@@ -127,11 +141,10 @@ static GstEncodingProfile *createVideoProfile(const QMediaEncoderSettings &setti
     if (caps.isNull())
         return nullptr;
 
-    GstEncodingVideoProfile *profile = gst_encoding_video_profile_new(
-        const_cast<GstCaps *>(caps.get()),
-        nullptr,
-        nullptr, //restriction
-        0); //presence
+    GstEncodingVideoProfile *profile =
+            gst_encoding_video_profile_new(const_cast<GstCaps *>(caps.caps()), nullptr,
+                                           nullptr, // restriction
+                                           0); // presence
 
     gst_encoding_video_profile_set_pass(profile, 0);
     gst_encoding_video_profile_set_variableframerate(profile, TRUE);
@@ -147,11 +160,11 @@ static GstEncodingProfile *createAudioProfile(const QMediaEncoderSettings &setti
     if (caps.isNull())
         return nullptr;
 
-    GstEncodingProfile *profile = (GstEncodingProfile *)gst_encoding_audio_profile_new(
-        const_cast<GstCaps *>(caps.get()),
-        nullptr, //preset
-        nullptr,   //restriction
-        0);     //presence
+    GstEncodingProfile *profile =
+            (GstEncodingProfile *)gst_encoding_audio_profile_new(const_cast<GstCaps *>(caps.caps()),
+                                                                 nullptr, // preset
+                                                                 nullptr, // restriction
+                                                                 0); // presence
 
     return profile;
 }
@@ -263,13 +276,13 @@ void QGstreamerMediaEncoder::record(QMediaEncoderSettings &settings)
 
     Q_ASSERT(!actualSink.isEmpty());
 
-    gstEncoder = QGstElement("encodebin", "encodebin");
+    gstEncoder = QGstBin::createFromFactory("encodebin", "encodebin");
     Q_ASSERT(gstEncoder);
     auto *encodingProfile = createEncodingProfile(settings);
     g_object_set (gstEncoder.object(), "profile", encodingProfile, nullptr);
     gst_encoding_profile_unref(encodingProfile);
 
-    gstFileSink = QGstElement("filesink", "filesink");
+    gstFileSink = QGstElement::createFromFactory("filesink", "filesink");
     Q_ASSERT(gstFileSink);
     gstFileSink.set("location", QFile::encodeName(actualSink.toLocalFile()).constData());
     gstFileSink.set("async", false);
@@ -296,14 +309,16 @@ void QGstreamerMediaEncoder::record(QMediaEncoderSettings &settings)
             videoPauseControl.installOn(videoSink);
     }
 
-    gstPipeline.add(gstEncoder, gstFileSink);
-    gstEncoder.link(gstFileSink);
-    m_metaData.setMetaData(gstEncoder.bin());
+    gstPipeline.modifyPipelineWhileNotRunning([&] {
+        gstPipeline.add(gstEncoder, gstFileSink);
+        qLinkGstElements(gstEncoder, gstFileSink);
+        m_metaData.setMetaData(gstEncoder.bin());
 
-    m_session->linkEncoder(audioSink, videoSink);
+        m_session->linkEncoder(audioSink, videoSink);
 
-    gstEncoder.syncStateWithParent();
-    gstFileSink.syncStateWithParent();
+        gstEncoder.syncStateWithParent();
+        gstFileSink.syncStateWithParent();
+    });
 
     signalDurationChangedTimer.start();
     gstPipeline.dumpGraph("recording");
@@ -351,10 +366,7 @@ void QGstreamerMediaEncoder::finalize()
 
     qCDebug(qLcMediaEncoderGst) << "finalize";
 
-    gstPipeline.remove(gstEncoder);
-    gstPipeline.remove(gstFileSink);
-    gstEncoder.setStateSync(GST_STATE_NULL);
-    gstFileSink.setStateSync(GST_STATE_NULL);
+    gstPipeline.stopAndRemoveElements(gstEncoder, gstFileSink);
     gstFileSink = {};
     gstEncoder = {};
     m_finalizing = false;

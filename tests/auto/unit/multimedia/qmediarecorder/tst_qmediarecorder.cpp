@@ -13,12 +13,15 @@
 #include <qmockintegration.h>
 #include <qmediacapturesession.h>
 #include <qscreencapture.h>
+#include <qwindowcapture.h>
 
 #include "qguiapplication_platform.h"
 #include "qmockmediacapturesession.h"
 #include "qmockmediaencoder.h"
 
 QT_USE_NAMESPACE
+
+Q_ENABLE_MOCK_MULTIMEDIA_PLUGIN
 
 class tst_QMediaRecorder : public QObject
 {
@@ -51,7 +54,6 @@ private slots:
     void testApplicationInative();
 
 private:
-    QMockIntegrationFactory mockIntegrationFactory;
     QMediaCaptureSession *captureSession;
     QCamera *object = nullptr;
     QMockMediaCaptureSession *service = nullptr;
@@ -181,6 +183,9 @@ void tst_QMediaRecorder::testDeleteMediaCapture()
     checkSourceDeleting(&QMediaCaptureSession::setScreenCapture,
                         &QMediaCaptureSession::screenCapture,
                         &QMediaCaptureSession::screenCaptureChanged);
+    checkSourceDeleting(&QMediaCaptureSession::setWindowCapture,
+                        &QMediaCaptureSession::windowCapture,
+                        &QMediaCaptureSession::windowCaptureChanged);
 }
 
 void tst_QMediaRecorder::testError()

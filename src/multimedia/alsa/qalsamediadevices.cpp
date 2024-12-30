@@ -27,6 +27,7 @@ static QList<QAudioDevice> availableDevices(QAudioDevice::Mode mode)
     // Create a list of all current audio devices that support mode
     void **hints, **n;
     char *name, *descr, *io;
+    bool hasDefault = false;
 
     if(snd_device_name_hint(-1, "pcm", &hints) < 0) {
         qWarning() << "no alsa devices available";
@@ -40,6 +41,8 @@ static QList<QAudioDevice> availableDevices(QAudioDevice::Mode mode)
         filter = "Output";
     }
 
+    QAlsaAudioDeviceInfo* sysdefault = nullptr;
+
     while (*n != NULL) {
         name = snd_device_name_get_hint(*n, "NAME");
         if (name != 0 && qstrcmp(name, "null") != 0) {
@@ -49,8 +52,13 @@ static QList<QAudioDevice> availableDevices(QAudioDevice::Mode mode)
             if ((descr != NULL) && ((io == NULL) || (io == filter))) {
                 auto *infop = new QAlsaAudioDeviceInfo(name, QString::fromUtf8(descr), mode);
                 devices.append(infop->create());
-                if (strcmp(name, "default") == 0)
+                if (!hasDefault && strcmp(name, "default") == 0) {
                     infop->isDefault = true;
+                    hasDefault = true;
+                }
+                else if (!sysdefault && !hasDefault && strcmp(name, "sysdefault") == 0) {
+                    sysdefault = infop;
+                }
             }
 
             free(descr);
@@ -60,6 +68,17 @@ static QList<QAudioDevice> availableDevices(QAudioDevice::Mode mode)
         ++n;
     }
     snd_device_name_free_hint(hints);
+
+    if (!hasDefault && sysdefault) {
+        // Make "sysdefault" the default device if there is no "default" device exists
+        sysdefault->isDefault = true;
+        hasDefault = true;
+    }
+    if (!hasDefault && devices.size() > 0) {
+        auto infop = new QAlsaAudioDeviceInfo("default", QString(), QAudioDevice::Output);
+        infop->isDefault = true;
+        devices.prepend(infop->create());
+    }
 
     return devices;
 }

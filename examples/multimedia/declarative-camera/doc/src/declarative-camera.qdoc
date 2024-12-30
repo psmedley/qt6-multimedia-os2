@@ -6,7 +6,8 @@
 \title QML Camera Application
 \ingroup multimedia_examples
 \ingroup camera_examples_qml
-\examplecategory {Graphics & Multimedia}
+\examplecategory {Multimedia}
+\examplecategory {Mobile}
 \brief This Qt Quick based application shows how to use the API to capture a
 still image or video.
 
@@ -25,13 +26,20 @@ controls.
 
 \section1 Using screen orientation to select layout
 
-In \c declarative-camera.qml we handle detecting the orientation we're in and
-select the appropriate layout while also catering for the limitations of small
-screen mobile devices like so:
+The orientation and control layout state logic is encapsulated in a separate
+Item, \c controlLayout like so:
 
 \quotefromfile declarative-camera/declarative-camera.qml
-\skipto Rectangle {
-\printto states: [
+\skipto Item {
+\printuntil /^    }/
+
+The \c stillControls and \c videoControls objects both bind to the \c state
+and \c buttonsWidth properties of this Item, as shown in \c stillControls:
+
+\skipto PhotoCaptureControls
+\printuntil /^    }/
+
+To support debugging, a message about layout state change is logged.
 
 Here is the portrait layout:
 
@@ -41,7 +49,9 @@ You can see the \c state property is initially set as \c PhotoCapture.
 
 Then the \c states themselves are defined like so:
 
-\printto CaptureSession {
+\quotefromfile declarative-camera/declarative-camera.qml
+\skipto states: [
+\printuntil /^    ]/
 
 \section1 Controls for capturing
 
@@ -134,16 +144,15 @@ Here we check if the functions are supported:
 
 \quotefromfile declarative-camera/FlashControl.qml
 \skipto property Camera cameraDevice
-\printto Column {
+\printline Camera
+\printline FlashOn
+\printline TorchOn
 
 Here we implement the \c flashModeControl switch, which also directly controls
 the Camera device.
 
-\printuntil cameraDevice.flashMode = Camera.FlashOff;
+\skipto Switch {
+\printuntil /^        }/
 
 Torch control is implemented in a similar way.
-
-
-
-
 */

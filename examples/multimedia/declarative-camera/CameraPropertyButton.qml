@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 import QtQuick
-import QtMultimedia
 
 Item {
     id: propertyButton
@@ -43,23 +42,30 @@ Item {
             name: "MobilePortrait"
             AnchorChanges {
                 target: popup
-                anchors.bottom: parent.top;
+                // qmllint disable incompatible-type
+                anchors.bottom: propertyButton.top
+                anchors.left: propertyButton.left
+                // qmllint enable incompatible-type
             }
         },
         State {
             name: "MobileLandscape"
             AnchorChanges {
                 target: popup
-                anchors.verticalCenter: parent.top;
-                anchors.right: parent.left;
+                // qmllint disable incompatible-type
+                anchors.verticalCenter: propertyButton.top
+                anchors.right: propertyButton.left
+                // qmllint enable incompatible-type
             }
         },
         State {
             name: "Other"
             AnchorChanges {
                 target: popup
-                anchors.top: parent.top;
-                anchors.right: parent.left;
+                // qmllint disable incompatible-type
+                anchors.top: propertyButton.top
+                anchors.right: propertyButton.left
+                // qmllint enable incompatible-type
             }
         }
     ]

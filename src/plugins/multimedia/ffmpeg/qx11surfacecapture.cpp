@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qx11surfacecapture_p.h"
-#include "qffmpegsurfacecapturethread_p.h"
+#include "qffmpegsurfacecapturegrabber_p.h"
 
 #include <qvideoframe.h>
 #include <qscreen.h>
@@ -11,6 +11,8 @@
 #include <qguiapplication.h>
 #include <qloggingcategory.h>
 
+#include "private/qabstractvideobuffer_p.h"
+#include "private/qcapturablewindow_p.h"
 #include "private/qmemoryvideobuffer_p.h"
 #include "private/qvideoframeconversionhelper_p.h"
 
@@ -81,7 +83,7 @@ QVideoFrameFormat::PixelFormat xImagePixelFormat(const XImage &image)
 
 } // namespace
 
-class QX11SurfaceCapture::Grabber : private QFFmpegSurfaceCaptureThread
+class QX11SurfaceCapture::Grabber : private QFFmpegSurfaceCaptureGrabber
 {
 public:
     static std::unique_ptr<Grabber> create(QX11SurfaceCapture &capture, QScreen *screen)
@@ -242,8 +244,9 @@ private:
                 return false;
             }
 
-            m_format = QVideoFrameFormat(QSize(m_xImage->width, m_xImage->height), pixelFormat);
-            m_format.setFrameRate(frameRate());
+            QVideoFrameFormat format(QSize(m_xImage->width, m_xImage->height), pixelFormat);
+            format.setFrameRate(frameRate());
+            m_format = format;
         }
 
         return m_attached;
@@ -323,6 +326,12 @@ void QX11SurfaceCapture::activate(ScreenSource screen)
 {
     if (checkScreenWithError(screen))
         m_grabber = Grabber::create(*this, screen);
+}
+
+void QX11SurfaceCapture::activate(WindowSource window)
+{
+    auto handle = QCapturableWindowPrivate::handle(window);
+    m_grabber = Grabber::create(*this, handle ? handle->id : 0);
 }
 
 bool QX11SurfaceCapture::isSupported()

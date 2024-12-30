@@ -19,13 +19,18 @@
 #include <qmediametadata.h>
 #include <qtimer.h>
 #include <qpointer.h>
+#include <qfuture.h>
 #include "qffmpeg_p.h"
+#include "playbackengine/qffmpegmediadataholder_p.h"
 
 QT_BEGIN_NAMESPACE
 
 namespace QFFmpeg {
+class CancelToken;
+
 class PlaybackEngine;
 }
+
 class QPlatformAudioOutput;
 
 class QFFmpegMediaPlayer : public QObject, public QPlatformMediaPlayer
@@ -67,13 +72,13 @@ public:
     void setActiveTrack(TrackType, int streamNumber) override;
     void setLoops(int loops) override;
 
-    Q_INVOKABLE void delayedLoadedStatus() {
-        if (mediaStatus() == QMediaPlayer::LoadingMedia)
-            mediaStatusChanged(QMediaPlayer::LoadedMedia);
-    }
-
 private:
     void runPlayback();
+    void handleIncorrectMedia(QMediaPlayer::MediaStatus status);
+    void setMediaAsync(QFFmpeg::MediaDataHolder::Maybe mediaDataHolder,
+                       const std::shared_ptr<QFFmpeg::CancelToken> &cancelToken);
+
+    void mediaStatusChanged(QMediaPlayer::MediaStatus);
 
 private slots:
     void updatePosition();
@@ -83,9 +88,11 @@ private slots:
         QPlatformMediaPlayer::error(error, errorString);
     }
     void onLoopChanged();
+    void onBuffered();
 
 private:
     QTimer m_positionUpdateTimer;
+    QMediaPlayer::PlaybackState m_requestedStatus = QMediaPlayer::StoppedState;
 
     using PlaybackEngine = QFFmpeg::PlaybackEngine;
 
@@ -96,6 +103,10 @@ private:
     QUrl m_url;
     QPointer<QIODevice> m_device;
     float m_playbackRate = 1.;
+    float m_bufferProgress = 0.f;
+    QFuture<void> m_loadMedia;
+    std::shared_ptr<QFFmpeg::CancelToken> m_cancelToken; // For interrupting ongoing
+                                                         // network connection attempt
 };
 
 QT_END_NAMESPACE

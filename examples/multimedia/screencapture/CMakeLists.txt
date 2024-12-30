@@ -21,6 +21,8 @@ set(PROJECT_SOURCES
         screencapturepreview.h
         screenlistmodel.h
         screenlistmodel.cpp
+        windowlistmodel.h
+        windowlistmodel.cpp
 )
 
 qt_add_executable(screencapture

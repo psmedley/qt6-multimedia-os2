@@ -45,6 +45,8 @@ QAudioListener::QAudioListener(QAudioEngine *engine)
  */
 QAudioListener::~QAudioListener()
 {
+    // Unregister this listener from the engine
+    setEngine(nullptr);
     delete d;
 }
 
@@ -57,6 +59,8 @@ QAudioListener::~QAudioListener()
 void QAudioListener::setPosition(QVector3D pos)
 {
     auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return;
     pos *= ep->distanceScale;
     if (d->pos == pos)
         return;
@@ -74,6 +78,8 @@ void QAudioListener::setPosition(QVector3D pos)
 QVector3D QAudioListener::position() const
 {
     auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return QVector3D();
     return d->pos/ep->distanceScale;
 }
 

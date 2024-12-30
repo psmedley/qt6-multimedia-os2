@@ -30,7 +30,7 @@ class QFFmpegVideoBuffer : public QAbstractVideoBuffer
 public:
     using AVFrameUPtr = QFFmpeg::AVFrameUPtr;
 
-    QFFmpegVideoBuffer(AVFrameUPtr frame);
+    QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio = { 1, 1 });
     ~QFFmpegVideoBuffer() override;
 
     QVideoFrame::MapMode mapMode() const override;
@@ -48,7 +48,7 @@ public:
 
     void convertSWFrame();
 
-    AVFrame *getHWFrame() const { return hwFrame.get(); }
+    AVFrame *getHWFrame() const { return m_hwFrame.get(); }
 
     void setTextureConverter(const QFFmpeg::TextureConverter &converter);
 
@@ -60,12 +60,13 @@ public:
 
 private:
     QVideoFrameFormat::PixelFormat m_pixelFormat;
-    AVFrame *frame = nullptr;
-    AVFrameUPtr hwFrame;
-    AVFrameUPtr swFrame;
-    QFFmpeg::TextureConverter textureConverter;
+    AVFrame *m_frame = nullptr;
+    AVFrameUPtr m_hwFrame;
+    AVFrameUPtr m_swFrame;
+    QSize m_size;
+    QFFmpeg::TextureConverter m_textureConverter;
     QVideoFrame::MapMode m_mode = QVideoFrame::NotMapped;
-    std::unique_ptr<QFFmpeg::TextureSet> textures;
+    std::unique_ptr<QFFmpeg::TextureSet> m_textures;
 };
 
 QT_END_NAMESPACE

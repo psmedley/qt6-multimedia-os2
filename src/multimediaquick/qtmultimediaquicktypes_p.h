@@ -49,6 +49,13 @@ struct QScreenCaptureForeign
     QML_FOREIGN(QScreenCapture)
 };
 
+struct QScreenForeign
+{
+    Q_GADGET
+    QML_ANONYMOUS
+    QML_FOREIGN(QScreen)
+};
+
 struct QMediaRecorderForeign
 {
     Q_GADGET
@@ -173,6 +180,20 @@ struct QVideoSinkForeign
     Q_GADGET
     QML_FOREIGN(QVideoSink)
     QML_NAMED_ELEMENT(VideoSink)
+};
+
+struct QCapturableWindowForeign
+{
+    Q_GADGET
+    QML_FOREIGN(QCapturableWindow)
+    QML_NAMED_ELEMENT(capturableWindow)
+};
+
+struct QWindowCaptureForeign
+{
+    Q_GADGET
+    QML_FOREIGN(QWindowCapture)
+    QML_NAMED_ELEMENT(WindowCapture)
 };
 
 QT_END_NAMESPACE

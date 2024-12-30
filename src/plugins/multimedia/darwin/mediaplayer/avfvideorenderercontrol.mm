@@ -9,7 +9,7 @@
 #include <QtMultimedia/qvideoframeformat.h>
 
 #include <avfvideosink_p.h>
-#include <QtGui/private/qrhi_p.h>
+#include <rhi/qrhi.h>
 
 #include <QtCore/qdebug.h>
 
@@ -118,7 +118,7 @@ void AVFVideoRendererControl::setLayer(CALayer *layer)
     AVFVideoSinkInterface::setLayer(layer);
 }
 
-void AVFVideoRendererControl::setVideoRotation(QVideoFrame::RotationAngle rotation)
+void AVFVideoRendererControl::setVideoRotation(QtVideo::Rotation rotation)
 {
     m_rotation = rotation;
 }
@@ -153,7 +153,7 @@ void AVFVideoRendererControl::updateVideoFrame(const CVTimeStamp &ts)
     CVPixelBufferRelease(pixelBuffer);
 
     frame = QVideoFrame(buffer, buffer->videoFormat());
-    frame.setRotationAngle(m_rotation);
+    frame.setRotationAngle(QVideoFrame::RotationAngle(m_rotation));
     frame.setMirrored(m_mirrored);
     m_sink->setVideoFrame(frame);
 }

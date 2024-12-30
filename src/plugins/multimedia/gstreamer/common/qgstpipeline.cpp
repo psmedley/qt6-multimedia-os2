@@ -35,7 +35,7 @@ public:
     int m_configCounter = 0;
     GstState m_savedState = GST_STATE_NULL;
 
-    QGstPipelinePrivate(GstBus* bus, QObject* parent = 0);
+    explicit QGstPipelinePrivate(GstBus *bus, QObject *parent = nullptr);
     ~QGstPipelinePrivate();
 
     void ref() { ++ m_ref; }
@@ -180,11 +180,11 @@ QGstPipeline &QGstPipeline::operator=(const QGstPipeline &o)
     return *this;
 }
 
-QGstPipeline::QGstPipeline(const char *name)
-    : QGstBin(GST_BIN(gst_pipeline_new(name)), NeedsRef)
+QGstPipeline QGstPipeline::create(const char *name)
 {
-    d = new QGstPipelinePrivate(gst_pipeline_get_bus(pipeline()));
-    d->ref();
+    return QGstPipeline{
+        GST_PIPELINE(gst_pipeline_new(name)),
+    };
 }
 
 QGstPipeline::QGstPipeline(GstPipeline *p)
@@ -310,8 +310,20 @@ bool QGstPipeline::setPlaybackRate(double rate)
 {
     if (rate == d->m_rate)
         return false;
-    seek(position(), rate);
-    return true;
+
+    constexpr GstSeekFlags seekFlags =
+#if GST_CHECK_VERSION(1, 18, 0)
+            GST_SEEK_FLAG_INSTANT_RATE_CHANGE;
+#else
+            GST_SEEK_FLAG_FLUSH;
+#endif
+
+    bool success = gst_element_seek(element(), rate, GST_FORMAT_TIME, seekFlags, GST_SEEK_TYPE_NONE,
+                                    GST_CLOCK_TIME_NONE, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+    if (success)
+        d->m_rate = rate;
+
+    return success;
 }
 
 double QGstPipeline::playbackRate() const

@@ -28,6 +28,7 @@ import android.view.Surface;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
+import java.lang.Thread;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -60,6 +61,7 @@ public class QtCamera2 {
     private int mFlashMode = CaptureRequest.CONTROL_AE_MODE_ON;
     private int mTorchMode = CameraMetadata.FLASH_MODE_OFF;
     private int mAFMode = CaptureRequest.CONTROL_AF_MODE_OFF;
+    private Rect mZoom = null;
     private QtExifDataHandler mExifDataHandler = null;
 
     native void onCameraOpened(String cameraId);
@@ -129,7 +131,9 @@ public class QtCamera2 {
             switch (mState) {
                 case STATE_WAITING_LOCK: {
                     Integer afState = result.get(CaptureResult.CONTROL_AF_STATE);
-                    if (CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED == afState ||
+                    if (afState == null) {
+                        capturePhoto();
+                    } else if (CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED == afState ||
                         CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED == afState) {
                         Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
                         if (aeState == null ||
@@ -233,7 +237,27 @@ public class QtCamera2 {
     ImageReader.OnImageAvailableListener mOnImageAvailableListener = new ImageReader.OnImageAvailableListener() {
         @Override
         public void onImageAvailable(ImageReader reader) {
-            QtCamera2.this.onFrameAvailable(mCameraId, reader.acquireLatestImage());
+            try {
+                Image img = reader.acquireLatestImage();
+                if (img != null)
+                    QtCamera2.this.onFrameAvailable(mCameraId, img);
+            } catch (IllegalStateException e) {
+                // It seems that ffmpeg is processing images for too long (and does not close it)
+                // Give it a little more time. Restarting the camera session if it doesn't help
+                Log.e("QtCamera2", "Image processing taking too long. Let's wait 0,5s more " + e);
+                try {
+                    Thread.sleep(500);
+                    QtCamera2.this.onFrameAvailable(mCameraId, reader.acquireLatestImage());
+                } catch (IllegalStateException | InterruptedException e2) {
+                    Log.e("QtCamera2", "Will not wait anymore. Restart camera session. " + e2);
+                    // Remember current used camera ID, because stopAndClose will clear the value
+                    String cameraId = mCameraId;
+                    stopAndClose();
+                    addImageReader(mImageReader.getWidth(), mImageReader.getHeight(),
+                                   mImageReader.getImageFormat());
+                    open(cameraId);
+                }
+            }
         }
     };
 
@@ -241,6 +265,9 @@ public class QtCamera2 {
 
         if (mImageReader != null)
             removeSurface(mImageReader.getSurface());
+
+        if (mCapturedPhotoReader != null)
+            removeSurface(mCapturedPhotoReader.getSurface());
 
         mImageReader = ImageReader.newInstance(width, height, format, MaxNumberFrames);
         mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mBackgroundHandler);
@@ -306,6 +333,8 @@ public class QtCamera2 {
                 mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
                 mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, mAFMode);
                 mPreviewRequestBuilder.set(CaptureRequest.CONTROL_CAPTURE_INTENT, CameraMetadata.CONTROL_CAPTURE_INTENT_VIDEO_RECORD);
+                if (mZoom != null)
+                    mPreviewRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, mZoom);
 
                 mPreviewRequest = mPreviewRequestBuilder.build();
                 mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback, mBackgroundHandler);
@@ -345,6 +374,8 @@ public class QtCamera2 {
                    mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureBuilder.addTarget(mCapturedPhotoReader.getSurface());
             captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, mFlashMode);
+            if (mZoom != null)
+                captureBuilder.set(CaptureRequest.SCALER_CROP_REGION, mZoom);
 
             CameraCaptureSession.CaptureCallback captureCallback
                         = new CameraCaptureSession.CaptureCallback() {
@@ -409,9 +440,9 @@ public class QtCamera2 {
             float zoomRatio = 1/factor;
             int croppedWidth = activePixels.width() - (int)(activePixels.width() * zoomRatio);
             int croppedHeight = activePixels.height() - (int)(activePixels.height() * zoomRatio);
-            Rect zoom = new Rect(croppedWidth/2, croppedHeight/2, activePixels.width() - croppedWidth/2,
+            mZoom = new Rect(croppedWidth/2, croppedHeight/2, activePixels.width() - croppedWidth/2,
                                  activePixels.height() - croppedHeight/2);
-            mPreviewRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, zoom);
+            mPreviewRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, mZoom);
             mPreviewRequest = mPreviewRequestBuilder.build();
 
             try {

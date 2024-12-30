@@ -16,6 +16,7 @@
 
 #include <private/qtmultimediaglobal_p.h>
 #include <private/qmultimediautils_p.h>
+#include <qcapturablewindow.h>
 #include <qmediarecorder.h>
 #include <qstring.h>
 
@@ -28,6 +29,7 @@ class QMediaPlayer;
 class QAudioDecoder;
 class QCamera;
 class QScreenCapture;
+class QWindowCapture;
 class QMediaRecorder;
 class QImageCapture;
 class QMediaDevices;
@@ -35,6 +37,7 @@ class QPlatformMediaDevices;
 class QPlatformMediaCaptureSession;
 class QPlatformMediaPlayer;
 class QPlatformAudioDecoder;
+class QPlatformAudioResampler;
 class QPlatformCamera;
 class QPlatformSurfaceCapture;
 class QPlatformMediaRecorder;
@@ -48,9 +51,12 @@ class QAudioOutput;
 class QPlatformAudioInput;
 class QPlatformAudioOutput;
 class QPlatformVideoDevices;
+class QCapturableWindow;
+class QPlatformCapturableWindows;
 
-class Q_MULTIMEDIA_EXPORT QPlatformMediaIntegration
+class Q_MULTIMEDIA_EXPORT QPlatformMediaIntegration : public QObject
 {
+    Q_OBJECT
     inline static const QString notAvailable = QStringLiteral("Not available");
 public:
     static QPlatformMediaIntegration *instance();
@@ -62,8 +68,12 @@ public:
     virtual QList<QCameraDevice> videoInputs();
     virtual QMaybe<QPlatformCamera *> createCamera(QCamera *) { return notAvailable; }
     virtual QPlatformSurfaceCapture *createScreenCapture(QScreenCapture *) { return nullptr; }
+    virtual QPlatformSurfaceCapture *createWindowCapture(QWindowCapture *) { return nullptr; }
 
     virtual QMaybe<QPlatformAudioDecoder *> createAudioDecoder(QAudioDecoder *) { return notAvailable; }
+    virtual QMaybe<std::unique_ptr<QPlatformAudioResampler>>
+    createAudioResampler(const QAudioFormat & /*inputFormat*/,
+                         const QAudioFormat & /*outputFormat*/);
     virtual QMaybe<QPlatformMediaCaptureSession *> createCaptureSession() { return notAvailable; }
     virtual QMaybe<QPlatformMediaPlayer *> createPlayer(QMediaPlayer *) { return notAvailable; }
     virtual QMaybe<QPlatformMediaRecorder *> createRecorder(QMediaRecorder *) { return notAvailable; }
@@ -74,23 +84,38 @@ public:
 
     virtual QMaybe<QPlatformVideoSink *> createVideoSink(QVideoSink *) { return notAvailable; }
 
-    QPlatformVideoDevices *videoDevices() { return m_videoDevices.get(); }
+    QList<QCapturableWindow> capturableWindowsList();
+    bool isCapturableWindowValid(const QCapturableWindowPrivate &);
+
+    QPlatformVideoDevices *videoDevices();
+
+    QPlatformCapturableWindows *capturableWindows();
+
+    QPlatformMediaDevices *mediaDevices();
+
+    static QStringList availableBackends();
 
 protected:
     virtual QPlatformMediaFormatInfo *createFormatInfo();
 
-private:
-    friend class QMockIntegrationFactory;
-    // API to be able to test with a mock backend
-    using Factory = std::function<std::unique_ptr<QPlatformMediaIntegration>()>;
-    struct InstanceHolder;
-    static void setPlatformFactory(Factory factory);
+    virtual QPlatformVideoDevices *createVideoDevices() { return nullptr; }
 
-protected:
+    virtual QPlatformCapturableWindows *createCapturableWindows() { return nullptr; }
+
+    virtual std::unique_ptr<QPlatformMediaDevices> createMediaDevices();
+
+private:
     std::unique_ptr<QPlatformVideoDevices> m_videoDevices;
+    std::once_flag m_videoDevicesOnceFlag;
+
+    std::unique_ptr<QPlatformCapturableWindows> m_capturableWindows;
+    std::once_flag m_capturableWindowsOnceFlag;
 
     mutable std::unique_ptr<QPlatformMediaFormatInfo> m_formatInfo;
     mutable std::once_flag m_formatInfoOnceFlg;
+
+    std::unique_ptr<QPlatformMediaDevices> m_mediaDevices;
+    std::once_flag m_mediaDevicesOnceFlag;
 };
 
 QT_END_NAMESPACE

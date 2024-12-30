@@ -98,6 +98,14 @@ public Q_SLOTS:
         if (surfaceFormat.pixelFormat() == cameraFormat.pixelFormat()
             && surfaceFormat.frameSize() == cameraFormat.resolution()) {
             formatMismatch = 0;
+#ifdef Q_OS_ANDROID
+        } else if ((surfaceFormat.pixelFormat() == QVideoFrameFormat::Format_YUV420P
+                   || surfaceFormat.pixelFormat() == QVideoFrameFormat::Format_NV12)
+                  && (cameraFormat.pixelFormat() == QVideoFrameFormat::Format_YUV420P
+                   || cameraFormat.pixelFormat() == QVideoFrameFormat::Format_NV12)
+            && surfaceFormat.frameSize() == cameraFormat.resolution()) {
+            formatMismatch = 0;
+#endif
         } else {
             formatMismatch = 1;
         }
@@ -106,6 +114,9 @@ public Q_SLOTS:
 
 void tst_QCameraBackend::initTestCase()
 {
+#ifdef Q_OS_ANDROID
+    QSKIP("SKIP initTestCase on CI, because of QTBUG-118571");
+#endif
     QCamera camera;
     noCamera = !camera.isAvailable();
 }
@@ -215,7 +226,7 @@ void tst_QCameraBackend::testCameraActive()
     QCOMPARE(camera.error(), QCamera::NoError);
 
     camera.start();
-    QCOMPARE(camera.isActive(), true);
+    QTRY_COMPARE(camera.isActive(), true);
     QTRY_COMPARE(activeChangedSignal.size(), 1);
     QCOMPARE(activeChangedSignal.last().first().value<bool>(), true);
 
@@ -228,6 +239,10 @@ void tst_QCameraBackend::testCameraActive()
 
 void tst_QCameraBackend::testCameraStartParallel()
 {
+#ifdef Q_OS_ANDROID
+    QSKIP("Multi-camera feature is currently not supported on Android. "
+          "Cannot open same device twice.");
+#endif
     if (noCamera)
         QSKIP("No camera available");
 
@@ -507,7 +522,7 @@ void tst_QCameraBackend::testExposureMode()
     camera.setExposureMode(QCamera::ExposureAuto);
     QCOMPARE(camera.exposureMode(), QCamera::ExposureAuto);
     camera.start();
-    QVERIFY(camera.isActive());
+    QTRY_VERIFY(camera.isActive());
     QCOMPARE(camera.exposureMode(), QCamera::ExposureAuto);
 
     // Manual
@@ -598,6 +613,8 @@ void tst_QCameraBackend::testVideoRecording()
 
     QMediaPlayer player;
     player.setSource(fileName);
+
+    QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::LoadedMedia);
     QCOMPARE_EQ(player.metaData().value(QMediaMetaData::Resolution).toSize(), QSize(320, 240));
     QCOMPARE_GT(player.duration(), 350);
     QCOMPARE_LT(player.duration(), 550);

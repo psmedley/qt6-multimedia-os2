@@ -8,6 +8,7 @@
 #include "qimagecapture.h"
 #include "qvideosink.h"
 #include "qscreencapture.h"
+#include "qwindowcapture.h"
 
 #include <qpointer.h>
 
@@ -27,6 +28,7 @@ public:
     QAudioOutput *audioOutput = nullptr;
     QPointer<QCamera> camera;
     QPointer<QScreenCapture> screenCapture;
+    QPointer<QWindowCapture> windowCapture;
     QPointer<QImageCapture> imageCapture;
     QPointer<QMediaRecorder> recorder;
     QPointer<QVideoSink> videoSink;
@@ -45,7 +47,6 @@ public:
             captureSession->setVideoPreview(sink);
         emit q->videoOutputChanged();
     }
-
 };
 
 /*!
@@ -59,7 +60,7 @@ public:
 
     The QMediaCaptureSession is the central class that manages capturing of media on the local device.
 
-    You can connect a video input to QMediaCaptureSession using setCamera() or setScreenCapture().
+    You can connect a video input to QMediaCaptureSession using setCamera(), setScreenCapture() or setWindowCapture().
     A preview of the captured media can be seen by setting a QVideoWidget or QGraphicsVideoItem using setVideoOutput().
 
     You can connect a microphone to QMediaCaptureSession using setAudioInput().
@@ -68,7 +69,7 @@ public:
     You can capture still images from a camera by setting a QImageCapture object on the capture session,
     and record audio/video using a QMediaRecorder.
 
-    \sa QCamera, QAudioDevice, QMediaRecorder, QImageCapture, QMediaRecorder, QScreenCapture
+    \sa QCamera, QAudioDevice, QMediaRecorder, QImageCapture, QScreenCapture, QWindowCapture, QMediaRecorder, QGraphicsVideoItem
 */
 
 /*!
@@ -89,6 +90,9 @@ public:
 
     Capture a screen by connecting a ScreenCapture object to
     the screenCapture property.
+
+    Capture a window by connecting a WindowCapture object to
+    the windowCapture property.
 
     Enable a preview of the captured media by assigning a VideoOutput element to
     the videoOutput property.
@@ -118,7 +122,7 @@ public:
     }
 \endqml
 
-    \sa Camera, MediaDevices, MediaRecorder, ImageCapture, AudioInput, VideoOutput, ScreenCapture
+    \sa Camera, MediaDevices, MediaRecorder, ImageCapture, ScreenCapture, WindowCapture, AudioInput, VideoOutput
 */
 
 /*!
@@ -147,6 +151,7 @@ QMediaCaptureSession::~QMediaCaptureSession()
     setRecorder(nullptr);
     setImageCapture(nullptr);
     setScreenCapture(nullptr);
+    setWindowCapture(nullptr);
     setAudioInput(nullptr);
     setAudioOutput(nullptr);
     d_ptr->setVideoSink(nullptr);
@@ -179,7 +184,11 @@ void QMediaCaptureSession::setAudioInput(QAudioInput *input)
     QAudioInput *oldInput = d_ptr->audioInput;
     if (oldInput == input)
         return;
-    d_ptr->audioInput = input;
+
+    // To avoid double emit of audioInputChanged
+    // from recursive setAudioInput(nullptr) call.
+    d_ptr->audioInput = nullptr;
+
     if (d_ptr->captureSession)
         d_ptr->captureSession->setAudioInput(nullptr);
     if (oldInput)
@@ -189,6 +198,7 @@ void QMediaCaptureSession::setAudioInput(QAudioInput *input)
         if (d_ptr->captureSession)
             d_ptr->captureSession->setAudioInput(input->handle());
     }
+    d_ptr->audioInput = input;
     emit audioInputChanged();
 }
 
@@ -207,7 +217,7 @@ void QMediaCaptureSession::setAudioInput(QAudioInput *input)
     \brief The camera used to capture video.
 
     Record video or take images by adding a camera to the capture session
-    using this property,
+    using this property.
 */
 QCamera *QMediaCaptureSession::camera() const
 {
@@ -244,7 +254,7 @@ void QMediaCaptureSession::setCamera(QCamera *camera)
 
     \brief The object used to capture a screen.
 
-    Record a screen by adding a screen capture object
+    Record a screen by adding a screen capture objet
     to the capture session using this property.
 */
 
@@ -284,6 +294,53 @@ void QMediaCaptureSession::setScreenCapture(QScreenCapture *screenCapture)
         screenCapture->setCaptureSession(this);
     }
     emit screenCaptureChanged();
+}
+
+/*!
+    \qmlproperty WindowCapture QtMultimedia::CaptureSession::windowCapture
+    \since 6.6
+
+    \brief The object used to capture a window.
+
+    Record a window by adding a window capture object
+    to the capture session using this property.
+*/
+
+/*!
+    \property QMediaCaptureSession::windowCapture
+    \since 6.6
+
+    \brief The object used to capture a window.
+
+    Record a window by adding a window capture objet
+    to the capture session using this property.
+*/
+QWindowCapture *QMediaCaptureSession::windowCapture() {
+    return d_ptr ? d_ptr->windowCapture : nullptr;
+}
+
+void QMediaCaptureSession::setWindowCapture(QWindowCapture *windowCapture)
+{
+    // TODO: come up with an unification of the captures setup
+    QWindowCapture *oldCapture = d_ptr->windowCapture;
+    if (oldCapture == windowCapture)
+        return;
+    d_ptr->windowCapture = windowCapture;
+    if (d_ptr->captureSession)
+        d_ptr->captureSession->setWindowCapture(nullptr);
+    if (oldCapture) {
+        if (oldCapture->captureSession() && oldCapture->captureSession() != this)
+            oldCapture->captureSession()->setWindowCapture(nullptr);
+        oldCapture->setCaptureSession(nullptr);
+    }
+    if (windowCapture) {
+        if (windowCapture->captureSession())
+            windowCapture->captureSession()->setWindowCapture(nullptr);
+        if (d_ptr->captureSession)
+            d_ptr->captureSession->setWindowCapture(windowCapture->platformWindowCapture());
+        windowCapture->setCaptureSession(this);
+    }
+    emit windowCaptureChanged();
 }
 
 /*!
@@ -450,7 +507,12 @@ void QMediaCaptureSession::setAudioOutput(QAudioOutput *output)
     QAudioOutput *oldOutput = d_ptr->audioOutput;
     if (oldOutput == output)
         return;
-    d_ptr->audioOutput = output;
+
+    // We don't want to end up with signal emitted
+    // twice (from recursive call setAudioInput(nullptr)
+    // from oldOutput->setDisconnectFunction():
+    d_ptr->audioOutput = nullptr;
+
     if (d_ptr->captureSession)
         d_ptr->captureSession->setAudioOutput(nullptr);
     if (oldOutput)
@@ -460,6 +522,7 @@ void QMediaCaptureSession::setAudioOutput(QAudioOutput *output)
         if (d_ptr->captureSession)
             d_ptr->captureSession->setAudioOutput(output->handle());
     }
+    d_ptr->audioOutput = output;
     emit audioOutputChanged();
 }
 /*!

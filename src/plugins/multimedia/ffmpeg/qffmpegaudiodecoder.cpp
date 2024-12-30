@@ -28,7 +28,7 @@ public:
             return {};
 
         if (!m_resampler)
-            m_resampler = std::make_unique<Resampler>(frame.codec(), m_format);
+            m_resampler = std::make_unique<QFFmpegResampler>(frame.codec(), m_format);
 
         emit newAudioBuffer(m_resampler->resample(frame.avFrame()));
 
@@ -40,7 +40,7 @@ signals:
 
 private:
     QAudioFormat m_format;
-    std::unique_ptr<Resampler> m_resampler;
+    std::unique_ptr<QFFmpegResampler> m_resampler;
 };
 
 class AudioDecoder : public PlaybackEngine
@@ -137,7 +137,15 @@ void QFFmpegAudioDecoder::start()
     connect(m_decoder.get(), &AudioDecoder::newAudioBuffer, this,
             &QFFmpegAudioDecoder::newAudioBuffer);
 
-    m_decoder->setMedia(m_url, m_sourceDevice);
+    QFFmpeg::MediaDataHolder::Maybe media = QFFmpeg::MediaDataHolder::create(m_url, m_sourceDevice, nullptr);
+
+    if (media)
+        m_decoder->setMedia(std::move(*media.value()));
+    else {
+        auto [code, description] = media.error();
+        errorSignal(code, description);
+    }
+
     if (!checkNoError())
         return;
 

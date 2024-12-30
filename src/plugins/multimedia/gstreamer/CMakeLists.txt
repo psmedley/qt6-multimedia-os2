@@ -12,12 +12,14 @@ qt_internal_add_plugin(QGstreamerMediaPlugin
         audio/qgstreameraudiosink.cpp audio/qgstreameraudiosink_p.h
         audio/qgstreameraudiodecoder.cpp audio/qgstreameraudiodecoder_p.h
         common/qgst_p.h
+        common/qgst_debug.cpp common/qgst_debug_p.h
+        common/qgst_handle_types_p.h
         common/qgstappsrc.cpp common/qgstappsrc_p.h
         common/qgstreameraudioinput.cpp common/qgstreameraudioinput_p.h
         common/qgstreameraudiooutput.cpp common/qgstreameraudiooutput_p.h
         common/qgstreamerbufferprobe.cpp common/qgstreamerbufferprobe_p.h
         common/qgstreamermetadata.cpp common/qgstreamermetadata_p.h
-        common/qgstreamermessage.cpp common/qgstreamermessage_p.h
+        common/qgstreamermessage_p.h
         common/qgstreamermediaplayer.cpp common/qgstreamermediaplayer_p.h
         common/qgstreamervideooutput.cpp common/qgstreamervideooutput_p.h
         common/qgstreamervideooverlay.cpp common/qgstreamervideooverlay_p.h

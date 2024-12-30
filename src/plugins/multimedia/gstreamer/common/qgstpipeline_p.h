@@ -46,9 +46,10 @@ public:
     constexpr QGstPipeline() = default;
     QGstPipeline(const QGstPipeline &o);
     QGstPipeline &operator=(const QGstPipeline &o);
-    QGstPipeline(const char *name);
-    QGstPipeline(GstPipeline *p);
+    explicit QGstPipeline(GstPipeline *p);
     ~QGstPipeline() override;
+
+    static QGstPipeline create(const char *name);
 
     // This is needed to help us avoid sending QVideoFrames or audio buffers to the
     // application while we're prerolling the pipeline.
@@ -67,7 +68,7 @@ public:
 
     GstStateChangeReturn setState(GstState state);
 
-    GstPipeline *pipeline() const { return GST_PIPELINE_CAST(m_object); }
+    GstPipeline *pipeline() const { return GST_PIPELINE_CAST(get()); }
 
     void dumpGraph(const char *fileName)
     {
@@ -84,8 +85,13 @@ public:
 #endif
     }
 
-    void beginConfig();
-    void endConfig();
+    template <typename Functor>
+    void modifyPipelineWhileNotRunning(Functor &&fn)
+    {
+        beginConfig();
+        fn();
+        endConfig();
+    }
 
     void flush();
 
@@ -97,6 +103,10 @@ public:
     qint64 position() const;
 
     qint64 duration() const;
+
+private:
+    void beginConfig();
+    void endConfig();
 };
 
 QT_END_NAMESPACE

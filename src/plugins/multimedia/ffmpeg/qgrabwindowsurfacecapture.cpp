@@ -4,9 +4,10 @@
 #include "qvideoframe.h"
 #include "qgrabwindowsurfacecapture_p.h"
 #include "qscreencapture.h"
-#include "qffmpegsurfacecapturethread_p.h"
+#include "qffmpegsurfacecapturegrabber_p.h"
 
-#include "private/qabstractvideobuffer_p.h"
+#include "private/qimagevideobuffer_p.h"
+#include "private/qcapturablewindow_p.h"
 
 #include "qscreen.h"
 #include "qmutex.h"
@@ -24,43 +25,9 @@ namespace {
 
 using WindowUPtr = std::unique_ptr<QWindow>;
 
-class QImageVideoBuffer : public QAbstractVideoBuffer
-{
-public:
-    QImageVideoBuffer(QImage &&image)
-        : QAbstractVideoBuffer(QVideoFrame::NoHandle), m_image(std::move(image))
-    {
-    }
-
-    QVideoFrame::MapMode mapMode() const override { return m_mapMode; }
-
-    MapData map(QVideoFrame::MapMode mode) override
-    {
-        MapData mapData;
-        if (m_mapMode == QVideoFrame::NotMapped && !m_image.isNull() && mode != QVideoFrame::NotMapped) {
-            m_mapMode = mode;
-
-            mapData.nPlanes = 1;
-            mapData.bytesPerLine[0] = m_image.bytesPerLine();
-            mapData.data[0] = m_image.bits();
-            mapData.size[0] = m_image.sizeInBytes();
-        }
-
-        return mapData;
-    }
-
-    void unmap() override
-    {
-        m_mapMode = QVideoFrame::NotMapped;
-    }
-
-    QVideoFrame::MapMode m_mapMode = QVideoFrame::NotMapped;
-    QImage m_image;
-};
-
 } // namespace
 
-class QGrabWindowSurfaceCapture::Grabber : public QFFmpegSurfaceCaptureThread
+class QGrabWindowSurfaceCapture::Grabber : public QFFmpegSurfaceCaptureGrabber
 {
 public:
     Grabber(QGrabWindowSurfaceCapture &capture, QScreen *screen) : Grabber(capture, screen, nullptr)
@@ -90,7 +57,7 @@ public:
 
 private:
     Grabber(QGrabWindowSurfaceCapture &capture, QScreen *screen, WindowUPtr window)
-        : m_capture(capture), m_screen(screen), m_window(std::move(window))
+        : QFFmpegSurfaceCaptureGrabber(QGuiApplication::platformName() != QLatin1String("eglfs")), m_capture(capture), m_screen(screen), m_window(std::move(window))
     {
         connect(qApp, &QGuiApplication::screenRemoved, this, &Grabber::onScreenRemoved);
         addFrameCallback(m_capture, &QGrabWindowSurfaceCapture::newVideoFrame);
@@ -158,7 +125,8 @@ private:
         setFrameRate(screen->refreshRate());
 
         QPixmap p = screen->grabWindow(wid);
-        QImage img = p.toImage();
+        auto buffer = std::make_unique<QImageVideoBuffer>(p.toImage());
+        const auto img = buffer->underlyingImage();
 
         QVideoFrameFormat format(img.size(),
                                  QVideoFrameFormat::pixelFormatFromImageFormat(img.format()));
@@ -171,7 +139,7 @@ private:
             return {};
         }
 
-        return QVideoFrame(new QImageVideoBuffer(std::move(img)), format);
+        return QVideoFrame(buffer.release(), format);
     }
 
 private:
@@ -223,6 +191,24 @@ void QGrabWindowSurfaceCapture::activate(ScreenSource screen)
 
     m_grabber = std::make_unique<Grabber>(*this, screen);
     m_grabber->start();
+}
+
+void QGrabWindowSurfaceCapture::activate(WindowSource window)
+{
+    auto handle = QCapturableWindowPrivate::handle(window);
+    auto wid = handle ? handle->id : 0;
+    if (auto wnd = WindowUPtr(QWindow::fromWinId(wid))) {
+        if (!wnd->screen()) {
+            updateError(InternalError,
+                        "Window " + QString::number(wid) + " doesn't belong to any screen");
+        } else {
+            m_grabber = std::make_unique<Grabber>(*this, std::move(wnd));
+            m_grabber->start();
+        }
+    } else {
+        updateError(NotFound,
+                    "Window " + QString::number(wid) + "doesn't exist or permissions denied");
+    }
 }
 
 QT_END_NAMESPACE

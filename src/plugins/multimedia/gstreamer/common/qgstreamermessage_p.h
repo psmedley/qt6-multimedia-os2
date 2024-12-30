@@ -23,27 +23,29 @@ QT_BEGIN_NAMESPACE
 // Required for QDoc workaround
 class QString;
 
-class Q_MULTIMEDIA_EXPORT QGstreamerMessage
+template <>
+struct QGstPointerImpl::QGstRefcountingAdaptor<GstMessage>
 {
+    static void ref(GstMessage *arg) noexcept { gst_message_ref(arg); }
+    static void unref(GstMessage *arg) noexcept { gst_message_unref(arg); }
+};
+
+class Q_MULTIMEDIA_EXPORT QGstreamerMessage : public QGstPointerImpl::QGstObjectWrapper<GstMessage>
+{
+    using BaseClass = QGstPointerImpl::QGstObjectWrapper<GstMessage>;
+
 public:
-    QGstreamerMessage() = default;
-    QGstreamerMessage(QGstreamerMessage const& m);
-    explicit QGstreamerMessage(GstMessage* message);
-    explicit QGstreamerMessage(const QGstStructure &structure);
+    using BaseClass::BaseClass;
+    QGstreamerMessage(const QGstreamerMessage &) = default;
+    QGstreamerMessage(QGstreamerMessage &&) noexcept = default;
+    QGstreamerMessage &operator=(const QGstreamerMessage &) = default;
+    QGstreamerMessage &operator=(QGstreamerMessage &&) noexcept = default;
 
-    ~QGstreamerMessage();
+    GstMessageType type() const { return GST_MESSAGE_TYPE(get()); }
+    QGstObject source() const { return QGstObject(GST_MESSAGE_SRC(get())); }
+    QGstStructure structure() const { return QGstStructure(gst_message_get_structure(get())); }
 
-    bool isNull() const { return !m_message; }
-    GstMessageType type() const { return GST_MESSAGE_TYPE(m_message); }
-    QGstObject source() const { return QGstObject(GST_MESSAGE_SRC(m_message), QGstObject::NeedsRef); }
-    QGstStructure structure() const { return QGstStructure(gst_message_get_structure(m_message)); }
-
-    GstMessage* rawMessage() const;
-
-    QGstreamerMessage& operator=(QGstreamerMessage const& rhs);
-
-private:
-    GstMessage* m_message = nullptr;
+    GstMessage *message() const { return get(); }
 };
 
 QT_END_NAMESPACE

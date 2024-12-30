@@ -26,16 +26,13 @@ class QFFmpegMediaIntegration : public QPlatformMediaIntegration
 public:
     QFFmpegMediaIntegration();
 
-    static QFFmpegMediaIntegration *instance()
-    {
-        return static_cast<QFFmpegMediaIntegration *>(QPlatformMediaIntegration::instance());
-    }
-
     QMaybe<QPlatformAudioDecoder *> createAudioDecoder(QAudioDecoder *decoder) override;
+    QMaybe<std::unique_ptr<QPlatformAudioResampler>> createAudioResampler(const QAudioFormat &inputFormat, const QAudioFormat &outputFormat) override;
     QMaybe<QPlatformMediaCaptureSession *> createCaptureSession() override;
     QMaybe<QPlatformMediaPlayer *> createPlayer(QMediaPlayer *player) override;
     QMaybe<QPlatformCamera *> createCamera(QCamera *) override;
     QPlatformSurfaceCapture *createScreenCapture(QScreenCapture *) override;
+    QPlatformSurfaceCapture *createWindowCapture(QWindowCapture *) override;
     QMaybe<QPlatformMediaRecorder *> createRecorder(QMediaRecorder *) override;
     QMaybe<QPlatformImageCapture *> createImageCapture(QImageCapture *) override;
 
@@ -46,6 +43,10 @@ public:
 
 protected:
     QPlatformMediaFormatInfo *createFormatInfo() override;
+
+    QPlatformVideoDevices *createVideoDevices() override;
+
+    QPlatformCapturableWindows *createCapturableWindows() override;
 };
 
 QT_END_NAMESPACE

@@ -105,14 +105,12 @@ QQuickVideoOutput::QQuickVideoOutput(QQuickItem *parent) :
 
     m_sink = new QVideoSink(this);
     qRegisterMetaType<QVideoFrameFormat>();
-    QObject::connect(m_sink, &QVideoSink::videoFrameChanged, this,
-                     [&](const QVideoFrame &frame) {
-                         setFrame(frame);
-                         emit frameUpdated(frame.size());
-                     }, Qt::DirectConnection);
-
-    QObject::connect(this, &QQuickVideoOutput::frameUpdated,
-                     this, &QQuickVideoOutput::_q_newFrame);
+    connect(m_sink, &QVideoSink::videoFrameChanged, this,
+            [this](const QVideoFrame &frame) {
+                setFrame(frame);
+                QMetaObject::invokeMethod(this, "_q_newFrame", frame.size());
+            },
+            Qt::DirectConnection);
 
     initRhiForSink();
 }
@@ -395,23 +393,23 @@ void QQuickVideoOutput::itemChange(QQuickItem::ItemChange change,
 
     if (m_window) {
         // We want to receive the signals in the render thread
-        QObject::connect(m_window, &QQuickWindow::sceneGraphInitialized, this, &QQuickVideoOutput::_q_sceneGraphInitialized,
-                         Qt::DirectConnection);
-        QObject::connect(m_window, &QQuickWindow::sceneGraphInvalidated,
-                         this, &QQuickVideoOutput::_q_invalidateSceneGraph, Qt::DirectConnection);
+        connect(m_window, &QQuickWindow::sceneGraphInitialized, this,
+                &QQuickVideoOutput::_q_sceneGraphInitialized, Qt::DirectConnection);
+        connect(m_window, &QQuickWindow::sceneGraphInvalidated, this,
+                &QQuickVideoOutput::_q_invalidateSceneGraph, Qt::DirectConnection);
     }
     initRhiForSink();
 }
 
 QSize QQuickVideoOutput::nativeSize() const
 {
-    return m_surfaceFormat.viewport().size();
+    return m_videoFormat.viewport().size();
 }
 
 void QQuickVideoOutput::updateGeometry()
 {
-    const QRectF viewport = m_surfaceFormat.viewport();
-    const QSizeF frameSize = m_surfaceFormat.frameSize();
+    const QRectF viewport = m_videoFormat.viewport();
+    const QSizeF frameSize = m_videoFormat.frameSize();
     const QRectF normalizedViewport(viewport.x() / frameSize.width(),
                                     viewport.y() / frameSize.height(),
                                     viewport.width() / frameSize.width(),
@@ -452,13 +450,13 @@ void QQuickVideoOutput::updateGeometry()
         }
     }
 
-    if (m_surfaceFormat.scanLineDirection() == QVideoFrameFormat::BottomToTop) {
+    if (m_videoFormat.scanLineDirection() == QVideoFrameFormat::BottomToTop) {
         qreal top = m_sourceTextureRect.top();
         m_sourceTextureRect.setTop(m_sourceTextureRect.bottom());
         m_sourceTextureRect.setBottom(top);
     }
 
-    if (m_surfaceFormat.isMirrored()) {
+    if (m_videoFormat.isMirrored()) {
         qreal left = m_sourceTextureRect.left();
         m_sourceTextureRect.setLeft(m_sourceTextureRect.right());
         m_sourceTextureRect.setRight(left);
@@ -492,7 +490,7 @@ QSGNode *QQuickVideoOutput::updatePaintNode(QSGNode *oldNode,
             // Get a node that supports our frame. The surface is irrelevant, our
             // QSGVideoItemSurface supports (logically) anything.
             updateGeometry();
-            videoNode = new QSGVideoNode(this, m_surfaceFormat);
+            videoNode = new QSGVideoNode(this, m_videoFormat);
             qCDebug(qLcVideo) << "updatePaintNode: Video node created. Handle type:" << m_frame.handleType();
         }
     }
@@ -515,28 +513,29 @@ QSGNode *QQuickVideoOutput::updatePaintNode(QSGNode *oldNode,
     videoNode->setTexturedRectGeometry(m_renderedRect, m_sourceTextureRect,
                                        qNormalizedOrientation(orientation()));
 
+    if (const QQuickWindow *const videoOutputWindow = window()) {
+        if (QRhiSwapChain *const swapChain = videoOutputWindow->swapChain()) {
+            videoNode->setSurfaceFormat(swapChain->format());
+            videoNode->setHdrInfo(swapChain->hdrInfo());
+        }
+    }
+
     return videoNode;
 }
 
 QRectF QQuickVideoOutput::adjustedViewport() const
 {
-    return m_surfaceFormat.viewport();
+    return m_videoFormat.viewport();
 }
 
 void QQuickVideoOutput::setFrame(const QVideoFrame &frame)
 {
-    m_frameMutex.lock();
-    m_surfaceFormat = frame.surfaceFormat();
+    QMutexLocker lock(&m_frameMutex);
+
+    m_videoFormat = frame.surfaceFormat();
     m_frame = frame;
     m_frameOrientation = frame.rotationAngle();
     m_frameChanged = true;
-    m_frameMutex.unlock();
-}
-
-void QQuickVideoOutput::stop()
-{
-    setFrame({});
-    update();
 }
 
 QT_END_NAMESPACE

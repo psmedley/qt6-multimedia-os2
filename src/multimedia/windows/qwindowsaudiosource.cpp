@@ -29,7 +29,7 @@
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcAudioSource, "qt.multimedia.audiosource")
+static Q_LOGGING_CATEGORY(qLcAudioSource, "qt.multimedia.audiosource")
 
 using namespace QWindowsMultimediaUtils;
 

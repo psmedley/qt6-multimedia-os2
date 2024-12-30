@@ -61,6 +61,17 @@ void QFFmpegMediaCaptureSession::setScreenCapture(QPlatformSurfaceCapture *scree
         emit screenCaptureChanged();
 }
 
+QPlatformSurfaceCapture *QFFmpegMediaCaptureSession::windowCapture()
+{
+    return m_windowCapture;
+}
+
+void QFFmpegMediaCaptureSession::setWindowCapture(QPlatformSurfaceCapture *windowCapture)
+{
+    if (setVideoSource(m_windowCapture, windowCapture))
+        emit windowCaptureChanged();
+}
+
 QPlatformImageCapture *QFFmpegMediaCaptureSession::imageCapture()
 {
     return m_imageCapture;

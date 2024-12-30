@@ -64,12 +64,12 @@ public:
                                QVideoFrameFormat::ColorRange colorRange) const override;
 
 private:
-    void requestCameraPermissionIfNeeded();
-    void cameraAuthorizationChanged(bool authorized);
+    bool checkCameraPermission();
     void updateCameraFormat();
     void updateVideoInput();
     void attachVideoInputDevice();
     uint32_t setPixelFormat(QVideoFrameFormat::PixelFormat pixelFormat, uint32_t inputCvPixFormat);
+    QSize adjustedResolution() const;
 
     AVCaptureDevice *device() const;
 
