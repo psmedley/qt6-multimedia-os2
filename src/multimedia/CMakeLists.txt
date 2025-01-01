@@ -101,6 +101,7 @@ qt_internal_add_module(Multimedia
         Qt::CorePrivate
         Qt::GuiPrivate
     GENERATE_CPP_EXPORTS
+    OS2_SHORT_NAME Qt6Multm
 )
 
 qt_internal_add_simd_part(Multimedia SIMD sse2

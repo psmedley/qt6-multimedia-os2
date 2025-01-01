@@ -23,7 +23,7 @@ qt_internal_add_module(MultimediaWidgets
         Qt::MultimediaPrivate
         Qt::WidgetsPrivate
     GENERATE_CPP_EXPORTS
-    OS2_SHORT_NAME Qt6MulWi
+    OS2_SHORT_NAME Qt6MMWid
 )
 
 ## Scopes:
