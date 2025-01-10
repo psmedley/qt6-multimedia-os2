@@ -1,5 +1,5 @@
 # Copyright (C) 2022 The Qt Company Ltd.
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 cmake_minimum_required(VERSION 3.16)
 project(player LANGUAGES CXX)
@@ -24,6 +24,8 @@ qt_add_executable(player
     qmediaplaylist_p.cpp qmediaplaylist_p.h
     qplaylistfileparser.cpp qplaylistfileparser.h
 )
+
+qt_add_ios_ffmpeg_libraries(player)
 
 set_target_properties(player PROPERTIES
     WIN32_EXECUTABLE TRUE

@@ -11,10 +11,10 @@
 #include <qguiapplication.h>
 #include <qloggingcategory.h>
 
-#include "private/qabstractvideobuffer_p.h"
 #include "private/qcapturablewindow_p.h"
 #include "private/qmemoryvideobuffer_p.h"
 #include "private/qvideoframeconversionhelper_p.h"
+#include "private/qvideoframe_p.h"
 
 #include <X11/Xlib.h>
 #include <sys/shm.h>
@@ -245,7 +245,7 @@ private:
             }
 
             QVideoFrameFormat format(QSize(m_xImage->width, m_xImage->height), pixelFormat);
-            format.setFrameRate(frameRate());
+            format.setStreamFrameRate(frameRate());
             m_format = format;
         }
 
@@ -276,8 +276,8 @@ protected:
         qCopyPixelsWithAlphaMask(pixelDst, pixelSrc, pixelCount, m_format.pixelFormat(),
                                        xImageAlphaVaries);
 
-        auto buffer = new QMemoryVideoBuffer(data, m_xImage->bytes_per_line);
-        return QVideoFrame(buffer, m_format);
+        auto buffer = std::make_unique<QMemoryVideoBuffer>(data, m_xImage->bytes_per_line);
+        return QVideoFramePrivate::createFrame(std::move(buffer), m_format);
     }
 
 private:

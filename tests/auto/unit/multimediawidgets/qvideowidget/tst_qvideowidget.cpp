@@ -1,7 +1,5 @@
 // Copyright (C) 2021 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
-
-//TESTED_COMPONENT=src/multimedia
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <qtmultimediaglobal.h>
 #include <QtTest/QtTest>
@@ -17,6 +15,8 @@
 
 #include <qmockintegration.h>
 #include <qmockvideosink.h>
+
+#include <private/mediabackendutils_p.h>
 
 QT_USE_NAMESPACE
 
@@ -66,7 +66,7 @@ public:
 void tst_QVideoWidget::initTestCase()
 {
 #ifdef Q_OS_MACOS
-    if (qEnvironmentVariable("QTEST_ENVIRONMENT").toLower() == "ci")
+    if (isCI())
         QSKIP("SKIP on macOS CI since metal is not supported, otherwise it often crashes. To be "
               "fixed.");
 #endif
@@ -186,7 +186,7 @@ void tst_QVideoWidget::fullScreen()
 
     Qt::WindowFlags windowFlags = widget.windowFlags();
 
-    QSignalSpy spy(&widget, SIGNAL(fullScreenChanged(bool)));
+    QSignalSpy spy(&widget, &QVideoWidget::fullScreenChanged);
 
     // Test showing full screen with setFullScreen(true).
     widget.setFullScreen(true);

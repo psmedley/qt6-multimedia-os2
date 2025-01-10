@@ -18,6 +18,7 @@
 #include <QtQuick/qsgnode.h>
 #include <private/qtmultimediaquickglobal_p.h>
 #include "private/qvideotexturehelper_p.h"
+#include "private/qmultimediautils_p.h"
 
 #include <QtMultimedia/qvideoframe.h>
 #include <QtMultimedia/qvideoframeformat.h>
@@ -27,7 +28,7 @@ QT_BEGIN_NAMESPACE
 
 class QSGVideoMaterial;
 class QQuickVideoOutput;
-class QQuickTextNode;
+class QSGInternalTextNode;
 
 class QSGVideoNode : public QSGGeometryNode
 {
@@ -50,14 +51,13 @@ private:
     QRectF m_rect;
     QRectF m_textureRect;
     int m_orientation = -1;
-    int m_frameOrientation = -1;
-    bool m_frameMirrored = false;
+    VideoTransformation m_frameTransformation;
 
     QVideoFrameFormat m_videoFormat;
     QSGVideoMaterial *m_material = nullptr;
 
     QVideoTextureHelper::SubtitleLayout m_subtitleLayout;
-    QQuickTextNode *m_subtitleTextNode = nullptr;
+    QSGInternalTextNode *m_subtitleTextNode = nullptr;
 };
 
 QT_END_NAMESPACE

@@ -1,5 +1,5 @@
 # Copyright (C) 2022 The Qt Company Ltd.
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 cmake_minimum_required(VERSION 3.16)
 project(videowidget LANGUAGES CXX)
@@ -23,6 +23,8 @@ set_target_properties(videowidget PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
+
+qt_add_ios_ffmpeg_libraries(videowidget)
 
 target_link_libraries(videowidget PUBLIC
     Qt::Core

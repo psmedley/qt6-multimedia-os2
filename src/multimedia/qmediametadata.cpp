@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qmediametadata.h"
+
 #include <QtCore/qcoreapplication.h>
-#include <qvariant.h>
-#include <qobject.h>
-#include <qdatetime.h>
-#include <qmediaformat.h>
-#include <qsize.h>
-#include <qurl.h>
-#include <qimage.h>
+#include <QtCore/qdatetime.h>
+#include <QtCore/qobject.h>
+#include <QtCore/qsize.h>
+#include <QtCore/qurl.h>
+#include <QtCore/qvariant.h>
+#include <QtGui/qimage.h>
+#include <QtMultimedia/qmediaformat.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -41,7 +42,7 @@ QT_BEGIN_NAMESPACE
     Media attributes
     \row \li MediaType \li The type of the media (audio, video, etc).  \li QString
     \row \li FileFormat \li The file format of the media.  \li QMediaFormat::FileFormat
-    \row \li Duration \li The duration in millseconds of the media.  \li qint64
+    \row \li Duration \li The duration in milliseconds of the media.  \li qint64
 
     \header \li {3,1}
     Audio attributes
@@ -53,6 +54,7 @@ QT_BEGIN_NAMESPACE
     \row \li VideoFrameRate \li The frame rate of the media's video stream. \li qreal
     \row \li VideoBitRate \li The bit rate of the media's video stream in bits per second.  \li int
     \row \li VideoCodec \li The codec of the media's video stream.  \li QMediaFormat::VideoCodec
+    \row \li HasHdrContent \li True if video is intended for HDR display (FFmpeg and Darwin media backends only). \li bool
 
     \header \li {3,1}
     Music attributes
@@ -129,6 +131,10 @@ QMetaType QMediaMetaData::keyType(Key key)
 
     case Resolution:
         return QMetaType::fromType<QSize>();
+
+    case HasHdrContent:
+        return QMetaType::fromType<bool>();
+
     default:
         return QMetaType::fromType<void>();
     }
@@ -139,7 +145,7 @@ QMetaType QMediaMetaData::keyType(Key key)
     \ingroup qmlvaluetypes
     \inqmlmodule QtMultimedia
     \since 6.2
-    //! \instantiates QMediaMetaData
+    //! \nativetype QMediaMetaData
     \brief Provides meta-data for media files.
     \ingroup multimedia_qml
     \ingroup multimedia_audio_qml
@@ -276,6 +282,7 @@ QMetaType QMediaMetaData::keyType(Key key)
     \value CoverArtImage Media cover art
     \value Orientation
     \value Resolution
+    \value [since 6.8] HasHdrContent Video may have HDR content (read only, FFmpeg and Darwin media backends only)
 */
 
 /*!
@@ -385,6 +392,7 @@ QString QMediaMetaData::stringValue(QMediaMetaData::Key key) const
     case Composer:
     case Orientation:
     case LeadPerformer:
+    case HasHdrContent:
         return value.toString();
     case Language: {
         auto l = value.value<QLocale::Language>();
@@ -402,7 +410,7 @@ QString QMediaMetaData::stringValue(QMediaMetaData::Key key) const
         return QMediaFormat::videoCodecName(value.value<QMediaFormat::VideoCodec>());
     case Resolution: {
         QSize size = value.toSize();
-        return QString::fromUtf8("%1 x %2").arg(size.width()).arg(size.height());
+        return QStringLiteral("%1 x %2").arg(size.width()).arg(size.height());
     }
     case ThumbnailImage:
     case CoverArtImage:
@@ -479,8 +487,29 @@ QString QMediaMetaData::metaDataKeyToString(QMediaMetaData::Key key)
             return (QCoreApplication::translate("QMediaMetaData", "Resolution"));
         case QMediaMetaData::LeadPerformer:
             return (QCoreApplication::translate("QMediaMetaData", "Lead performer"));
+        case QMediaMetaData::HasHdrContent:
+            return (QCoreApplication::translate("QMediaMetaData", "Has HDR content"));
     }
     return QString();
+}
+
+QDebug operator<<(QDebug dbg, const QMediaMetaData &metaData)
+{
+    QDebugStateSaver sv(dbg);
+    dbg.nospace();
+
+    dbg << "QMediaMetaData{";
+    auto range = metaData.asKeyValueRange();
+    auto begin = std::begin(range);
+
+    for (auto it = begin; it != std::end(range); ++it) {
+        if (it != begin)
+            dbg << ", ";
+        dbg << it->first << ": " << it->second;
+    }
+
+    dbg << "}";
+    return dbg;
 }
 
 // operator documentation
@@ -509,6 +538,11 @@ QString QMediaMetaData::metaDataKeyToString(QMediaMetaData::Key key)
     \variable QMediaMetaData::data
     \brief the meta data.
     \note this is a \c protected member of its class.
+*/
+
+/*!
+    \fn auto QMediaMetaData::asKeyValueRange() const
+    \internal
 */
 
 QT_END_NAMESPACE

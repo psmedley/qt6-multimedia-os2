@@ -1,5 +1,5 @@
 # Copyright (C) 2022 The Qt Company Ltd.
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 cmake_minimum_required(VERSION 3.16)
 project(spectrum LANGUAGES CXX)
@@ -32,6 +32,8 @@ qt_add_executable(spectrum
     utils.cpp utils.h
     waveform.cpp waveform.h
 )
+
+qt_add_ios_ffmpeg_libraries(spectrum)
 
 set_target_properties(spectrum PROPERTIES
     WIN32_EXECUTABLE TRUE

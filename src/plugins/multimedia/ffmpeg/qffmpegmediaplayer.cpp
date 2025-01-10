@@ -5,6 +5,7 @@
 #include "private/qplatformaudiooutput_p.h"
 #include "qvideosink.h"
 #include "qaudiooutput.h"
+#include "qaudiobufferoutput.h"
 
 #include "qffmpegplaybackengine_p.h"
 #include <qiodevice.h>
@@ -75,12 +76,17 @@ void QFFmpegMediaPlayer::updatePosition()
 
 void QFFmpegMediaPlayer::endOfStream()
 {
-    // start update timer and report end position anyway
+    // stop update timer and report end position anyway
     m_positionUpdateTimer.stop();
+    QPointer currentPlaybackEngine(m_playbackEngine.get());
     positionChanged(duration());
 
-    stateChanged(QMediaPlayer::StoppedState);
-    mediaStatusChanged(QMediaPlayer::EndOfMedia);
+    // skip changing state and mediaStatus if playbackEngine has been recreated,
+    // e.g. if new media has been loaded as a response to positionChanged signal
+    if (currentPlaybackEngine)
+        stateChanged(QMediaPlayer::StoppedState);
+    if (currentPlaybackEngine)
+        mediaStatusChanged(QMediaPlayer::EndOfMedia);
 }
 
 void QFFmpegMediaPlayer::onLoopChanged()
@@ -146,7 +152,7 @@ void QFFmpegMediaPlayer::setPlaybackRate(qreal rate)
     if (m_playbackEngine)
         m_playbackEngine->setPlaybackRate(effectiveRate);
 
-    emit playbackRateChanged(effectiveRate);
+    playbackRateChanged(effectiveRate);
 }
 
 QUrl QFFmpegMediaPlayer::media() const
@@ -209,8 +215,6 @@ void QFFmpegMediaPlayer::setMedia(const QUrl &media, QIODevice *stream)
 void QFFmpegMediaPlayer::setMediaAsync(QFFmpeg::MediaDataHolder::Maybe mediaDataHolder,
                                        const std::shared_ptr<QFFmpeg::CancelToken> &cancelToken)
 {
-    Q_ASSERT(mediaStatus() == QMediaPlayer::LoadingMedia);
-
     // If loading was cancelled, we do not emit any signals about failing
     // to load media (or any other events). The rationale is that cancellation
     // either happens during destruction, where the signals are no longer
@@ -220,6 +224,8 @@ void QFFmpegMediaPlayer::setMediaAsync(QFFmpeg::MediaDataHolder::Maybe mediaData
     if (cancelToken->isCancelled()) {
         return;
     }
+
+    Q_ASSERT(mediaStatus() == QMediaPlayer::LoadingMedia);
 
     if (!mediaDataHolder) {
         const auto [code, description] = mediaDataHolder.error();
@@ -241,8 +247,10 @@ void QFFmpegMediaPlayer::setMediaAsync(QFFmpeg::MediaDataHolder::Maybe mediaData
 
     m_playbackEngine->setMedia(std::move(*mediaDataHolder.value()));
 
+    m_playbackEngine->setAudioBufferOutput(m_audioBufferOutput);
     m_playbackEngine->setAudioSink(m_audioOutput);
     m_playbackEngine->setVideoSink(m_videoSink);
+
     m_playbackEngine->setLoops(loops());
     m_playbackEngine->setPlaybackRate(m_playbackRate);
 
@@ -336,12 +344,15 @@ void QFFmpegMediaPlayer::stop()
 
 void QFFmpegMediaPlayer::setAudioOutput(QPlatformAudioOutput *output)
 {
-    if (m_audioOutput == output)
-        return;
-
     m_audioOutput = output;
     if (m_playbackEngine)
         m_playbackEngine->setAudioSink(output);
+}
+
+void QFFmpegMediaPlayer::setAudioBufferOutput(QAudioBufferOutput *output) {
+    m_audioBufferOutput = output;
+    if (m_playbackEngine)
+        m_playbackEngine->setAudioBufferOutput(output);
 }
 
 QMediaMetaData QFFmpegMediaPlayer::metaData() const
@@ -351,9 +362,6 @@ QMediaMetaData QFFmpegMediaPlayer::metaData() const
 
 void QFFmpegMediaPlayer::setVideoSink(QVideoSink *sink)
 {
-    if (m_videoSink == sink)
-        return;
-
     m_videoSink = sink;
     if (m_playbackEngine)
         m_playbackEngine->setVideoSink(sink);

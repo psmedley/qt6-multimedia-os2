@@ -17,13 +17,13 @@ import java.lang.String;
 import java.io.File;
 import android.util.Log;
 
-public class QtMultimediaUtils
+class QtMultimediaUtils
 {
     static private class OrientationListener extends OrientationEventListener
     {
-        static public int deviceOrientation = 0;
+        static int deviceOrientation = 0;
 
-        public OrientationListener(Context context)
+        OrientationListener(Context context)
         {
             super(context);
         }
@@ -42,17 +42,17 @@ public class QtMultimediaUtils
     static private OrientationListener m_orientationListener = null;
     private static final String QtTAG = "Qt QtMultimediaUtils";
 
-    static public void setActivity(Activity qtMainActivity, Object qtActivityDelegate)
+    static void setActivity(Activity qtMainActivity, Object qtActivityDelegate)
     {
     }
 
-    static public void setContext(Context context)
+    static void setContext(Context context)
     {
         m_context = context;
         m_orientationListener = new OrientationListener(context);
     }
 
-    public QtMultimediaUtils()
+    QtMultimediaUtils()
     {
     }
 
@@ -66,7 +66,7 @@ public class QtMultimediaUtils
 
     static int getDeviceOrientation()
     {
-        return m_orientationListener.deviceOrientation;
+        return OrientationListener.deviceOrientation;
     }
 
     static String getDefaultMediaDirectory(int type)
@@ -125,24 +125,25 @@ public class QtMultimediaUtils
         return codecs;
     }
 
-public static String getMimeType(Context context, String url)
-{
-    Uri parsedUri = Uri.parse(url);
-    String type = null;
+    static String getMimeType(Context context, String url)
+    {
+        Uri parsedUri = Uri.parse(url);
+        String type = null;
 
-    try {
-        String scheme = parsedUri.getScheme();
-        if (scheme != null && scheme.contains("content")) {
-            ContentResolver cR = context.getContentResolver();
-            type = cR.getType(parsedUri);
-        } else {
-            String extension = MimeTypeMap.getFileExtensionFromUrl(url);
-            if (extension != null)
+        try {
+            String scheme = parsedUri.getScheme();
+            if (scheme != null && scheme.contains("content")) {
+                ContentResolver cR = context.getContentResolver();
+                type = cR.getType(parsedUri);
+            } else {
+                String extension = MimeTypeMap.getFileExtensionFromUrl(url);
+                if (extension != null)
                 type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
-       }
-    } catch (Exception e) {
-        Log.e(QtTAG, "getMimeType(): " + e.toString());
+            }
+        } catch (Exception e) {
+            Log.e(QtTAG, "getMimeType(): " + e.toString());
+        }
+        return type;
     }
-    return type;
 }
-}
+

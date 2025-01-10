@@ -154,7 +154,7 @@ class VAAPITextureSet : public TextureSet
 {
 public:
     ~VAAPITextureSet();
-    qint64 textureHandle(int plane) override {
+    qint64 textureHandle(QRhi *, int plane) override {
         return textures[plane];
     }
 
@@ -184,7 +184,7 @@ VAAPITextureConverter::VAAPITextureConverter(QRhi *rhi)
     }
     const QString platform = QGuiApplication::platformName();
     QPlatformNativeInterface *pni = QGuiApplication::platformNativeInterface();
-    eglDisplay = pni->nativeResourceForIntegration("egldisplay");
+    eglDisplay = pni->nativeResourceForIntegration(QByteArrayLiteral("egldisplay"));
     qCDebug(qLHWAccelVAAPI) << "     platform is" << platform << eglDisplay;
 
     if (!eglDisplay) {
@@ -217,8 +217,7 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
     if (!frame->hw_frames_ctx)
         return nullptr;
 
-    auto *fCtx = (AVHWFramesContext *)frame->hw_frames_ctx->data;
-    auto *ctx = fCtx->device_ctx;
+    auto *ctx = avFrameDeviceContext(frame);
     if (!ctx)
         return nullptr;
 
@@ -231,7 +230,7 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
 
     VASurfaceID vaSurface = (uintptr_t)frame->data[3];
 
-    VADRMPRIMESurfaceDescriptor prime;
+    VADRMPRIMESurfaceDescriptor prime = {};
     if (vaExportSurfaceHandle(vaDisplay, vaSurface,
                               VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
                               VA_EXPORT_SURFACE_READ_ONLY |
@@ -245,6 +244,13 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
         qWarning() << "vaExportSurfaceHandle failed";
         return nullptr;
     }
+
+    // Make sure all fd's in 'prime' are closed when we return from this function
+    QScopeGuard closeObjectsGuard([&prime]() {
+        for (uint32_t i = 0;  i < prime.num_objects;  ++i)
+            close(prime.objects[i].fd);
+    });
+
     // ### Check that prime.fourcc is what we expect
     vaSyncSurface(vaDisplay, vaSurface);
 
@@ -301,21 +307,29 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
         };
         images[i] = eglCreateImage(eglDisplay, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, img_attr);
         if (!images[i]) {
-            qWarning() << "eglCreateImage failed for plane" << i << Qt::hex << eglGetError();
-            return nullptr;
+            const GLenum error = eglGetError();
+            if (error == EGL_BAD_MATCH) {
+                qWarning() << "eglCreateImage failed for plane" << i << "with error code EGL_BAD_MATCH, "
+                              "disabling hardware acceleration. This could indicate an EGL implementation issue."
+                              "\nVAAPI driver: " << vaQueryVendorString(vaDisplay)
+                           << "\nEGL vendor:" << eglQueryString(eglDisplay, EGL_VENDOR);
+                this->rhi = nullptr; // Disabling texture conversion here to fix QTBUG-112312
+                return nullptr;
+            }
+            if (error) {
+                qWarning() << "eglCreateImage failed for plane" << i << "with error code" << error;
+                return nullptr;
+            }
         }
         functions.glActiveTexture(GL_TEXTURE0 + i);
         functions.glBindTexture(GL_TEXTURE_2D, glTextures[i]);
 
         PFNGLEGLIMAGETARGETTEXTURE2DOESPROC eglImageTargetTexture2D = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)this->eglImageTargetTexture2D;
         eglImageTargetTexture2D(GL_TEXTURE_2D, images[i]);
-        if (glGetError()) {
-            qWarning() << "eglImageTargetTexture2D failed";
-        }
+        GLenum error = glGetError();
+        if (error)
+            qWarning() << "eglImageTargetTexture2D failed with error code" << error;
     }
-
-    for (int i = 0;  i < (int)prime.num_objects;  ++i)
-        close(prime.objects[i].fd);
 
     for (int i = 0;  i < nPlanes;  ++i) {
         functions.glActiveTexture(GL_TEXTURE0 + i);

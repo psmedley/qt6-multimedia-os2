@@ -23,7 +23,13 @@ public:
         open(QIODevice::WriteOnly);
     }
 
-    ~AudioSourceIO() override = default;
+    ~AudioSourceIO() override
+    {
+        // QAudioSource may invoke QIODevice::writeData in the destructor.
+        // Let's reset the audio source to get around the case.
+        if (m_src)
+            m_src->reset();
+    }
 
     void setDevice(const QAudioDevice &device)
     {
@@ -35,8 +41,9 @@ public:
     }
     void setFrameSize(int frameSize)
     {
-        m_bufferSize.storeRelease(frameSize > 0 ? m_format.bytesForFrames(frameSize)
-                                                : DefaultAudioInputBufferSize);
+        m_bufferSize.storeRelease((frameSize > 0 && m_format.isValid())
+                                          ? m_format.bytesForFrames(frameSize)
+                                          : DefaultAudioInputBufferSize);
     }
     void setRunning(bool r) {
         QMutexLocker locker(&m_mutex);
@@ -66,6 +73,8 @@ protected:
     }
     qint64 writeData(const char *data, qint64 len) override
     {
+        Q_ASSERT(m_src);
+
         int l = len;
         while (len > 0) {
             const auto bufferSize = m_bufferSize.loadAcquire();

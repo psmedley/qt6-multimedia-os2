@@ -6,9 +6,12 @@
 #include "private/qplatformaudioinput_p.h"
 #include "private/qplatformaudiooutput_p.h"
 #include "private/qplatformsurfacecapture_p.h"
+#include "private/qplatformaudiobufferinput_p.h"
+#include "private/qplatformvideoframeinput_p.h"
+#include "private/qplatformcamera_p.h"
+
 #include "qffmpegimagecapture_p.h"
 #include "qffmpegmediarecorder_p.h"
-#include "private/qplatformcamera_p.h"
 #include "qvideosink.h"
 #include "qffmpegaudioinput_p.h"
 #include "qaudiosink.h"
@@ -70,6 +73,17 @@ void QFFmpegMediaCaptureSession::setWindowCapture(QPlatformSurfaceCapture *windo
 {
     if (setVideoSource(m_windowCapture, windowCapture))
         emit windowCaptureChanged();
+}
+
+QPlatformVideoFrameInput *QFFmpegMediaCaptureSession::videoFrameInput()
+{
+    return m_videoFrameInput;
+}
+
+void QFFmpegMediaCaptureSession::setVideoFrameInput(QPlatformVideoFrameInput *input)
+{
+    if (setVideoSource(m_videoFrameInput, input))
+        emit videoFrameInputChanged();
 }
 
 QPlatformImageCapture *QFFmpegMediaCaptureSession::imageCapture()
@@ -136,6 +150,12 @@ void QFFmpegMediaCaptureSession::setAudioInput(QPlatformAudioInput *input)
     updateAudioSink();
 }
 
+void QFFmpegMediaCaptureSession::setAudioBufferInput(QPlatformAudioBufferInput *input)
+{
+    // TODO: implement binding to audio sink like setAudioInput does
+    m_audioBufferInput = input;
+}
+
 void QFFmpegMediaCaptureSession::updateAudioSink()
 {
     if (m_audioSink) {
@@ -162,24 +182,22 @@ void QFFmpegMediaCaptureSession::updateAudioSink()
 
     m_audioIODevice = m_audioSink->start();
     if (m_audioIODevice) {
-        connect(m_audioInput, &QFFmpegAudioInput::newAudioBuffer, m_audioSink.get(),
-                [this](const QAudioBuffer &buffer) {
-                    if (m_audioBufferSize < preferredAudioSinkBufferSize(*m_audioInput)) {
-                        qCDebug(qLcFFmpegMediaCaptureSession)
-                                << "Recreate audiosink due to small buffer size:"
-                                << m_audioBufferSize;
+        auto writeToDevice = [this](const QAudioBuffer &buffer) {
+            if (m_audioBufferSize < preferredAudioSinkBufferSize(*m_audioInput)) {
+                qCDebug(qLcFFmpegMediaCaptureSession)
+                        << "Recreate audiosink due to small buffer size:" << m_audioBufferSize;
 
-                        updateAudioSink();
-                    }
+                updateAudioSink();
+            }
 
-                    const auto written =
-                            m_audioIODevice->write(buffer.data<const char>(), buffer.byteCount());
+            const auto written =
+                    m_audioIODevice->write(buffer.data<const char>(), buffer.byteCount());
 
-                    if (written < buffer.byteCount())
-                        qCWarning(qLcFFmpegMediaCaptureSession)
-                                << "Not all bytes written:" << written << "vs"
-                                << buffer.byteCount();
-                });
+            if (written < buffer.byteCount())
+                qCWarning(qLcFFmpegMediaCaptureSession)
+                        << "Not all bytes written:" << written << "vs" << buffer.byteCount();
+        };
+        connect(m_audioInput, &QFFmpegAudioInput::newAudioBuffer, m_audioSink.get(), writeToDevice);
     } else {
         qWarning() << "Failed to start audiosink push mode";
     }
@@ -193,7 +211,7 @@ void QFFmpegMediaCaptureSession::updateVolume()
         m_audioSink->setVolume(m_audioOutput->muted ? 0.f : m_audioOutput->volume);
 }
 
-QPlatformAudioInput *QFFmpegMediaCaptureSession::audioInput()
+QPlatformAudioInput *QFFmpegMediaCaptureSession::audioInput() const
 {
     return m_audioInput;
 }
@@ -281,6 +299,18 @@ bool QFFmpegMediaCaptureSession::setVideoSource(QPointer<VideoSource> &source,
 QPlatformVideoSource *QFFmpegMediaCaptureSession::primaryActiveVideoSource()
 {
     return m_primaryActiveVideoSource;
+}
+
+std::vector<QPlatformAudioBufferInputBase *> QFFmpegMediaCaptureSession::activeAudioInputs() const
+{
+    std::vector<QPlatformAudioBufferInputBase *> result;
+    if (m_audioInput)
+        result.push_back(m_audioInput);
+
+    if (m_audioBufferInput)
+        result.push_back(m_audioBufferInput);
+
+    return result;
 }
 
 QT_END_NAMESPACE

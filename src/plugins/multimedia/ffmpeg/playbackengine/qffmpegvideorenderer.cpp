@@ -4,20 +4,28 @@
 #include "playbackengine/qffmpegvideorenderer_p.h"
 #include "qffmpegvideobuffer_p.h"
 #include "qvideosink.h"
+#include "private/qvideoframe_p.h"
 
 QT_BEGIN_NAMESPACE
 
 namespace QFFmpeg {
 
-VideoRenderer::VideoRenderer(const TimeController &tc, QVideoSink *sink, QtVideo::Rotation rotation)
-    : Renderer(tc), m_sink(sink), m_rotation(rotation)
+VideoRenderer::VideoRenderer(const TimeController &tc, QVideoSink *sink,
+                             const VideoTransformation &transform)
+    : Renderer(tc), m_sink(sink), m_transform(transform)
 {
 }
 
 void VideoRenderer::setOutput(QVideoSink *sink, bool cleanPrevSink)
 {
-    setOutputInternal(m_sink, sink, [cleanPrevSink](QVideoSink *prev) {
-        if (prev && cleanPrevSink)
+    setOutputInternal(m_sink, sink, [=](QVideoSink *prev) {
+        if (!prev)
+            return;
+
+        if (sink)
+            sink->setVideoFrame(prev->videoFrame());
+
+        if (cleanPrevSink)
             prev->setVideoFrame({});
     });
 }
@@ -62,10 +70,11 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
     format.setColorTransfer(buffer->colorTransfer());
     format.setColorRange(buffer->colorRange());
     format.setMaxLuminance(buffer->maxNits());
-    QVideoFrame videoFrame(buffer.release(), format);
+    format.setRotation(m_transform.rotation);
+    format.setMirrored(m_transform.mirrorredHorizontallyAfterRotation);
+    QVideoFrame videoFrame = QVideoFramePrivate::createFrame(std::move(buffer), format);
     videoFrame.setStartTime(frame.pts());
     videoFrame.setEndTime(frame.end());
-    videoFrame.setRotationAngle(QVideoFrame::RotationAngle(m_rotation));
     m_sink->setVideoFrame(videoFrame);
 
     return {};

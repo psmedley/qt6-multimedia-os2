@@ -1,5 +1,5 @@
 # Copyright (C) 2022 The Qt Company Ltd.
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 cmake_minimum_required(VERSION 3.16)
 project(audiooutput LANGUAGES CXX)
@@ -18,6 +18,8 @@ qt_add_executable(audiooutput
     audiooutput.cpp audiooutput.h
     main.cpp
 )
+
+qt_add_ios_ffmpeg_libraries(audiooutput)
 
 set_target_properties(audiooutput PROPERTIES
     WIN32_EXECUTABLE TRUE

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qffmpeghwaccel_d3d11_p.h"
+#include "playbackengine/qffmpegstreamdecoder_p.h"
 
 #include <qvideoframeformat.h>
 #include "qffmpegvideobuffer_p.h"
@@ -41,13 +42,70 @@ ComPtr<ID3D11Device1> GetD3DDevice(QRhi *rhi)
     return dev1;
 }
 
+ComPtr<ID3D11Texture2D> getAvFrameTexture(const AVFrame *frame)
+{
+    return reinterpret_cast<ID3D11Texture2D *>(frame->data[0]);
+}
+
+int getAvFramePoolIndex(const AVFrame *frame)
+{
+    return static_cast<int>(reinterpret_cast<intptr_t>(frame->data[1]));
+}
+
+const AVD3D11VADeviceContext *getHwDeviceContext(const AVHWDeviceContext *ctx)
+{
+    return static_cast<AVD3D11VADeviceContext *>(ctx->hwctx);
+}
+
+void freeTextureAndData(void *opaque, uint8_t *data)
+{
+    static_cast<ID3D11Texture2D *>(opaque)->Release();
+    av_free(data);
+}
+
+AVBufferRef *wrapTextureAsBuffer(const ComPtr<ID3D11Texture2D> &tex)
+{
+    AVD3D11FrameDescriptor *avFrameDesc =
+            static_cast<AVD3D11FrameDescriptor *>(av_mallocz(sizeof(AVD3D11FrameDescriptor)));
+    avFrameDesc->index = 0;
+    avFrameDesc->texture = tex.Get();
+
+    return av_buffer_create(reinterpret_cast<uint8_t *>(avFrameDesc),
+                            sizeof(AVD3D11FrameDescriptor *), freeTextureAndData, tex.Get(), 0);
+}
+
+ComPtr<ID3D11Texture2D> copyTexture(const AVD3D11VADeviceContext *hwDevCtx, const AVFrame *src)
+{
+    const int poolIndex = getAvFramePoolIndex(src);
+    const ComPtr<ID3D11Texture2D> poolTex = getAvFrameTexture(src);
+
+    D3D11_TEXTURE2D_DESC texDesc{};
+    poolTex->GetDesc(&texDesc);
+
+    texDesc.ArraySize = 1;
+    texDesc.MiscFlags = 0;
+    texDesc.BindFlags = 0;
+
+    ComPtr<ID3D11Texture2D> destTex;
+    if (hwDevCtx->device->CreateTexture2D(&texDesc, nullptr, &destTex) != S_OK) {
+        qCCritical(qLcMediaFFmpegHWAccel) << "Unable to copy frame from decoder pool";
+        return {};
+    }
+
+    hwDevCtx->device_context->CopySubresourceRegion(destTex.Get(), 0, 0, 0, 0, poolTex.Get(),
+                                                    poolIndex, nullptr);
+
+    return destTex;
+}
+
 } // namespace
 namespace QFFmpeg {
 
 bool TextureBridge::copyToSharedTex(ID3D11Device *dev, ID3D11DeviceContext *ctx,
-                                    const ComPtr<ID3D11Texture2D> &tex, UINT index)
+                                    const ComPtr<ID3D11Texture2D> &tex, UINT index,
+                                    const QSize &frameSize)
 {
-    if (!ensureSrcTex(dev, tex))
+    if (!ensureSrcTex(dev, tex, frameSize))
         return false;
 
     // Flush to ensure that texture is fully updated before we share it.
@@ -56,7 +114,14 @@ bool TextureBridge::copyToSharedTex(ID3D11Device *dev, ID3D11DeviceContext *ctx,
     if (m_srcMutex->AcquireSync(m_srcKey, INFINITE) != S_OK)
         return false;
 
-    ctx->CopySubresourceRegion(m_srcTex.Get(), 0, 0, 0, 0, tex.Get(), index, nullptr);
+    const UINT width = static_cast<UINT>(frameSize.width());
+    const UINT height = static_cast<UINT>(frameSize.height());
+
+    // A crop box is needed because FFmpeg may have created textures
+    // that are bigger than the frame size to account for the decoder's
+    // surface alignment requirements.
+    const D3D11_BOX crop{ 0, 0, 0, width, height, 1 };
+    ctx->CopySubresourceRegion(m_srcTex.Get(), 0, 0, 0, 0, tex.Get(), index, &crop);
 
     m_srcMutex->ReleaseSync(m_destKey);
     return true;
@@ -80,10 +145,16 @@ ComPtr<ID3D11Texture2D> TextureBridge::copyFromSharedTex(const ComPtr<ID3D11Devi
 
 bool TextureBridge::ensureDestTex(const ComPtr<ID3D11Device1> &dev)
 {
+    if (m_destDevice != dev) {
+        // Destination device changed. Recreate texture.
+        m_destTex = nullptr;
+        m_destDevice = dev;
+    }
+
     if (m_destTex)
         return true;
 
-    if (dev->OpenSharedResource1(m_sharedHandle.get(), IID_PPV_ARGS(&m_destTex)) != S_OK)
+    if (m_destDevice->OpenSharedResource1(m_sharedHandle.get(), IID_PPV_ARGS(&m_destTex)) != S_OK)
         return false;
 
     CD3D11_TEXTURE2D_DESC desc{};
@@ -92,7 +163,7 @@ bool TextureBridge::ensureDestTex(const ComPtr<ID3D11Device1> &dev)
     desc.MiscFlags = 0;
     desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
-    if (dev->CreateTexture2D(&desc, nullptr, m_outputTex.ReleaseAndGetAddressOf()) != S_OK)
+    if (m_destDevice->CreateTexture2D(&desc, nullptr, m_outputTex.ReleaseAndGetAddressOf()) != S_OK)
         return false;
 
     if (m_destTex.As(&m_destMutex) != S_OK)
@@ -101,23 +172,24 @@ bool TextureBridge::ensureDestTex(const ComPtr<ID3D11Device1> &dev)
     return true;
 }
 
-bool TextureBridge::ensureSrcTex(ID3D11Device *dev, const ComPtr<ID3D11Texture2D> &tex)
+bool TextureBridge::ensureSrcTex(ID3D11Device *dev, const ComPtr<ID3D11Texture2D> &tex, const QSize &frameSize)
 {
-    if (!isSrcInitialized(dev, tex))
-        return recreateSrc(dev, tex);
+    if (!isSrcInitialized(dev, tex, frameSize))
+        return recreateSrc(dev, tex, frameSize);
 
     return true;
 }
 
 bool TextureBridge::isSrcInitialized(const ID3D11Device *dev,
-                                     const ComPtr<ID3D11Texture2D> &tex) const
+                                     const ComPtr<ID3D11Texture2D> &tex,
+                                     const QSize &frameSize) const
 {
     if (!m_srcTex)
         return false;
 
     // Check if device has changed
     ComPtr<ID3D11Device> texDevice;
-    tex->GetDevice(texDevice.GetAddressOf());
+    m_srcTex->GetDevice(texDevice.GetAddressOf());
     if (dev != texDevice.Get())
         return false;
 
@@ -131,20 +203,26 @@ bool TextureBridge::isSrcInitialized(const ID3D11Device *dev,
     if (inputDesc.Format != currentDesc.Format)
         return false;
 
-    if (inputDesc.Width != currentDesc.Width || inputDesc.Height != currentDesc.Height)
+    const UINT width = static_cast<UINT>(frameSize.width());
+    const UINT height = static_cast<UINT>(frameSize.height());
+
+    if (currentDesc.Width != width || currentDesc.Height != height)
         return false;
 
     return true;
 }
 
-bool TextureBridge::recreateSrc(ID3D11Device *dev, const ComPtr<ID3D11Texture2D> &tex)
+bool TextureBridge::recreateSrc(ID3D11Device *dev, const ComPtr<ID3D11Texture2D> &tex, const QSize &frameSize)
 {
     m_sharedHandle.close();
 
     CD3D11_TEXTURE2D_DESC desc{};
     tex->GetDesc(&desc);
 
-    CD3D11_TEXTURE2D_DESC texDesc{ desc.Format, desc.Width, desc.Height };
+    const UINT width = static_cast<UINT>(frameSize.width());
+    const UINT height = static_cast<UINT>(frameSize.height());
+
+    CD3D11_TEXTURE2D_DESC texDesc{ desc.Format, width, height };
     texDesc.MipLevels = 1;
     texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
@@ -172,11 +250,20 @@ bool TextureBridge::recreateSrc(ID3D11Device *dev, const ComPtr<ID3D11Texture2D>
 class D3D11TextureSet : public TextureSet
 {
 public:
-    D3D11TextureSet(ComPtr<ID3D11Texture2D> &&tex) : m_tex(std::move(tex)) { }
+    D3D11TextureSet(QRhi *rhi, ComPtr<ID3D11Texture2D> &&tex)
+        : m_owner{ rhi }, m_tex(std::move(tex))
+    {
+    }
 
-    qint64 textureHandle(int /*plane*/) override { return reinterpret_cast<qint64>(m_tex.Get()); }
+    qint64 textureHandle(QRhi *rhi, int /*plane*/) override
+    {
+        if (rhi != m_owner)
+            return 0u;
+        return reinterpret_cast<qint64>(m_tex.Get());
+    }
 
 private:
+    QRhi *m_owner = nullptr;
     ComPtr<ID3D11Texture2D> m_tex;
 };
 
@@ -197,18 +284,17 @@ TextureSet *D3D11TextureConverter::getTextures(AVFrame *frame)
     if (!frame || !frame->hw_frames_ctx || frame->format != AV_PIX_FMT_D3D11)
         return nullptr;
 
-    const auto *fCtx = reinterpret_cast<AVHWFramesContext *>(frame->hw_frames_ctx->data);
-    const auto *ctx = fCtx->device_ctx;
+    const auto *ctx = avFrameDeviceContext(frame);
 
     if (!ctx || ctx->type != AV_HWDEVICE_TYPE_D3D11VA)
         return nullptr;
 
-    const ComPtr<ID3D11Texture2D> ffmpegTex = reinterpret_cast<ID3D11Texture2D *>(frame->data[0]);
-    const int index = static_cast<int>(reinterpret_cast<intptr_t>(frame->data[1]));
+    const ComPtr<ID3D11Texture2D> ffmpegTex = getAvFrameTexture(frame);
+    const int index = getAvFramePoolIndex(frame);
 
     if (rhi->backend() == QRhi::D3D11) {
         {
-            const auto *avDeviceCtx = static_cast<AVD3D11VADeviceContext *>(ctx->hwctx);
+            const auto *avDeviceCtx = getHwDeviceContext(ctx);
 
             if (!avDeviceCtx)
                 return nullptr;
@@ -219,9 +305,11 @@ TextureSet *D3D11TextureConverter::getTextures(AVFrame *frame)
             avDeviceCtx->lock(avDeviceCtx->lock_ctx);
             QScopeGuard autoUnlock([&] { avDeviceCtx->unlock(avDeviceCtx->lock_ctx); });
 
-            // Populate the shared texture with one slice from the frame pool
+            // Populate the shared texture with one slice from the frame pool, cropping away
+            // extra surface alignment areas that FFmpeg adds to the textures
+            QSize frameSize{ frame->width, frame->height };
             if (!m_bridge.copyToSharedTex(avDeviceCtx->device, avDeviceCtx->device_context,
-                                          ffmpegTex, index)) {
+                                          ffmpegTex, index, frameSize)) {
                 return nullptr;
             }
         }
@@ -232,7 +320,7 @@ TextureSet *D3D11TextureConverter::getTextures(AVFrame *frame)
         if (!output)
             return nullptr;
 
-        return new D3D11TextureSet(std::move(output));
+        return new D3D11TextureSet(rhi, std::move(output));
     }
 
     return nullptr;
@@ -256,6 +344,41 @@ void D3D11TextureConverter::SetupDecoderTextures(AVCodecContext *s)
         qCDebug(qLcMediaFFmpegHWAccel) << "Failed to initialize HW frames context" << ret;
         av_buffer_unref(&s->hw_frames_ctx);
     }
+}
+
+AVFrameUPtr copyFromHwPoolD3D11(AVFrameUPtr src)
+{
+    if (!src || !src->hw_frames_ctx || src->format != AV_PIX_FMT_D3D11)
+        return src;
+
+    const AVHWDeviceContext *avDevCtx = avFrameDeviceContext(src.get());
+    if (!avDevCtx || avDevCtx->type != AV_HWDEVICE_TYPE_D3D11VA)
+        return src;
+
+    AVFrameUPtr dest = makeAVFrame();
+    if (av_frame_copy_props(dest.get(), src.get()) != 0) {
+        qCCritical(qLcMediaFFmpegHWAccel) << "Unable to copy frame from decoder pool";
+        return src;
+    }
+
+    const AVD3D11VADeviceContext *hwDevCtx = getHwDeviceContext(avDevCtx);
+    ComPtr<ID3D11Texture2D> destTex;
+    {
+        hwDevCtx->lock(hwDevCtx->lock_ctx);
+        destTex = copyTexture(hwDevCtx, src.get());
+        hwDevCtx->unlock(hwDevCtx->lock_ctx);
+    }
+
+    dest->buf[0] = wrapTextureAsBuffer(destTex);
+    dest->data[0] = reinterpret_cast<uint8_t *>(destTex.Detach());
+    dest->data[1] = reinterpret_cast<uint8_t *>(0); // This texture is not a texture array
+
+    dest->width = src->width;
+    dest->height = src->height;
+    dest->format = src->format;
+    dest->hw_frames_ctx = av_buffer_ref(src->hw_frames_ctx);
+
+    return dest;
 }
 
 } // namespace QFFmpeg

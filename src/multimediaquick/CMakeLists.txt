@@ -39,7 +39,6 @@ qt_internal_add_qml_module(MultimediaQuickPrivate
         Qt::MultimediaPrivate
         Qt::Quick
         Qt::QuickPrivate
-    GENERATE_CPP_EXPORTS
     OS2_SHORT_NAME Qt6MMQck
 )
 

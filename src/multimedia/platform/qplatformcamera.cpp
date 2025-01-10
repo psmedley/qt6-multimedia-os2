@@ -50,7 +50,7 @@ QVideoFrameFormat QPlatformCamera::frameFormat() const
                              m_framePixelFormat == QVideoFrameFormat::Format_Invalid
                                      ? m_cameraFormat.pixelFormat()
                                      : m_framePixelFormat);
-    result.setFrameRate(m_cameraFormat.maxFrameRate());
+    result.setStreamFrameRate(m_cameraFormat.maxFrameRate());
     return result;
 }
 
@@ -219,6 +219,13 @@ int QPlatformCamera::colorTemperatureForWhiteBalance(QCamera::WhiteBalanceMode m
         return 3000;
     }
     return 0;
+}
+
+void QPlatformCamera::updateError(QCamera::Error error, const QString &errorString)
+{
+    QMetaObject::invokeMethod(this, [this, error, errorString]() {
+        m_error.setAndNotify(error, errorString, *this);
+    });
 }
 
 QT_END_NAMESPACE

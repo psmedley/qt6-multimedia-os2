@@ -14,8 +14,6 @@
 
 #include <QtMultimedia/qcameradevice.h>
 
-#include <QtMultimedia/qmediaenumdebug.h>
-
 QT_BEGIN_NAMESPACE
 
 
@@ -34,7 +32,7 @@ class Q_MULTIMEDIA_EXPORT QCamera : public QObject
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorChanged)
     Q_PROPERTY(QCameraFormat cameraFormat READ cameraFormat WRITE setCameraFormat NOTIFY cameraFormatChanged)
 
-    Q_PROPERTY(FocusMode focusMode READ focusMode WRITE setFocusMode)
+    Q_PROPERTY(FocusMode focusMode READ focusMode WRITE setFocusMode NOTIFY focusModeChanged)
     Q_PROPERTY(QPointF focusPoint READ focusPoint NOTIFY focusPointChanged)
     Q_PROPERTY(QPointF customFocusPoint READ customFocusPoint WRITE setCustomFocusPoint NOTIFY customFocusPointChanged)
     Q_PROPERTY(float focusDistance READ focusDistance WRITE setFocusDistance NOTIFY focusDistanceChanged)
@@ -43,7 +41,7 @@ class Q_MULTIMEDIA_EXPORT QCamera : public QObject
     Q_PROPERTY(float maximumZoomFactor READ maximumZoomFactor NOTIFY maximumZoomFactorChanged)
     Q_PROPERTY(float zoomFactor READ zoomFactor WRITE setZoomFactor NOTIFY zoomFactorChanged)
     Q_PROPERTY(float exposureTime READ exposureTime NOTIFY exposureTimeChanged)
-    Q_PROPERTY(int manualExposureTime READ manualExposureTime WRITE setManualExposureTime NOTIFY manualExposureTimeChanged)
+    Q_PROPERTY(float manualExposureTime READ manualExposureTime WRITE setManualExposureTime NOTIFY manualExposureTimeChanged)
     Q_PROPERTY(int isoSensitivity READ isoSensitivity NOTIFY isoSensitivityChanged)
     Q_PROPERTY(int manualIsoSensitivity READ manualIsoSensitivity WRITE setManualIsoSensitivity NOTIFY manualIsoSensitivityChanged)
     Q_PROPERTY(float exposureCompensation READ exposureCompensation WRITE setExposureCompensation NOTIFY exposureCompensationChanged)
@@ -131,6 +129,7 @@ public:
         FocusDistance = 0x20
     };
     Q_DECLARE_FLAGS(Features, Feature)
+    Q_FLAG(Features)
 
     explicit QCamera(QObject *parent = nullptr);
     explicit QCamera(const QCameraDevice& cameraDevice, QObject *parent = nullptr);
@@ -261,14 +260,11 @@ private:
     friend class QMediaCaptureSession;
     Q_DISABLE_COPY(QCamera)
     Q_DECLARE_PRIVATE(QCamera)
-    Q_PRIVATE_SLOT(d_func(), void _q_error(int, const QString &))
     friend class QCameraDevice;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(QCamera::Features)
 
 QT_END_NAMESPACE
-
-Q_MEDIA_ENUM_DEBUG(QCamera, Error)
 
 #endif  // QCAMERA_H

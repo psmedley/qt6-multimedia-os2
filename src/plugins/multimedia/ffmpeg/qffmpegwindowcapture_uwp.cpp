@@ -3,7 +3,8 @@
 
 #include "qffmpegwindowcapture_uwp_p.h"
 #include "qffmpegsurfacecapturegrabber_p.h"
-#include <private/qabstractvideobuffer_p.h>
+#include "qabstractvideobuffer.h"
+#include <private/qvideoframe_p.h>
 
 #include <unknwn.h>
 #include <winrt/base.h>
@@ -82,14 +83,9 @@ struct MultithreadedApartment
 class QUwpTextureVideoBuffer : public QAbstractVideoBuffer
 {
 public:
-    QUwpTextureVideoBuffer(com_ptr<IDXGISurface> &&surface)
-        : QAbstractVideoBuffer(QVideoFrame::NoHandle), m_surface(surface)
-    {
-    }
+    QUwpTextureVideoBuffer(com_ptr<IDXGISurface> &&surface) : m_surface(surface) { }
 
-    ~QUwpTextureVideoBuffer() override { QUwpTextureVideoBuffer::unmap(); }
-
-    QVideoFrame::MapMode mapMode() const override { return m_mapMode; }
+    ~QUwpTextureVideoBuffer() override { Q_ASSERT(m_mapMode == QVideoFrame::NotMapped); }
 
     MapData map(QVideoFrame::MapMode mode) override
     {
@@ -104,10 +100,10 @@ public:
                 hr = m_surface->GetDesc(&desc);
 
                 MapData md = {};
-                md.nPlanes = 1;
+                md.planeCount = 1;
                 md.bytesPerLine[0] = rect.Pitch;
                 md.data[0] = rect.pBits;
-                md.size[0] = rect.Pitch * desc.Height;
+                md.dataSize[0] = rect.Pitch * desc.Height;
 
                 m_mapMode = QVideoFrame::ReadOnly;
 
@@ -132,6 +128,8 @@ public:
 
         m_mapMode = QVideoFrame::NotMapped;
     }
+
+    QVideoFrameFormat format() const override { return {}; }
 
 private:
     QVideoFrame::MapMode m_mapMode = QVideoFrame::NotMapped;
@@ -294,7 +292,6 @@ private:
 
 class QFFmpegWindowCaptureUwp::Grabber : public QFFmpegSurfaceCaptureGrabber
 {
-    Q_OBJECT
 public:
     Grabber(QFFmpegWindowCaptureUwp &capture, HWND hwnd)
         : m_hwnd(hwnd),
@@ -306,7 +303,7 @@ public:
 
         const qreal refreshRate = getMonitorRefreshRateHz(monitor);
 
-        m_format.setFrameRate(refreshRate);
+        m_format.setStreamFrameRate(refreshRate);
         setFrameRate(refreshRate);
 
         addFrameCallback(capture, &QFFmpegWindowCaptureUwp::newVideoFrame);
@@ -354,7 +351,8 @@ protected:
 
             m_format.setFrameSize(size);
 
-            return QVideoFrame(new QUwpTextureVideoBuffer(std::move(texture)), m_format);
+            return QVideoFramePrivate::createFrame(
+                    std::make_unique<QUwpTextureVideoBuffer>(std::move(texture)), m_format);
 
         } catch (const winrt::hresult_error &err) {
 
@@ -505,5 +503,3 @@ QVideoFrameFormat QFFmpegWindowCaptureUwp::frameFormat() const
 }
 
 QT_END_NAMESPACE
-
-#include "qffmpegwindowcapture_uwp.moc"

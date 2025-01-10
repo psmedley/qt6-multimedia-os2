@@ -35,12 +35,11 @@ QDarwinAudioSinkBuffer::QDarwinAudioSinkBuffer(int bufferSize, int maxPeriodSize
     : m_maxPeriodSize(maxPeriodSize),
       m_bytesPerFrame(audioFormat.bytesPerFrame()),
       m_periodTime(maxPeriodSize / m_bytesPerFrame * 1000 / audioFormat.sampleRate()),
-      m_buffer(
-              std::make_unique<CoreAudioRingBuffer>(audioRingBufferSize(bufferSize, maxPeriodSize)))
+      m_buffer(audioRingBufferSize(bufferSize, maxPeriodSize))
 {
     m_fillTimer = new QTimer(this);
     m_fillTimer->setTimerType(Qt::PreciseTimer);
-    m_fillTimer->setInterval(m_buffer->size() / 2 / m_maxPeriodSize * m_periodTime);
+    m_fillTimer->setInterval(m_buffer.size() / 2 / m_maxPeriodSize * m_periodTime);
     connect(m_fillTimer, &QTimer::timeout, this, &QDarwinAudioSinkBuffer::fillBuffer);
 }
 
@@ -52,22 +51,23 @@ qint64 QDarwinAudioSinkBuffer::readFrames(char *data, qint64 maxFrames)
     qint64  framesRead = 0;
 
     while (wecan && framesRead < maxFrames) {
-        CoreAudioRingBuffer::Region region = m_buffer->acquireReadRegion((maxFrames - framesRead) * m_bytesPerFrame);
+        QSpan<const char> region =
+                m_buffer.acquireReadRegion((maxFrames - framesRead) * m_bytesPerFrame);
 
-        if (region.second > 0) {
+        if (region.size() > 0) {
             // Ensure that we only read whole frames.
-            region.second -= region.second % m_bytesPerFrame;
+            region = region.first(region.size() - region.size() % m_bytesPerFrame);
 
-            if (region.second > 0) {
-                memcpy(data + (framesRead * m_bytesPerFrame), region.first, region.second);
-                framesRead += region.second / m_bytesPerFrame;
+            if (region.size() > 0) {
+                memcpy(data + (framesRead * m_bytesPerFrame), region.data(), region.size());
+                framesRead += region.size() / m_bytesPerFrame;
             } else
                 wecan = false; // If there is only a partial frame left we should exit.
-        }
-        else
+        } else
             wecan = false;
 
-        m_buffer->releaseReadRegion(region);
+        if (region.size())
+            m_buffer.releaseReadRegion(region.size());
     }
 
     if (framesRead == 0 && m_deviceError)
@@ -78,22 +78,8 @@ qint64 QDarwinAudioSinkBuffer::readFrames(char *data, qint64 maxFrames)
 
 qint64 QDarwinAudioSinkBuffer::writeBytes(const char *data, qint64 maxSize)
 {
-    bool    wecan = true;
-    qint64  bytesWritten = 0;
-
-    maxSize -= maxSize % m_bytesPerFrame;
-    while (wecan && bytesWritten < maxSize) {
-        CoreAudioRingBuffer::Region region = m_buffer->acquireWriteRegion(maxSize - bytesWritten);
-
-        if (region.second > 0) {
-            memcpy(region.first, data + bytesWritten, region.second);
-            bytesWritten += region.second;
-        }
-        else
-            wecan = false;
-
-        m_buffer->releaseWriteRegion(region);
-    }
+    maxSize -= maxSize % m_bytesPerFrame; // only write full frames;
+    qint64 bytesWritten = m_buffer.write(QSpan<const char>(data, maxSize));
 
     if (bytesWritten > 0)
         emit readyRead();
@@ -103,7 +89,7 @@ qint64 QDarwinAudioSinkBuffer::writeBytes(const char *data, qint64 maxSize)
 
 int QDarwinAudioSinkBuffer::available() const
 {
-    return m_buffer->free();
+    return m_buffer.free();
 }
 
 bool QDarwinAudioSinkBuffer::deviceAtEnd() const
@@ -113,7 +99,7 @@ bool QDarwinAudioSinkBuffer::deviceAtEnd() const
 
 void QDarwinAudioSinkBuffer::reset()
 {
-    m_buffer->reset();
+    m_buffer.reset();
     setFillingEnabled(false);
     setPrefetchDevice(nullptr);
 }
@@ -143,14 +129,16 @@ void QDarwinAudioSinkBuffer::setFillingEnabled(bool enabled)
     if (!enabled)
         m_fillTimer->stop();
     else if (m_device) {
-        fillBuffer();
         m_fillTimer->start();
+        // call fillBuffer() after m_fillTimer->start() so that
+        // it can stop the timer if an error has occurred.
+        fillBuffer();
     }
 }
 
 void QDarwinAudioSinkBuffer::fillBuffer()
 {
-    const int free = m_buffer->free();
+    const int free = m_buffer.free();
     const int writeSize = free - (free % m_maxPeriodSize);
 
     if (writeSize > 0) {
@@ -158,25 +146,22 @@ void QDarwinAudioSinkBuffer::fillBuffer()
         int     filled = 0;
 
         while (!m_deviceError && wecan && filled < writeSize) {
-            CoreAudioRingBuffer::Region region = m_buffer->acquireWriteRegion(writeSize - filled);
+            QSpan<char> region = m_buffer.acquireWriteRegion(writeSize - filled);
 
-            if (region.second > 0) {
-                region.second = m_device->read(region.first, region.second);
+            if (region.size() > 0) {
+                const int bytesRead = m_device->read(region.data(), region.size());
                 m_deviceAtEnd = m_device->atEnd();
-                if (region.second > 0)
-                    filled += region.second;
-                else if (region.second == 0)
+                if (bytesRead > 0) {
+                    filled += bytesRead;
+                    m_buffer.releaseWriteRegion(bytesRead);
+                } else if (bytesRead == 0)
                     wecan = false;
-                else if (region.second < 0) {
+                else if (bytesRead < 0) {
                     setFillingEnabled(false);
-                    region.second = 0;
                     m_deviceError = true;
                 }
-            }
-            else
+            } else
                 wecan = false;
-
-            m_buffer->releaseWriteRegion(region);
         }
 
         if (filled > 0)
@@ -243,7 +228,6 @@ void QDarwinAudioSink::start(QIODevice *device)
 
     m_audioBuffer->setPrefetchDevice(device);
 
-    m_pullMode = true;
     m_totalFrames = 0;
 
     m_stateMachine.start();
@@ -258,10 +242,9 @@ QIODevice *QDarwinAudioSink::start()
         return m_audioIO;
     }
 
-    m_pullMode = false;
     m_totalFrames = 0;
 
-    m_stateMachine.start(false);
+    m_stateMachine.start(QAudioStateMachine::RunningState::Idle);
 
     return m_audioIO;
 }
@@ -572,7 +555,8 @@ void QDarwinAudioSink::close()
 void QDarwinAudioSink::onAudioDeviceIdle()
 {
     const bool atEnd = m_audioBuffer->deviceAtEnd();
-    if (!m_stateMachine.updateActiveOrIdle(false, atEnd ? QAudio::NoError : QAudio::UnderrunError))
+    if (!m_stateMachine.updateActiveOrIdle(QAudioStateMachine::RunningState::Idle,
+                                           atEnd ? QAudio::NoError : QAudio::UnderrunError))
         onAudioDeviceDrained();
 }
 

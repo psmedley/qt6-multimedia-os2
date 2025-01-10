@@ -14,7 +14,7 @@
 // We mean it.
 //
 
-#include <private/qabstractvideobuffer_p.h>
+#include <private/qhwvideobuffer_p.h>
 
 #include <QtCore/qsize.h>
 
@@ -26,7 +26,7 @@ QT_BEGIN_NAMESPACE
 
 class QRhi;
 
-class QQnxCameraFrameBuffer : public QAbstractVideoBuffer
+class QQnxCameraFrameBuffer : public QHwVideoBuffer
 {
 public:
     explicit QQnxCameraFrameBuffer(const camera_buffer_t *buffer, QRhi *rhi = nullptr);
@@ -34,7 +34,6 @@ public:
     QQnxCameraFrameBuffer(const QQnxCameraFrameBuffer&) = delete;
     QQnxCameraFrameBuffer& operator=(const QQnxCameraFrameBuffer&) = delete;
 
-    QVideoFrame::MapMode mapMode() const override;
     MapData map(QVideoFrame::MapMode mode) override;
     void unmap() override;
 

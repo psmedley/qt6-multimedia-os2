@@ -1,5 +1,5 @@
 // Copyright (C) 2023 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #ifndef FIXTURE_H
 #define FIXTURE_H
@@ -7,6 +7,10 @@
 #include <qmediaplayer.h>
 #include <qaudiooutput.h>
 #include <qtest.h>
+#include <qsignalspy.h>
+
+#include "fake.h"
+#include <private/testvideosink_p.h>
 
 QT_USE_NAMESPACE
 
@@ -26,7 +30,8 @@ public:
           volumeChanged(&output, &QAudioOutput::volumeChanged),
           mutedChanged(&output, &QAudioOutput::mutedChanged),
           bufferProgressChanged(&player, &QMediaPlayer::bufferProgressChanged),
-          destroyed(&player, &QObject::destroyed)
+          destroyed(&player, &QObject::destroyed),
+          tracksChanged(&player, &QMediaPlayer::tracksChanged)
     {
         setVideoSinkAsyncFramesCounter(surface, framesCount);
 
@@ -48,6 +53,7 @@ public:
         mutedChanged.clear();
         bufferProgressChanged.clear();
         destroyed.clear();
+        tracksChanged.clear();
     }
 
     QMediaPlayer player;
@@ -67,9 +73,26 @@ public:
     QSignalSpy mutedChanged;
     QSignalSpy bufferProgressChanged;
     QSignalSpy destroyed;
+    QSignalSpy tracksChanged;
 };
 
 // Helper to create an object that is comparable to a QSignalSpy
 using SignalList = QList<QList<QVariant>>;
+
+struct TestSubtitleSink : QObject
+{
+    Q_OBJECT
+
+public Q_SLOTS:
+    void addSubtitle(QString string)
+    {
+        QMetaObject::invokeMethod(this, [this, string = std::move(string)]() mutable {
+            subtitles.append(std::move(string));
+        });
+    }
+
+public:
+    QStringList subtitles;
+};
 
 #endif // FIXTURE_H

@@ -1,7 +1,5 @@
 // Copyright (C) 2016 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
-
-//TESTED_COMPONENT=src/multimedia
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtTest/QtTest>
 #include <QtCore/qlocale.h>
@@ -39,6 +37,9 @@ private slots:
     void testSupportedMimeTypes();
     void testCorruptFile();
 
+    void setAudioDevice_emitsSignalsInExpectedOrder_data();
+    void setAudioDevice_emitsSignalsInExpectedOrder();
+
 private:
     QSoundEffect* sound;
     QUrl url; // test.wav: pcm_s16le, 48000 Hz, stereo, s16
@@ -48,15 +49,12 @@ private:
 
 void tst_QSoundEffect::init()
 {
-    sound->stop();
-    sound->setSource(QUrl());
-    sound->setLoopCount(1);
-    sound->setVolume(1.0);
-    sound->setMuted(false);
+    sound = new QSoundEffect(this);
 }
 
 void tst_QSoundEffect::cleanup()
 {
+    sound = nullptr;
 }
 
 void tst_QSoundEffect::initTestCase()
@@ -87,11 +85,12 @@ void tst_QSoundEffect::initTestCase()
     QVERIFY(sound->loopCount() == 1);
     QVERIFY(sound->volume() == 1);
     QVERIFY(sound->isMuted() == false);
+    sound = nullptr;
 }
 
 void tst_QSoundEffect::testSource()
 {
-    QSignalSpy readSignal(sound, SIGNAL(sourceChanged()));
+    QSignalSpy readSignal(sound, &QSoundEffect::sourceChanged);
 
     sound->setSource(url);
     sound->setVolume(0.1f);
@@ -110,8 +109,8 @@ void tst_QSoundEffect::testLooping()
     sound->setSource(url);
     QTRY_COMPARE(sound->status(), QSoundEffect::Ready);
 
-    QSignalSpy readSignal_Count(sound, SIGNAL(loopCountChanged()));
-    QSignalSpy readSignal_Remaining(sound, SIGNAL(loopsRemainingChanged()));
+    QSignalSpy readSignal_Count(sound, &QSoundEffect::loopCountChanged);
+    QSignalSpy readSignal_Remaining(sound, &QSoundEffect::loopsRemainingChanged);
 
     sound->setLoopCount(3);
     sound->setVolume(0.1f);
@@ -197,7 +196,7 @@ void tst_QSoundEffect::testLooping()
 
 void tst_QSoundEffect::testVolume()
 {
-    QSignalSpy readSignal(sound, SIGNAL(volumeChanged()));
+    QSignalSpy readSignal(sound, &QSoundEffect::volumeChanged);
 
     sound->setVolume(0.5);
     QCOMPARE(sound->volume(),0.5);
@@ -207,7 +206,7 @@ void tst_QSoundEffect::testVolume()
 
 void tst_QSoundEffect::testMuting()
 {
-    QSignalSpy readSignal(sound, SIGNAL(mutedChanged()));
+    QSignalSpy readSignal(sound, &QSoundEffect::mutedChanged);
 
     sound->setMuted(true);
     QCOMPARE(sound->isMuted(),true);
@@ -236,6 +235,7 @@ void tst_QSoundEffect::testPlaying()
 
     //invalid source
     sound->setSource(QUrl((QLatin1String("invalid source"))));
+    QTest::ignoreMessage(QtMsgType::QtWarningMsg, QRegularExpression(".*Error decoding source.*"));
     QTestEventLoop::instance().enterLoop(1);
     sound->play();
     QTestEventLoop::instance().enterLoop(1);
@@ -264,6 +264,7 @@ void tst_QSoundEffect::testStatus()
     sound->setLoopCount(QSoundEffect::Infinite);
 
     sound->setSource(QUrl(QLatin1String("invalid source")));
+    QTest::ignoreMessage(QtMsgType::QtWarningMsg, QRegularExpression(".*Error decoding source.*"));
     QTestEventLoop::instance().enterLoop(1);
     QCOMPARE(sound->status(), QSoundEffect::Error);
 }
@@ -376,8 +377,14 @@ void tst_QSoundEffect::testSupportedMimeTypes()
 
 void tst_QSoundEffect::testCorruptFile()
 {
+    using namespace Qt::Literals;
+    auto expectedMessagePattern =
+            QRegularExpression(uR"(^QSoundEffect\(qaudio\): Error decoding source .*$)"_s);
+
     for (int i = 0; i < 10; i++) {
-        QSignalSpy statusSpy(sound, SIGNAL(statusChanged()));
+        QSignalSpy statusSpy(sound, &QSoundEffect::statusChanged);
+        QTest::ignoreMessage(QtMsgType::QtWarningMsg, expectedMessagePattern);
+
         sound->setSource(urlCorrupted);
         QVERIFY(!sound->isPlaying());
         QVERIFY(sound->status() == QSoundEffect::Loading || sound->status() == QSoundEffect::Error);
@@ -391,6 +398,64 @@ void tst_QSoundEffect::testCorruptFile()
         sound->play();
         QVERIFY(sound->isPlaying());
     }
+}
+
+void tst_QSoundEffect::setAudioDevice_emitsSignalsInExpectedOrder_data()
+{
+    QTest::addColumn<bool>("while_playing");
+    QTest::addColumn<bool>("with_source");
+    QTest::addColumn<QStringList>("expectedSignals");
+    QTest::addRow("while_playing")
+        << true << true << QStringList{"playingChanged", "playingChanged", "audioDeviceChanged"};
+    QTest::addRow("while_stopped, with source")
+        << false << true << QStringList{"audioDeviceChanged"};
+    QTest::addRow("while_stopped, without source")
+        << false << false << QStringList{"audioDeviceChanged"};
+}
+
+void tst_QSoundEffect::setAudioDevice_emitsSignalsInExpectedOrder()
+{
+    // Arrange
+    QList outputs = QMediaDevices::audioOutputs();
+    if (outputs.size() < 2)
+        QSKIP("Needs at least 2 audioOuputs");
+
+    QFETCH(bool, while_playing);
+    QFETCH(bool, with_source);
+    QFETCH(QStringList, expectedSignals);
+
+    // Track the order of emitted signals by appending them to a list
+    QStringList emittedSignals;
+    connect(sound, &QSoundEffect::audioDeviceChanged, this, [&emittedSignals]() {
+        emittedSignals.append("audioDeviceChanged");
+    });
+    connect(sound, &QSoundEffect::playingChanged, this, [&emittedSignals]() {
+        emittedSignals.append("playingChanged");
+    });
+    connect(sound, &QSoundEffect::statusChanged, this, [&emittedSignals]() {
+        emittedSignals.append("statusChanged");
+    });
+
+    // Set source or not based on test data
+    if (with_source)
+        sound->setSource(url);
+    QTRY_COMPARE(sound->isLoaded(), with_source);
+
+    // Start playback or not based on test data
+    if (while_playing) {
+        sound->play();
+    }
+    QTRY_COMPARE(sound->isPlaying(), while_playing);
+
+    QVERIFY(sound->audioDevice() != outputs.at(1));
+    emittedSignals.clear();
+
+    // Act
+    sound->setAudioDevice(outputs.at(1));
+
+    // Assert
+    QTRY_VERIFY(sound->isPlaying() == while_playing); // Verify that playback state didn't change
+    QCOMPARE(emittedSignals, expectedSignals);
 }
 
 QTEST_MAIN(tst_QSoundEffect)

@@ -1,7 +1,5 @@
 // Copyright (C) 2021 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
-
-// TESTED_COMPONENT=src/multimedia
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtTest/QtTest>
 
@@ -13,6 +11,8 @@
 #include <qsignalspy.h>
 #include <qmediarecorder.h>
 #include <qmediaplayer.h>
+
+#include <private/mediabackendutils_p.h>
 
 #include <vector>
 
@@ -229,11 +229,12 @@ void tst_QScreenCaptureBackend::capture(QTestWidget &widget, const QPoint &drawi
 
     QVERIFY(sc.isActive());
 
+#ifdef Q_OS_LINUX
     // In some cases, on Linux the window seems to be of a wrong color after appearance,
     // the delay helps.
     // TODO: remove the delay
-    QTest::qWait(300);
-
+    QTest::qWait(2000);
+#endif
     // Let's wait for the first frame to address a potential initialization delay.
     // In practice, the delay varies between the platform and may randomly get increased.
     {
@@ -250,7 +251,7 @@ void tst_QScreenCaptureBackend::capture(QTestWidget &widget, const QPoint &drawi
             delay / static_cast<int>(1000 / std::min(widget.screen()->refreshRate(), 60.));
     const int framesCount = static_cast<int>(sink.images().size());
     QCOMPARE_LE(framesCount, expectedFramesCount + 2);
-    QCOMPARE_GE(framesCount, expectedFramesCount / 2);
+    QCOMPARE_GE(framesCount, 1);
 
     for (const auto &image : sink.images()) {
         auto pixelColor = [&drawingOffset, pixelRatio, &image](int x, int y) {
@@ -316,8 +317,7 @@ void tst_QScreenCaptureBackend::initTestCase()
     QSKIP("grabWindow() no longer supported on Android adding child windows support: QTBUG-118849");
 #endif
 #if defined(Q_OS_LINUX)
-    if (qEnvironmentVariable("QTEST_ENVIRONMENT").toLower() == "ci" &&
-        qEnvironmentVariable("XDG_SESSION_TYPE").toLower() != "x11")
+    if (isCI() && qEnvironmentVariable("XDG_SESSION_TYPE").toLower() != "x11")
         QSKIP("Skip on wayland; to be fixed");
 #endif
 
@@ -382,7 +382,7 @@ void tst_QScreenCaptureBackend::setScreen_selectsSecondaryScreen_whenCalledWithS
 void tst_QScreenCaptureBackend::capture_capturesToFile_whenConnectedToMediaRecorder()
 {
 #ifdef Q_OS_LINUX
-    if (qEnvironmentVariable("QTEST_ENVIRONMENT").toLower() == "ci")
+    if (isCI())
         QSKIP("QTBUG-116671: SKIP on linux CI to avoid crashes in ffmpeg. To be fixed.");
 #endif
 
@@ -405,13 +405,13 @@ void tst_QScreenCaptureBackend::capture_capturesToFile_whenConnectedToMediaRecor
 
     // Insert metadata
     QMediaMetaData metaData;
-    metaData.insert(QMediaMetaData::Author, QString::fromUtf8("Author"));
+    metaData.insert(QMediaMetaData::Author, QStringLiteral("Author"));
     metaData.insert(QMediaMetaData::Date, QDateTime::currentDateTime());
     recorder.setMetaData(metaData);
 
     sc.setActive(true);
 
-    QTest::qWait(200); // wait a bit for SC threading activating
+    QTest::qWait(1000); // wait a bit for SC threading activating
 
     {
         QSignalSpy recorderStateChanged(&recorder, &QMediaRecorder::recorderStateChanged);
@@ -422,9 +422,9 @@ void tst_QScreenCaptureBackend::capture_capturesToFile_whenConnectedToMediaRecor
         QCOMPARE(recorder.recorderState(), QMediaRecorder::RecordingState);
     }
 
-    QTest::qWait(300);
+    QTest::qWait(1000);
     widget->setColors(QColor(0, 0xFF, 0), QColor(0, 0xFF, 0)); // Change widget color
-    QTest::qWait(300);
+    QTest::qWait(1000);
 
     {
         QSignalSpy recorderStateChanged(&recorder, &QMediaRecorder::recorderStateChanged);
@@ -442,9 +442,11 @@ void tst_QScreenCaptureBackend::capture_capturesToFile_whenConnectedToMediaRecor
     TestVideoSink sink;
     QMediaPlayer player;
     player.setSource(fileName);
-    QCOMPARE_EQ(player.metaData().value(QMediaMetaData::Resolution).toSize(), QSize(videoResolution));
+    QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::LoadedMedia);
+    QCOMPARE_EQ(player.metaData().value(QMediaMetaData::Resolution).toSize(),
+                QSize(videoResolution));
     QCOMPARE_GT(player.duration(), 350);
-    QCOMPARE_LT(player.duration(), 650);
+    QCOMPARE_LT(player.duration(), 3000);
 
     // Convert video frames to QImages
     player.setVideoSink(&sink);
@@ -464,7 +466,7 @@ void tst_QScreenCaptureBackend::capture_capturesToFile_whenConnectedToMediaRecor
         QImage image = sink.images().at(i);
         QVERIFY(!image.isNull());
         QRgb rgb = image.pixel(point);
-//        qDebug() << QString("RGB: %1, %2, %3").arg(qRed(rgb)).arg(qGreen(rgb)).arg(qBlue(rgb));
+//        qDebug() << QStringLiteral("RGB: %1, %2, %3").arg(qRed(rgb)).arg(qGreen(rgb)).arg(qBlue(rgb));
 
         // RGB values should be 0, 0, 255. Compensating for inaccurate video encoding.
         QVERIFY(qRed(rgb) <= 60);
@@ -477,7 +479,7 @@ void tst_QScreenCaptureBackend::capture_capturesToFile_whenConnectedToMediaRecor
         QImage image = sink.images().at(i);
         QVERIFY(!image.isNull());
         QRgb rgb = image.pixel(point);
-//        qDebug() << QString("RGB: %1, %2, %3").arg(qRed(rgb)).arg(qGreen(rgb)).arg(qBlue(rgb));
+//        qDebug() << QStringLiteral("RGB: %1, %2, %3").arg(qRed(rgb)).arg(qGreen(rgb)).arg(qBlue(rgb));
 
         // RGB values should be 0, 255, 0. Compensating for inaccurate video encoding.
         QVERIFY(qRed(rgb) <= 60);

@@ -5,6 +5,8 @@
 #include "private/qplatformmediaintegration_p.h"
 #include "private/qplatformmediadevices_p.h"
 
+#include <QtCore/qmetaobject.h>
+
 #include <qaudiodevice.h>
 #include <qcameradevice.h>
 
@@ -60,7 +62,7 @@ QT_BEGIN_NAMESPACE
 /*!
     \qmltype MediaDevices
     \since 6.2
-    \instantiates QMediaDevices
+    \nativetype QMediaDevices
     \brief MediaDevices provides information about available
     multimedia input and output devices.
     \inqmlmodule QtMultimedia

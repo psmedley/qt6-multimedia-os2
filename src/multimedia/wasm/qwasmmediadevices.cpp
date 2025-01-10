@@ -102,8 +102,6 @@ void QWasmMediaDevices::parseDevices(emscripten::val devices)
 
         emscripten::val mediaDevice = devices[i];
 
-        std::string defaultDeviceLabel = "";
-
         const std::string deviceKind = mediaDevice["kind"].as<std::string>();
         const std::string label = mediaDevice["label"].as<std::string>();
         const std::string deviceId = mediaDevice["deviceId"].as<std::string>();
@@ -114,34 +112,22 @@ void QWasmMediaDevices::parseDevices(emscripten::val devices)
 
         if (deviceKind.empty())
             continue;
-
-        if (deviceId == std::string("default")) {
-            // chrome specifies the default device with this as deviceId
-            // and then prepends "Default - " with the name of the device
-            // in the label
-            if (label.empty())
-                continue;
-
-            defaultDeviceLabel = label;
-            continue;
-        }
-
-        const bool isDefault = false; // FIXME
-        //                                (defaultDeviceLabel.find(label) != std::string::npos);
+        bool isDefault = false;
 
         if (deviceKind == std::string("videoinput")) {
             if (!m_cameraDevices.contains(deviceId)) {
                 QCameraDevicePrivate *camera = new QCameraDevicePrivate; // QSharedData
                 camera->id = QString::fromStdString(deviceId).toUtf8();
                 camera->description = QString::fromUtf8(label.c_str());
-                camera->isDefault = isDefault;
-
+                // no camera defaults, first in wins!
+                camera->isDefault = !m_videoInputsAdded;
                 m_cameraDevices.insert(deviceId, camera->create());
                 m_videoInputsAdded = true;
             }
             cameraDevicesToRemove.removeOne(deviceId);
         } else if (deviceKind == std::string("audioinput")) {
             if (!m_audioInputs.contains(deviceId)) {
+                isDefault = !m_audioInputsAdded;
                 m_audioInputs.insert(deviceId,
                                      (new QWasmAudioDevice(deviceId.c_str(), label.c_str(),
                                                            isDefault, QAudioDevice::Input))
@@ -152,6 +138,7 @@ void QWasmMediaDevices::parseDevices(emscripten::val devices)
             audioInputsToRemove.removeOne(deviceId);
         } else if (deviceKind == std::string("audiooutput")) {
             if (!m_audioOutputs.contains(deviceId)) {
+                isDefault = !m_audioOutputsAdded;
                 m_audioOutputs.insert(deviceId,
                                       (new QWasmAudioDevice(deviceId.c_str(), label.c_str(),
                                                             isDefault, QAudioDevice::Input))

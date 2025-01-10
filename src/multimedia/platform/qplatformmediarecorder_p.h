@@ -18,6 +18,8 @@
 #include <QtCore/qurl.h>
 #include <QtCore/qsize.h>
 #include <QtCore/qmimetype.h>
+#include <QtCore/qpointer.h>
+#include <QtCore/qiodevice.h>
 
 #include <QtMultimedia/qmediarecorder.h>
 #include <QtMultimedia/qmediametadata.h>
@@ -123,7 +125,12 @@ public:
     virtual void setOutputLocation(const QUrl &location) { m_outputLocation = location; }
     QUrl actualLocation() const { return m_actualLocation; }
     void clearActualLocation() { m_actualLocation.clear(); }
-    void clearError() { error(QMediaRecorder::NoError, QString()); }
+    void clearError() { updateError(QMediaRecorder::NoError, QString()); }
+
+    QIODevice *outputDevice() const { return m_outputDevice; }
+    void setOutputDevice(QIODevice *device) { m_outputDevice = device; }
+
+    virtual void updateAutoStop() { }
 
 protected:
     explicit QPlatformMediaRecorder(QMediaRecorder *parent);
@@ -131,16 +138,19 @@ protected:
     void stateChanged(QMediaRecorder::RecorderState state);
     void durationChanged(qint64 position);
     void actualLocationChanged(const QUrl &location);
-    void error(QMediaRecorder::Error error, const QString &errorString);
+    void updateError(QMediaRecorder::Error error, const QString &errorString);
     void metaDataChanged();
 
     QMediaRecorder *mediaRecorder() { return q; }
+
+    QString findActualLocation(const QMediaEncoderSettings &settings) const;
 
 private:
     QMediaRecorder *q = nullptr;
     QErrorInfo<QMediaRecorder::Error> m_error;
     QUrl m_actualLocation;
     QUrl m_outputLocation;
+    QPointer<QIODevice> m_outputDevice;
     qint64 m_duration = 0;
 
     QMediaRecorder::RecorderState m_state = QMediaRecorder::StoppedState;

@@ -1,0 +1,10 @@
+--- src/multimediaquick/CMakeLists.txt	2024-03-19 15:39:26.000000000 +1030
++++ src/multimediaquick/CMakeLists.txt	2024-11-22 18:01:25.000000000 +1030
+@@ -39,7 +39,6 @@
+         Qt::MultimediaPrivate
+         Qt::Quick
+         Qt::QuickPrivate
+-    GENERATE_CPP_EXPORTS
+ )
+ 
+ target_sources(quickmultimedia PRIVATE multimedia_plugin.cpp)

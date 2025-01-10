@@ -1,14 +1,16 @@
 // Copyright (C) 2023 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR
-// GPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qeglfsscreencapture_p.h"
+
 #include "qffmpegsurfacecapturegrabber_p.h"
 #include "qguiapplication.h"
-
+#include "qopenglvideobuffer_p.h"
 #include "private/qimagevideobuffer_p.h"
+#include "private/qvideoframe_p.h"
 
 #include <QtOpenGL/private/qopenglcompositor_p.h>
+#include <QtOpenGL/private/qopenglframebufferobject_p.h>
 
 #include <QtQuick/qquickwindow.h>
 
@@ -18,12 +20,13 @@ class QEglfsScreenCapture::Grabber : public QFFmpegSurfaceCaptureGrabber
 {
 public:
     Grabber(QEglfsScreenCapture &screenCapture, QScreen *screen)
-        : QFFmpegSurfaceCaptureGrabber(false)
+        : QFFmpegSurfaceCaptureGrabber(QFFmpegSurfaceCaptureGrabber::UseCurrentThread)
     {
         addFrameCallback(screenCapture, &QEglfsScreenCapture::newVideoFrame);
         connect(this, &Grabber::errorUpdated, &screenCapture, &QEglfsScreenCapture::updateError);
-        // Limit frame rate to 30 fps for performance reasons, to be reviewed at the next optimization round
-        setFrameRate(std::min(screen->refreshRate(), 30.0));
+        // Limit frame rate to 30 fps for performance reasons,
+        // to be reviewed at the next optimization round
+        setFrameRate(std::min(screen->refreshRate(), qreal(30.0)));
     }
 
     ~Grabber() override { stop(); }
@@ -33,25 +36,29 @@ public:
 protected:
     QVideoFrame grabFrame() override
     {
-        QOpenGLCompositor *compositor = QOpenGLCompositor::instance();
-        QImage img = compositor->grab();
+        auto nativeSize = QOpenGLCompositor::instance()->nativeTargetGeometry().size();
+        auto fbo = std::make_unique<QOpenGLFramebufferObject>(nativeSize);
 
-        if (img.isNull()) {
-            updateError(Error::InternalError, QLatin1String("Null image captured"));
+        if (!QOpenGLCompositor::instance()->grabToFrameBufferObject(
+                    fbo.get(), QOpenGLCompositor::NotFlipped)) {
+            updateError(Error::InternalError, QLatin1String("Couldn't grab to framebuffer object"));
             return {};
         }
 
-        if (!m_format.isValid()) {
-            // This is a hack to use RGBX8888 video frame format for RGBA8888_Premultiplied image format,
-            // due to the lack of QVideoFrameFormat::Format_RGBA8888_Premultiplied
-            auto videoFrameFormat = img.format() == QImage::Format_RGBA8888_Premultiplied
-                    ? QVideoFrameFormat::Format_RGBX8888
-                    : QVideoFrameFormat::pixelFormatFromImageFormat(img.format());
-            m_format = { img.size(), videoFrameFormat };
-            m_format.setFrameRate(frameRate());
+        if (!fbo->isValid()) {
+            updateError(Error::InternalError, QLatin1String("Framebuffer object invalid"));
+            return {};
         }
 
-        return QVideoFrame(new QImageVideoBuffer(std::move(img)), m_format);
+        auto videoBuffer = std::make_unique<QOpenGLVideoBuffer>(std::move(fbo));
+
+        if (!m_format.isValid()) {
+            auto image = videoBuffer->ensureImageBuffer().underlyingImage();
+            m_format = { image.size(), QVideoFrameFormat::pixelFormatFromImageFormat(image.format()) };
+            m_format.setStreamFrameRate(frameRate());
+        }
+
+        return QVideoFramePrivate::createFrame(std::move(videoBuffer), m_format);
     }
 
     QVideoFrameFormat m_format;
@@ -84,10 +91,11 @@ protected:
         if (!m_format.isValid()) {
             m_format = { image.size(),
                          QVideoFrameFormat::pixelFormatFromImageFormat(image.format()) };
-            m_format.setFrameRate(frameRate());
+            m_format.setStreamFrameRate(frameRate());
         }
 
-        return QVideoFrame(new QImageVideoBuffer(std::move(image)), m_format);
+        return QVideoFramePrivate::createFrame(
+                std::make_unique<QImageVideoBuffer>(std::move(image)), m_format);
     }
 
 private:

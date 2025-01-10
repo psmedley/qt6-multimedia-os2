@@ -1,5 +1,5 @@
 // Copyright (C) 2016 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #ifndef QMOCKMEDIACAPTURESESSION_H
 #define QMOCKMEDIACAPTURESESSION_H
@@ -65,11 +65,19 @@ public:
     QPlatformSurfaceCapture *screenCapture() override { return m_screenCapture; }
     void setScreenCapture(QPlatformSurfaceCapture *capture) override { m_screenCapture = capture; }
 
+    QPlatformSurfaceCapture *windowCapture() override { return m_windowCapture; }
+    void setWindowCapture(QPlatformSurfaceCapture *capture) override { m_windowCapture = capture; }
+
+    QPlatformVideoFrameInput *videoFrameInput() override { return m_videoFrameInput; }
+    void setVideoFrameInput(QPlatformVideoFrameInput *input) override { m_videoFrameInput = input; }
+
     QMockCamera *mockCameraControl = nullptr;
     QPlatformImageCapture *mockImageCapture = nullptr;
     QMockMediaEncoder *mockControl = nullptr;
     QPlatformAudioInput *m_audioInput = nullptr;
     QPlatformSurfaceCapture *m_screenCapture = nullptr;
+    QPlatformSurfaceCapture *m_windowCapture = nullptr;
+    QPlatformVideoFrameInput *m_videoFrameInput = nullptr;
     bool hasControls;
 };
 

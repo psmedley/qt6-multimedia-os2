@@ -51,6 +51,8 @@
 #include "playbackengine/qffmpegcodec_p.h"
 #include "playbackengine/qffmpegpositionwithoffset_p.h"
 
+#include <QtCore/qpointer.h>
+
 #include <unordered_map>
 
 QT_BEGIN_NAMESPACE
@@ -58,6 +60,7 @@ QT_BEGIN_NAMESPACE
 class QAudioSink;
 class QVideoSink;
 class QAudioOutput;
+class QAudioBufferOutput;
 class QFFmpegMediaPlayer;
 
 namespace QFFmpeg
@@ -78,6 +81,8 @@ public:
     void setAudioSink(QAudioOutput *output);
 
     void setAudioSink(QPlatformAudioOutput *output);
+
+    void setAudioBufferOutput(QAudioBufferOutput *output);
 
     void setState(QMediaPlayer::PlaybackState state);
 
@@ -139,7 +144,8 @@ protected: // objects managing
 
     virtual RendererPtr createRenderer(QPlatformMediaPlayer::TrackType trackType);
 
-    void updateActiveAudioOutput(QAudioOutput *output);
+    template <typename AudioOutput>
+    void updateActiveAudioOutput(AudioOutput *output);
 
     void updateActiveVideoOutput(QVideoSink *sink, bool cleanOutput = false);
 
@@ -201,6 +207,7 @@ private:
 
     QPointer<QVideoSink> m_videoSink;
     QPointer<QAudioOutput> m_audioOutput;
+    QPointer<QAudioBufferOutput> m_audioBufferOutput;
 
     QMediaPlayer::PlaybackState m_state = QMediaPlayer::StoppedState;
 

@@ -1,6 +1,5 @@
 // Copyright (C) 2022 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR
-// GPL-2.0-only OR GPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qwasmaudioinput_p.h"
 
@@ -90,9 +89,11 @@ void QWasmAudioInput::setDeviceSourceStream(const std::string &id)
 
     emscripten::val constraints = emscripten::val::object();
     constraints.set("audio", true);
-    if (!id.empty())
-        constraints.set("deviceId", id);
-
+    if (!id.empty()) {
+        emscripten::val exactDeviceId = emscripten::val::object();
+        exactDeviceId.set("exact", id);
+        constraints.set("deviceId", exactDeviceId);
+    }
     // we do it this way as this prompts user for mic permissions
     qstdweb::Promise::make(mediaDevices, QStringLiteral("getUserMedia"),
                            std::move(getUserMediaCallback), constraints);

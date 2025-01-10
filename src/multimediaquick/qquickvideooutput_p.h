@@ -25,12 +25,29 @@
 #include <private/qtmultimediaquickglobal_p.h>
 #include <qvideoframe.h>
 #include <qvideoframeformat.h>
+#include <qvideosink.h>
 
 QT_BEGIN_NAMESPACE
 
 class QQuickVideoBackend;
 class QVideoOutputOrientationHandler;
 class QVideoSink;
+class QSGVideoNode;
+
+class QQuickVideoSink : public QVideoSink
+{
+    Q_OBJECT
+    QML_NAMED_ELEMENT(VideoSink)
+public:
+    QQuickVideoSink(QObject *parent = nullptr) : QVideoSink(parent)
+    {
+        connect(this, &QVideoSink::videoFrameChanged, this, &QQuickVideoSink::videoFrameChanged,
+                Qt::DirectConnection);
+    }
+
+Q_SIGNALS:
+    void videoFrameChanged();
+};
 
 class Q_MULTIMEDIAQUICK_EXPORT QQuickVideoOutput : public QQuickItem
 {
@@ -92,6 +109,7 @@ private:
     void invalidateSceneGraph();
 
     void initRhiForSink();
+    void updateHdr(QSGVideoNode *videoNode);
 
 private Q_SLOTS:
     void _q_newFrame(QSize);
@@ -106,7 +124,7 @@ private:
     QRectF m_lastRect;      // Cache of last rect to avoid recalculating geometry
     QRectF m_contentRect;   // Destination pixel coordinates, unclipped
     int m_orientation = 0;
-    int m_frameOrientation = 0;
+    QtVideo::Rotation m_frameDisplayingRotation = QtVideo::Rotation::None;
     Qt::AspectRatioMode m_aspectRatioMode = Qt::KeepAspectRatio;
 
     QPointer<QQuickWindow> m_window;

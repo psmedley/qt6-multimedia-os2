@@ -8,7 +8,7 @@ add_subdirectory(multimedia)
 if(ANDROID)
     add_subdirectory(android)
 endif()
-if (QT_FEATURE_spatialaudio)
+if(QT_FEATURE_spatialaudio)
     add_subdirectory(spatialaudio)
 endif()
 
@@ -25,4 +25,7 @@ if(TARGET Qt::Widgets)
 endif()
 
 add_subdirectory(plugins)
-#special case end
+
+if(QT_FEATURE_testlib AND TARGET Qt::Test)
+    add_subdirectory(multimediatestlib)
+endif()

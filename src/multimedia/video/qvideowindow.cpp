@@ -7,6 +7,9 @@
 #include <qpainter.h>
 #include <private/qguiapplication_p.h>
 #include <private/qmemoryvideobuffer_p.h>
+#include <private/qhwvideobuffer_p.h>
+#include <private/qmultimediautils_p.h>
+#include <private/qvideoframe_p.h>
 #include <qpa/qplatformintegration.h>
 
 QT_BEGIN_NAMESPACE
@@ -153,8 +156,6 @@ void QVideoWindowPrivate::initRhi()
 
     m_swapChain.reset(m_rhi->newSwapChain());
     m_swapChain->setWindow(q);
-    if (m_swapChain->isFormatSupported(QRhiSwapChain::HDRExtendedSrgbLinear))
-        m_swapChain->setFormat(QRhiSwapChain::HDRExtendedSrgbLinear);
     m_renderPass.reset(m_swapChain->newCompatibleRenderPassDescriptor());
     m_swapChain->setRenderPassDescriptor(m_renderPass.get());
 
@@ -210,8 +211,9 @@ void QVideoWindowPrivate::updateTextures(QRhiResourceUpdateBatch *rub)
 
     // We render a 1x1 black pixel when we don't have a video
     if (!m_currentFrame.isValid())
-        m_currentFrame = QVideoFrame(new QMemoryVideoBuffer(QByteArray{4, 0}, 4),
-                                     QVideoFrameFormat(QSize(1,1), QVideoFrameFormat::Format_RGBA8888));
+        m_currentFrame = QVideoFramePrivate::createFrame(
+                std::make_unique<QMemoryVideoBuffer>(QByteArray{ 4, 0 }, 4),
+                QVideoFrameFormat(QSize(1, 1), QVideoFrameFormat::Format_RGBA8888));
 
     m_frameTextures = QVideoTextureHelper::createTextures(m_currentFrame, m_rhi.get(), rub, std::move(m_frameTextures));
     if (!m_frameTextures)
@@ -332,17 +334,24 @@ void QVideoWindowPrivate::render()
         return;
     }
 
-    int frameRotationIndex = (m_currentFrame.rotationAngle() / 90) % 4;
-    QSize frameSize = m_currentFrame.size();
-    if (frameRotationIndex % 2)
-        frameSize.transpose();
-    QSize scaled = frameSize.scaled(rect.size(), aspectRatioMode);
+    const VideoTransformation frameTransformation =
+            qNormalizedFrameTransformation(m_currentFrame.surfaceFormat());
+    const QSize frameSize = qRotatedFramePresentationSize(m_currentFrame);
+    const QSize scaled = frameSize.scaled(rect.size(), aspectRatioMode);
     QRect videoRect = QRect(QPoint(0, 0), scaled);
     videoRect.moveCenter(rect.center());
     QRect subtitleRect = videoRect.intersected(rect);
 
     if (!m_hasSwapChain || (m_swapChain->currentPixelSize() != m_swapChain->surfacePixelSize()))
         resizeSwapChain();
+
+    const auto requiredSwapChainFormat =
+            qGetRequiredSwapChainFormat(m_currentFrame.surfaceFormat());
+    if (qShouldUpdateSwapChainFormat(m_swapChain.get(), requiredSwapChainFormat)) {
+        releaseSwapChain();
+        m_swapChain->setFormat(requiredSwapChainFormat);
+        resizeSwapChain();
+    }
 
     if (!m_hasSwapChain)
         return;
@@ -377,9 +386,9 @@ void QVideoWindowPrivate::render()
     if (m_subtitleDirty || m_subtitleLayout.videoSize != subtitleRect.size())
         updateSubtitle(rub, subtitleRect.size());
 
-    float mirrorFrame = m_currentFrame.mirrored() ? -1.f : 1.f;
-    float xscale = mirrorFrame * float(videoRect.width())/float(rect.width());
-    float yscale = -1.f * float(videoRect.height())/float(rect.height());
+    const float mirrorFrame = frameTransformation.mirrorredHorizontallyAfterRotation ? -1.f : 1.f;
+    const float xscale = mirrorFrame * float(videoRect.width()) / float(rect.width());
+    const float yscale = -1.f * float(videoRect.height()) / float(rect.height());
 
     QMatrix4x4 transform;
     transform.scale(xscale, yscale);
@@ -416,7 +425,7 @@ void QVideoWindowPrivate::render()
     cb->setViewport({ 0, 0, float(size.width()), float(size.height()) });
     cb->setShaderResources(m_shaderResourceBindings.get());
 
-    quint32 vertexOffset = quint32(sizeof(float)) * 16 * frameRotationIndex;
+    const quint32 vertexOffset = quint32(sizeof(float)) * 16 * frameTransformation.rotationIndex();
     const QRhiCommandBuffer::VertexInput vbufBinding(m_vertexBuf.get(), vertexOffset);
     cb->setVertexInput(0, 1, &vbufBinding);
     cb->draw(4);

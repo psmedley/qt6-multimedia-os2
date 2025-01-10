@@ -1,5 +1,5 @@
 # Copyright (C) 2022 The Qt Company Ltd.
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 cmake_minimum_required(VERSION 3.16)
 project(camera LANGUAGES CXX)
@@ -51,6 +51,8 @@ endif()
 
 set_property(TARGET camera APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
              ${CMAKE_CURRENT_SOURCE_DIR}/android)
+
+qt_add_ios_ffmpeg_libraries(camera)
 
 target_link_libraries(camera PUBLIC
     Qt::Core

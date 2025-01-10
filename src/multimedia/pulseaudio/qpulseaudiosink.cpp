@@ -42,7 +42,7 @@ static void outputStreamStateCallback(pa_stream *stream, void *userdata)
 
     case PA_STREAM_FAILED:
     default:
-        qWarning() << QString::fromLatin1("Stream error: %1")
+        qWarning() << QStringLiteral("Stream error: %1")
                               .arg(QString::fromUtf8(pa_strerror(
                                       pa_context_errno(pa_stream_get_context(stream)))));
         QPulseAudioEngine *pulseEngine = QPulseAudioEngine::instance();
@@ -152,8 +152,9 @@ void QPulseAudioSink::streamUnderflowCallback()
         exchangeDrainOperation(pa_stream_drain(m_stream, outputStreamDrainComplete, this));
     }
 
-    m_stateMachine.updateActiveOrIdle(
-            false, (m_pullMode && atEnd) ? QAudio::NoError : QAudio::UnderrunError);
+    m_stateMachine.updateActiveOrIdle(QAudioStateMachine::RunningState::Idle,
+                                      (m_pullMode && atEnd) ? QAudio::NoError
+                                                            : QAudio::UnderrunError);
 }
 
 void QPulseAudioSink::streamDrainedCallback()
@@ -214,7 +215,7 @@ QIODevice *QPulseAudioSink::start()
     gettimeofday(&lastTimingInfo, nullptr);
     lastProcessedUSecs = 0;
 
-    m_stateMachine.start(false);
+    m_stateMachine.start(QAudioStateMachine::RunningState::Idle);
 
     return m_audioSource;
 }
@@ -245,15 +246,12 @@ bool QPulseAudioSink::open()
     m_totalTimeValue = 0;
 
     if (m_streamName.isNull())
-        m_streamName = QString(QLatin1String("QtmPulseStream-%1-%2"))
-                               .arg(::getpid())
-                               .arg(quintptr(this))
-                               .toUtf8();
+        m_streamName =
+                QStringLiteral("QtmPulseStream-%1-%2").arg(::getpid()).arg(quintptr(this)).toUtf8();
 
     if (Q_UNLIKELY(qLcPulseAudioOut().isEnabled(QtDebugMsg))) {
         qCDebug(qLcPulseAudioOut) << "Opening stream with.";
-        qCDebug(qLcPulseAudioOut) << "\tFormat: "
-                                  << QPulseAudioInternal::sampleFormatToQString(spec.format);
+        qCDebug(qLcPulseAudioOut) << "\tFormat: " << spec.format;
         qCDebug(qLcPulseAudioOut) << "\tRate: " << spec.rate;
         qCDebug(qLcPulseAudioOut) << "\tChannels: " << spec.channels;
         qCDebug(qLcPulseAudioOut) << "\tFrame size: " << pa_frame_size(&spec);
@@ -470,6 +468,8 @@ void QPulseAudioSink::userFeed()
 
 qint64 QPulseAudioSink::write(const char *data, qint64 len)
 {
+    using namespace QPulseAudioInternal;
+
     QPulseAudioEngine *pulseEngine = QPulseAudioEngine::instance();
 
     pulseEngine->lock();
@@ -479,9 +479,9 @@ qint64 QPulseAudioSink::write(const char *data, qint64 len)
 
     if (pa_stream_begin_write(m_stream, &dest, &nbytes) < 0) {
         pulseEngine->unlock();
-        qCWarning(qLcPulseAudioOut) << "pa_stream_begin_write error:"
-                                    << pa_strerror(pa_context_errno(pulseEngine->context()));
-        m_stateMachine.updateActiveOrIdle(false, QAudio::IOError);
+        qCWarning(qLcPulseAudioOut)
+                << "pa_stream_begin_write error:" << currentError(pulseEngine->context());
+        m_stateMachine.updateActiveOrIdle(QAudioStateMachine::RunningState::Idle, QAudio::IOError);
         return 0;
     }
 
@@ -499,16 +499,16 @@ qint64 QPulseAudioSink::write(const char *data, qint64 len)
 
     if ((pa_stream_write(m_stream, data, len, nullptr, 0, PA_SEEK_RELATIVE)) < 0) {
         pulseEngine->unlock();
-        qCWarning(qLcPulseAudioOut) << "pa_stream_write error:"
-                                    << pa_strerror(pa_context_errno(pulseEngine->context()));
-        m_stateMachine.updateActiveOrIdle(false, QAudio::IOError);
+        qCWarning(qLcPulseAudioOut)
+                << "pa_stream_write error:" << currentError(pulseEngine->context());
+        m_stateMachine.updateActiveOrIdle(QAudioStateMachine::RunningState::Idle, QAudio::IOError);
         return 0;
     }
 
     pulseEngine->unlock();
     m_totalTimeValue += len;
 
-    m_stateMachine.updateActiveOrIdle(true);
+    m_stateMachine.updateActiveOrIdle(QAudioStateMachine::RunningState::Active);
     return len;
 }
 

@@ -1,8 +1,9 @@
 // Copyright (C) 2016 The Qt Company Ltd and/or its subsidiary(-ies).
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "private/qabstractvideobuffer_p.h"
+#include "qabstractvideobuffer.h"
 #include "private/qcameradevice_p.h"
+#include "private/qvideoframe_p.h"
 #include "avfcamerarenderer_p.h"
 #include "avfcamerasession_p.h"
 #include "avfcameraservice_p.h"
@@ -21,8 +22,7 @@
 #include <QtGui/qopengl.h>
 #endif
 
-#include <private/qabstractvideobuffer_p.h>
-
+#include <QtCore/qmetaobject.h>
 #include <QtMultimedia/qvideoframeformat.h>
 
 QT_USE_NAMESPACE
@@ -63,14 +63,13 @@ QT_USE_NAMESPACE
     // avfmediaassetwriter).
 
     CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-    AVFVideoBuffer *buffer = new AVFVideoBuffer(m_renderer, imageBuffer);
+    auto buffer = std::make_unique<AVFVideoBuffer>(m_renderer, imageBuffer);
     auto format = buffer->videoFormat();
     if (!format.isValid()) {
-        delete buffer;
         return;
     }
 
-    QVideoFrame frame(buffer, format);
+    QVideoFrame frame = QVideoFramePrivate::createFrame(std::move(buffer), format);
     m_renderer->syncHandleViewfinderFrame(frame);
 }
 
@@ -240,11 +239,7 @@ void AVFCameraRenderer::handleViewfinderFrame()
     }
 
     if (m_sink && frame.isValid()) {
-        // ### pass format to surface
-        QVideoFrameFormat format = frame.surfaceFormat();
-        if (m_needsHorizontalMirroring)
-            format.setMirrored(true);
-
+        // frame.setMirroed(m_needsHorizontalMirroring) ?
         m_sink->setVideoFrame(frame);
     }
 }

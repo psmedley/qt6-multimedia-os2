@@ -1,0 +1,18 @@
+--- src/multimedia/CMakeLists.txt	2024-03-19 15:39:26.000000000 +1030
++++ src/multimedia/CMakeLists.txt	2024-11-22 18:01:25.000000000 +1030
+@@ -110,9 +120,14 @@
+     PRIVATE_MODULE_INTERFACE
+         Qt::CorePrivate
+         Qt::GuiPrivate
+-    GENERATE_CPP_EXPORTS
++    NO_PCH_SOURCES
++        compat/removed_api.cpp
+ )
+ 
++qt_internal_extend_target(Multimedia
++    CONDITION LINUX OR ANDROID
++    SOURCES qsymbolsresolveutils.cpp qsymbolsresolveutils_p.h)
++
+ qt_internal_add_simd_part(Multimedia SIMD sse2
+     SOURCES
+         video/qvideoframeconversionhelper_sse2.cpp

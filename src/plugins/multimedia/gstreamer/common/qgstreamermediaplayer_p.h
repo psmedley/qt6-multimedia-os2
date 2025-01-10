@@ -15,39 +15,39 @@
 // We mean it.
 //
 
-#include <QtCore/qstack.h>
-#include <private/qplatformmediaplayer_p.h>
-#include <private/qtmultimediaglobal_p.h>
-#include <private/qmultimediautils_p.h>
-#include <qurl.h>
-#include <qgst_p.h>
-#include <qgstpipeline_p.h>
+#include <QtMultimedia/private/qplatformmediaplayer_p.h>
+#include <QtMultimedia/private/qtmultimediaglobal_p.h>
+#include <QtMultimedia/private/qmultimediautils_p.h>
 
+#include <QtCore/qelapsedtimer.h>
 #include <QtCore/qtimer.h>
+#include <QtCore/qurl.h>
+
+#include <common/qgst_bus_observer_p.h>
+#include <common/qgst_discoverer_p.h>
+#include <common/qgst_p.h>
+#include <common/qgstpipeline_p.h>
+
+#include <gst/play/gstplay.h>
 
 #include <array>
 
 QT_BEGIN_NAMESPACE
 
-class QNetworkAccessManager;
 class QGstreamerMessage;
-class QGstAppSrc;
 class QGstreamerAudioOutput;
 class QGstreamerVideoOutput;
 
-class Q_MULTIMEDIA_EXPORT QGstreamerMediaPlayer
-    : public QObject,
-      public QPlatformMediaPlayer,
-      public QGstreamerBusMessageFilter,
-      public QGstreamerSyncMessageFilter
+class QGstreamerMediaPlayer : public QObject,
+                              public QPlatformMediaPlayer,
+                              public QGstreamerBusMessageFilter
 {
-    Q_OBJECT
+    using QGstPlayHandle = QGstImpl::QGstHandleHelper<GstPlay>::UniqueHandle;
 
 public:
     static QMaybe<QPlatformMediaPlayer *> create(QMediaPlayer *parent = nullptr);
     ~QGstreamerMediaPlayer();
 
-    qint64 position() const override;
     qint64 duration() const override;
 
     float bufferProgress() const override;
@@ -59,7 +59,7 @@ public:
 
     QUrl media() const override;
     const QIODevice *mediaStream() const override;
-    void setMedia(const QUrl&, QIODevice *) override;
+    void setMedia(const QUrl &, QIODevice *) override;
 
     bool streamPlaybackSupported() const override { return true; }
 
@@ -75,84 +75,79 @@ public:
     void setActiveTrack(TrackType, int /*streamNumber*/) override;
 
     void setPosition(qint64 pos) override;
+    void setPosition(std::chrono::milliseconds pos);
 
     void play() override;
     void pause() override;
     void stop() override;
 
-    void *nativePipeline() override;
+    const QGstPipeline &pipeline() const;
 
-    bool processBusMessage(const QGstreamerMessage& message) override;
-    bool processSyncMessage(const QGstreamerMessage& message) override;
-public Q_SLOTS:
-    void updatePosition() { positionChanged(position()); }
+    bool canPlayQrc() const override;
 
 private:
-    QGstreamerMediaPlayer(QGstreamerVideoOutput *videoOutput, QGstElement decodebin,
-                          QGstElement videoInputSelector, QGstElement audioInputSelector,
-                          QGstElement subTitleInputSelector, QMediaPlayer *parent);
+    QGstreamerMediaPlayer(QGstreamerVideoOutput *videoOutput, QMediaPlayer *parent);
 
-    struct TrackSelector {
-        TrackSelector(TrackType, QGstElement selector);
-        QGstPad createInputPad();
-        void removeInputPad(QGstPad pad);
-        void removeAllInputPads();
-        QGstPad inputPad(int index);
-        int activeInputIndex() const { return isConnected ? tracks.indexOf(activeInputPad()) : -1; }
-        QGstPad activeInputPad() const
-        {
-            return isConnected ? QGstPad{ selector.getObject("active-pad") } : QGstPad{};
-        }
-        void setActiveInputPad(QGstPad input) { selector.set("active-pad", input); }
-        int trackCount() const { return tracks.count(); }
+    static void sourceSetupCallback(GstElement *uridecodebin, GstElement *source,
+                                    QGstreamerMediaPlayer *);
+    bool hasMedia() const;
+    bool hasValidMedia() const;
 
-        QGstElement selector;
-        TrackType type;
-        QList<QGstPad> tracks;
-        bool isConnected = false;
-    };
+    void updatePositionFromPipeline();
+    void updateBufferProgress(float);
 
-    friend class QGstreamerStreamsControl;
-    void decoderPadAdded(const QGstElement &src, const QGstPad &pad);
-    void decoderPadRemoved(const QGstElement &src, const QGstPad &pad);
-    static void uridecodebinElementAddedCallback(GstElement *uridecodebin, GstElement *child, QGstreamerMediaPlayer *that);
-    static void sourceSetupCallback(GstElement *uridecodebin, GstElement *source, QGstreamerMediaPlayer *that);
-    void parseStreamsAndMetadata();
-    void connectOutput(TrackSelector &ts);
-    void removeOutput(TrackSelector &ts);
-    void removeAllOutputs();
-    void stopOrEOS(bool eos);
-
-    std::array<TrackSelector, NTrackTypes> trackSelectors;
-    TrackSelector &trackSelector(TrackType type);
-
-    QMediaMetaData m_metaData;
-
-    int m_bufferProgress = -1;
     QUrl m_url;
     QIODevice *m_stream = nullptr;
 
-    bool prerolling = false;
-    bool m_requiresSeekOnPlay = false;
-    qint64 m_duration = 0;
-    QTimer positionUpdateTimer;
+    enum class ResourceErrorState : uint8_t {
+        NoError,
+        ErrorOccurred,
+        ErrorReported,
+    };
 
-    QGstAppSrc *m_appSrc = nullptr;
-
-    GType decodebinType;
-    QGstStructure topology;
-
-    // Gst elements
-    QGstPipeline playerPipeline;
-    QGstElement src;
-    QGstElement decoder;
+    ResourceErrorState m_resourceErrorState = ResourceErrorState::NoError;
+    float m_bufferProgress = 0.f;
+    std::chrono::milliseconds m_duration{};
 
     QGstreamerAudioOutput *gstAudioOutput = nullptr;
     QGstreamerVideoOutput *gstVideoOutput = nullptr;
 
-    //    QGstElement streamSynchronizer;
+    // // Message handler
+    bool processBusMessage(const QGstreamerMessage &message) override;
+    bool processBusMessageApplication(const QGstreamerMessage &message);
 
-    QHash<QByteArray, QGstPad> decoderOutputMap;
+    // decoder connections
+    void disconnectDecoderHandlers();
+    QGObjectHandlerScopedConnection sourceSetup;
+
+    bool discover(const QUrl &);
+
+    // play
+    QGstPlayHandle m_gstPlay;
+
+    QGstPipeline m_playbin;
+
+    QGstBusObserver m_gstPlayBus;
+
+    // metadata
+    QMediaMetaData m_metaData;
+    std::array<std::vector<QMediaMetaData>, 3> m_trackMetaData;
+    std::array<std::vector<QByteArray>, 3> m_trackIDs;
+    std::array<int, 3> m_activeTrack{};
+    QList<QSize> m_nativeSize;
+
+    void resetStateForEmptyOrInvalidMedia();
+    void updateNativeSizeOnVideoOutput();
+
+    void seekToCurrentPosition();
+
+    std::optional<std::chrono::nanoseconds> m_pendingSeek;
+
+    int stateChangeToSkip = 0;
+
+    void updateVideoTrackEnabled();
+    void updateAudioTrackEnabled();
+    void updateSubtitleTrackEnabled();
 };
 
 QT_END_NAMESPACE

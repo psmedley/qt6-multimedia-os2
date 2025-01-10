@@ -4,10 +4,10 @@
 #include "qwasmcamera_p.h"
 #include "qmediadevices.h"
 #include <qcameradevice.h>
-#include "private/qabstractvideobuffer_p.h"
 #include "private/qplatformvideosink_p.h"
 #include <private/qmemoryvideobuffer_p.h>
 #include <private/qvideotexturehelper_p.h>
+#include <private/qwasmmediadevices_p.h>
 
 #include "qwasmmediacapturesession_p.h"
 #include <common/qwasmvideooutput_p.h>
@@ -23,8 +23,33 @@
 Q_LOGGING_CATEGORY(qWasmCamera, "qt.multimedia.wasm.camera")
 
 QWasmCamera::QWasmCamera(QCamera *camera)
-    : QPlatformCamera(camera), m_cameraOutput(new QWasmVideoOutput)
+    : QPlatformCamera(camera),
+      m_cameraOutput(new QWasmVideoOutput),
+      m_cameraIsReady(false)
 {
+    QWasmMediaDevices *wasmMediaDevices =
+            static_cast<QWasmMediaDevices *>(QPlatformMediaIntegration::instance()->mediaDevices());
+
+    connect(wasmMediaDevices, &QWasmMediaDevices::videoInputsChanged,this, [this]() {
+        const QList<QCameraDevice> cameras = QMediaDevices::videoInputs();
+
+        if (!cameras.isEmpty()) {
+            if (m_cameraDev.id().isEmpty())
+                setCamera(cameras.at(0)); // default camera
+            else
+                setCamera(m_cameraDev);
+            return;
+        }
+    });
+
+    connect(this, &QWasmCamera::cameraIsReady, this, [this]() {
+        m_cameraIsReady = true;
+        if (m_cameraShouldStartActive) {
+            QTimer::singleShot(50, this, [this]() {
+                setActive(true);
+            });
+        }
+    });
 }
 
 QWasmCamera::~QWasmCamera() = default;
@@ -37,45 +62,77 @@ bool QWasmCamera::isActive() const
 void QWasmCamera::setActive(bool active)
 {
     if (!m_CaptureSession) {
-        emit error(QCamera::CameraError, QStringLiteral("video surface error"));
+        updateError(QCamera::CameraError, QStringLiteral("video surface error"));
+        m_shouldBeActive = true;
+        return;
+    }
+    if (m_cameraActive && !active)
+        m_cameraOutput->stop();
+
+    m_shouldBeActive = active;
+
+    if (!m_cameraIsReady) {
+        m_cameraShouldStartActive = true;
+        return;
+    }
+
+    QVideoSink *sink = m_CaptureSession->videoSink();
+    if (!sink) {
+        qWarning() << Q_FUNC_INFO << "sink not ready";
         return;
     }
 
     m_cameraOutput->setSurface(m_CaptureSession->videoSink());
-
     m_cameraActive = active;
-
-    if (m_cameraActive)
-        m_cameraOutput->start();
-    else
-        m_cameraOutput->pause();
+    m_shouldBeActive = false;
 
     updateCameraFeatures();
     emit activeChanged(active);
+    if (m_CaptureSession->imageCapture()) {
+         if (active) {
+            m_readyChangedConnection = connect(cameraOutput(), &QWasmVideoOutput::readyChanged, this, [this] () {
+                m_CaptureSession->setReadyForCapture(true);
+            });
+        }
+    }
+    if (!active && m_readyChangedConnection) {
+        QObject::disconnect(m_readyChangedConnection);
+    }
+
+    if (m_cameraActive)
+        m_cameraOutput->start();
 }
 
 void QWasmCamera::setCamera(const QCameraDevice &camera)
 {
+    if (camera.id().isEmpty() || (m_cameraDev.id() == camera.id())) {
+        return;
+    }
+
     m_cameraOutput->setVideoMode(QWasmVideoOutput::Camera);
 
     constexpr QSize initialSize(0, 0);
     constexpr QRect initialRect(QPoint(0, 0), initialSize);
     m_cameraOutput->createVideoElement(camera.id().toStdString()); // videoElementId
+    m_cameraOutput->doElementCallbacks();
     m_cameraOutput->createOffscreenElement(initialSize);
     m_cameraOutput->updateVideoElementGeometry(initialRect);
 
     const auto cameras = QMediaDevices::videoInputs();
+
     if (std::find(cameras.begin(), cameras.end(), camera) != cameras.end()) {
         m_cameraDev = camera;
         createCamera(m_cameraDev);
+        emit cameraIsReady();
         return;
     }
 
     if (cameras.count() > 0) {
         m_cameraDev = camera;
         createCamera(m_cameraDev);
+        emit cameraIsReady();
     } else {
-        emit error(QCamera::CameraError, QStringLiteral("Failed to find a camera"));
+        updateError(QCamera::CameraError, QStringLiteral("Failed to find a camera"));
     }
 }
 
@@ -93,6 +150,9 @@ void QWasmCamera::setCaptureSession(QPlatformMediaCaptureSession *session)
         return;
 
     m_CaptureSession = captureSession;
+
+    if (m_shouldBeActive)
+        setActive(true);
 }
 
 void QWasmCamera::setFocusMode(QCamera::FocusMode mode)
@@ -399,10 +459,6 @@ void QWasmCamera::setColorTemperature(int temperature)
 void QWasmCamera::createCamera(const QCameraDevice &camera)
 {
     m_cameraOutput->addCameraSourceElement(camera.id().toStdString());
-    // getUserMedia is async
-    QTimer::singleShot(100,[this, &camera] () {
-        m_cameraIsReady = m_cameraOutput->isCameraReady();
-    });
 }
 
 void QWasmCamera::updateCameraFeatures()

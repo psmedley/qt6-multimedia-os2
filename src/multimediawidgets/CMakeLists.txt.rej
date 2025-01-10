@@ -1,0 +1,10 @@
+--- src/multimediawidgets/CMakeLists.txt	2024-03-19 15:39:26.000000000 +1030
++++ src/multimediawidgets/CMakeLists.txt	2024-11-22 18:01:25.000000000 +1030
+@@ -20,7 +18,6 @@
+     PRIVATE_MODULE_INTERFACE
+         Qt::MultimediaPrivate
+         Qt::WidgetsPrivate
+-    GENERATE_CPP_EXPORTS
+ )
+ 
+ ## Scopes:

@@ -108,7 +108,10 @@ Player::Player(QWidget *parent) : QWidget(parent)
     connect(controls, &PlayerControls::changeRate, m_player, &QMediaPlayer::setPlaybackRate);
     connect(controls, &PlayerControls::stop, m_videoWidget, QOverload<>::of(&QVideoWidget::update));
 
-    connect(m_player, &QMediaPlayer::playbackStateChanged, controls, &PlayerControls::setState);
+    connect(m_player, &QMediaPlayer::playbackStateChanged, controls,
+            [controls](QMediaPlayer::PlaybackState arg) {
+        controls->setState(arg);
+    });
     connect(m_audioOutput, &QAudioOutput::volumeChanged, controls, &PlayerControls::setVolume);
     connect(m_audioOutput, &QAudioOutput::mutedChanged, controls, &PlayerControls::setMuted);
 
@@ -121,12 +124,16 @@ Player::Player(QWidget *parent) : QWidget(parent)
 
 #if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
     m_audioOutputCombo = new QComboBox(this);
-    m_audioOutputCombo->addItem(QString::fromUtf8("Default"), QVariant::fromValue(QAudioDevice()));
-    for (auto &deviceInfo : QMediaDevices::audioOutputs())
-        m_audioOutputCombo->addItem(deviceInfo.description(), QVariant::fromValue(deviceInfo));
+    controlLayout->addWidget(m_audioOutputCombo);
+
+    updateAudioDevices();
+
     connect(m_audioOutputCombo, QOverload<int>::of(&QComboBox::activated), this,
             &Player::audioOutputChanged);
-    controlLayout->addWidget(m_audioOutputCombo);
+
+    QObject::connect(&m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
+        updateAudioDevices();
+    });
 #endif
 
     layout->addLayout(controlLayout);
@@ -266,7 +273,7 @@ void Player::positionChanged(qint64 progress)
 void Player::metaDataChanged()
 {
     auto metaData = m_player->metaData();
-    setTrackInfo(QString("%1 - %2")
+    setTrackInfo(QStringLiteral("%1 - %2")
                          .arg(metaData.value(QMediaMetaData::AlbumArtist).toString())
                          .arg(metaData.value(QMediaMetaData::Title).toString()));
 
@@ -280,18 +287,16 @@ void Player::metaDataChanged()
         m_metaDataLabels[i]->setDisabled(true);
     }
 
-    for (auto &key : metaData.keys()) {
+    for (auto &&[key, value] : metaData.asKeyValueRange()) {
         int i = int(key);
         if (key == QMediaMetaData::CoverArtImage) {
-            QVariant v = metaData.value(key);
             if (QLabel *cover = qobject_cast<QLabel *>(m_metaDataFields[key])) {
-                QImage coverImage = v.value<QImage>();
+                QImage coverImage = value.value<QImage>();
                 cover->setPixmap(QPixmap::fromImage(coverImage));
             }
         } else if (key == QMediaMetaData::ThumbnailImage) {
-            QVariant v = metaData.value(key);
             if (QLabel *thumbnail = qobject_cast<QLabel *>(m_metaDataFields[key])) {
-                QImage thumbnailImage = v.value<QImage>();
+                QImage thumbnailImage = value.value<QImage>();
                 thumbnail->setPixmap(QPixmap::fromImage(thumbnailImage));
             }
         } else if (QLineEdit *field = qobject_cast<QLineEdit *>(m_metaDataFields[key])) {
@@ -300,6 +305,20 @@ void Player::metaDataChanged()
         }
         m_metaDataFields[i]->setDisabled(false);
         m_metaDataLabels[i]->setDisabled(false);
+    }
+
+    const QList<QMediaMetaData> tracks = m_player->videoTracks();
+    const int currentVideoTrack = m_player->activeVideoTrack();
+    if (currentVideoTrack >= 0 && currentVideoTrack < tracks.size()) {
+        const QMediaMetaData track = tracks.value(currentVideoTrack);
+        for (const QMediaMetaData::Key &key : track.keys()) {
+            if (QLineEdit *field = qobject_cast<QLineEdit *>(m_metaDataFields[key])) {
+                QString stringValue = track.stringValue(key);
+                field->setText(stringValue);
+            }
+            m_metaDataFields[key]->setDisabled(true);
+            m_metaDataLabels[key]->setDisabled(true);
+        }
     }
 #endif
 }
@@ -319,7 +338,7 @@ QString Player::trackName(const QMediaMetaData &metaData, int index)
         if (lang == QLocale::Language::AnyLanguage)
             name = title;
         else
-            name = QString("%1 - [%2]").arg(title).arg(QLocale::languageToString(lang));
+            name = QStringLiteral("%1 - [%2]").arg(title).arg(QLocale::languageToString(lang));
     }
     return name;
 }
@@ -331,18 +350,18 @@ void Player::tracksChanged()
     m_subtitleTracks->clear();
 
     const auto audioTracks = m_player->audioTracks();
-    m_audioTracks->addItem(QString::fromUtf8("No audio"), -1);
+    m_audioTracks->addItem(QStringLiteral("No audio"), -1);
     for (int i = 0; i < audioTracks.size(); ++i)
         m_audioTracks->addItem(trackName(audioTracks.at(i), i), i);
     m_audioTracks->setCurrentIndex(m_player->activeAudioTrack() + 1);
 
     const auto videoTracks = m_player->videoTracks();
-    m_videoTracks->addItem(QString::fromUtf8("No video"), -1);
+    m_videoTracks->addItem(QStringLiteral("No video"), -1);
     for (int i = 0; i < videoTracks.size(); ++i)
         m_videoTracks->addItem(trackName(videoTracks.at(i), i), i);
     m_videoTracks->setCurrentIndex(m_player->activeVideoTrack() + 1);
 
-    m_subtitleTracks->addItem(QString::fromUtf8("No subtitles"), -1);
+    m_subtitleTracks->addItem(QStringLiteral("No subtitles"), -1);
     const auto subtitleTracks = m_player->subtitleTracks();
     for (int i = 0; i < subtitleTracks.size(); ++i)
         m_subtitleTracks->addItem(trackName(subtitleTracks.at(i), i), i);
@@ -474,7 +493,7 @@ void Player::setTrackInfo(const QString &info)
         m_statusLabel->setText(m_statusInfo);
     } else {
         if (!m_statusInfo.isEmpty())
-            setWindowTitle(QString("%1 | %2").arg(m_trackInfo).arg(m_statusInfo));
+            setWindowTitle(QStringLiteral("%1 | %2").arg(m_trackInfo).arg(m_statusInfo));
         else
             setWindowTitle(m_trackInfo);
     }
@@ -489,7 +508,7 @@ void Player::setStatusInfo(const QString &info)
         m_statusLabel->setText(m_statusInfo);
     } else {
         if (!m_statusInfo.isEmpty())
-            setWindowTitle(QString("%1 | %2").arg(m_trackInfo).arg(m_statusInfo));
+            setWindowTitle(QStringLiteral("%1 | %2").arg(m_trackInfo).arg(m_statusInfo));
         else
             setWindowTitle(m_trackInfo);
     }
@@ -516,6 +535,15 @@ void Player::updateDurationInfo(qint64 currentInfo)
         tStr = currentTime.toString(format) + " / " + totalTime.toString(format);
     }
     m_labelDuration->setText(tStr);
+}
+
+void Player::updateAudioDevices()
+{
+    m_audioOutputCombo->clear();
+
+    m_audioOutputCombo->addItem(QStringLiteral("Default"), QVariant::fromValue(QAudioDevice()));
+    for (auto &deviceInfo : QMediaDevices::audioOutputs())
+        m_audioOutputCombo->addItem(deviceInfo.description(), QVariant::fromValue(deviceInfo));
 }
 
 void Player::audioOutputChanged(int index)

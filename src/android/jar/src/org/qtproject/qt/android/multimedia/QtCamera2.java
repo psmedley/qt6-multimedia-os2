@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 package org.qtproject.qt.android.multimedia;
 
-import org.qtproject.qt.android.multimedia.QtVideoDeviceManager;
-import org.qtproject.qt.android.multimedia.QtExifDataHandler;
-
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
@@ -20,20 +17,17 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
 import android.media.Image;
 import android.media.ImageReader;
-import android.graphics.ImageFormat;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
+import android.util.Range;
 import android.view.Surface;
-import android.media.MediaCodec;
-import android.media.MediaCodecInfo;
-import android.media.MediaFormat;
 import java.lang.Thread;
 import java.util.ArrayList;
 import java.util.List;
 
 @TargetApi(23)
-public class QtCamera2 {
+class QtCamera2 {
 
     CameraDevice mCameraDevice = null;
     QtVideoDeviceManager mVideoDeviceManager = null;
@@ -57,11 +51,25 @@ public class QtCamera2 {
     private int mState = STATE_PREVIEW;
     private Object mStartMutex = new Object();
     private boolean mIsStarted = false;
-    private static int MaxNumberFrames = 10;
-    private int mFlashMode = CaptureRequest.CONTROL_AE_MODE_ON;
-    private int mTorchMode = CameraMetadata.FLASH_MODE_OFF;
-    private int mAFMode = CaptureRequest.CONTROL_AF_MODE_OFF;
-    private Rect mZoom = null;
+    private static int MaxNumberFrames = 12;
+
+    private static final int defaultFlashMode = CaptureRequest.CONTROL_AE_MODE_ON;
+    private int mFlashMode = defaultFlashMode;
+    private static final int defaultTorchMode = CameraMetadata.FLASH_MODE_OFF;
+    private int mTorchMode = defaultTorchMode;
+    private static final int defaultAfMode =  CaptureRequest.CONTROL_AF_MODE_OFF;
+    private int mAFMode = defaultAfMode;
+    private static final float defaultZoomFactor = 1.0f;
+    private float mZoomFactor = defaultZoomFactor;
+    // Assumes that the mStartMutex is locked already.
+    private void resetControls() {
+        mFlashMode = defaultFlashMode;
+        mTorchMode = defaultTorchMode;
+        mAFMode = defaultAfMode;
+        mZoomFactor = defaultZoomFactor;
+    }
+
+    private Range<Integer> mFpsRange = null;
     private QtExifDataHandler mExifDataHandler = null;
 
     native void onCameraOpened(String cameraId);
@@ -122,6 +130,7 @@ public class QtCamera2 {
     native void onSessionClosed(String cameraId);
     native void onCaptureSessionFailed(String cameraId, int reason, long frameNumber);
     CameraCaptureSession.CaptureCallback mCaptureCallback = new CameraCaptureSession.CaptureCallback() {
+        @Override
         public void onCaptureFailed(CameraCaptureSession session,  CaptureRequest request,  CaptureFailure failure) {
             super.onCaptureFailed(session, request, failure);
             onCaptureSessionFailed(mCameraId, failure.getReason(), failure.getFrameNumber());
@@ -187,7 +196,7 @@ public class QtCamera2 {
         }
     };
 
-    public QtCamera2(Context context) {
+    QtCamera2(Context context) {
         mCameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
         mVideoDeviceManager = new QtVideoDeviceManager(context);
         startBackgroundThread();
@@ -211,7 +220,7 @@ public class QtCamera2 {
     }
 
     @SuppressLint("MissingPermission")
-    public boolean open(String cameraId) {
+    boolean open(String cameraId) {
         try {
             mCameraId = cameraId;
             mCameraManager.openCamera(cameraId,mStateCallback,mBackgroundHandler);
@@ -261,7 +270,14 @@ public class QtCamera2 {
         }
     };
 
-    public boolean addImageReader(int width, int height, int format) {
+
+    void prepareCamera(int width, int height, int format, int minFps, int maxFps) {
+
+        addImageReader(width, height, format);
+        setFrameRate(minFps, maxFps);
+    }
+
+    private void addImageReader(int width, int height, int format) {
 
         if (mImageReader != null)
             removeSurface(mImageReader.getSurface());
@@ -276,26 +292,32 @@ public class QtCamera2 {
         mCapturedPhotoReader = ImageReader.newInstance(width, height, format, MaxNumberFrames);
         mCapturedPhotoReader.setOnImageAvailableListener(mOnPhotoAvailableListener, mBackgroundHandler);
         addSurface(mCapturedPhotoReader.getSurface());
-
-        return true;
     }
 
-    public boolean addSurface(Surface surface) {
+    private void setFrameRate(int minFrameRate, int maxFrameRate) {
+
+        if (minFrameRate <= 0 || maxFrameRate <= 0)
+            mFpsRange = null;
+        else
+            mFpsRange = new Range<>(minFrameRate, maxFrameRate);
+    }
+
+    boolean addSurface(Surface surface) {
         if (mTargetSurfaces.contains(surface))
             return true;
 
         return mTargetSurfaces.add(surface);
     }
 
-    public boolean removeSurface(Surface surface) {
+    boolean removeSurface(Surface surface) {
         return  mTargetSurfaces.remove(surface);
     }
 
-    public void clearSurfaces() {
+    void clearSurfaces() {
         mTargetSurfaces.clear();
     }
 
-    public boolean createSession() {
+    boolean createSession() {
         if (mCameraDevice == null)
             return false;
 
@@ -308,7 +330,7 @@ public class QtCamera2 {
         return false;
     }
 
-    public boolean start(int template) {
+    boolean start(int template) {
 
         if (mCameraDevice == null)
             return false;
@@ -333,9 +355,10 @@ public class QtCamera2 {
                 mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_IDLE);
                 mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, mAFMode);
                 mPreviewRequestBuilder.set(CaptureRequest.CONTROL_CAPTURE_INTENT, CameraMetadata.CONTROL_CAPTURE_INTENT_VIDEO_RECORD);
-                if (mZoom != null)
-                    mPreviewRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, mZoom);
-
+                if (mZoomFactor != 1.0f)
+                    updateZoom(mPreviewRequestBuilder);
+                if (mFpsRange != null)
+                    mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, mFpsRange);
                 mPreviewRequest = mPreviewRequestBuilder.build();
                 mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback, mBackgroundHandler);
                 mIsStarted = true;
@@ -348,7 +371,7 @@ public class QtCamera2 {
         }
     }
 
-    public void stopAndClose() {
+    void stopAndClose() {
         synchronized (mStartMutex) {
             try {
                 if (null != mCaptureSession) {
@@ -365,6 +388,10 @@ public class QtCamera2 {
                 Log.w("QtCamera2", "Failed to stop and close:" + exception);
             }
             mIsStarted = false;
+
+            // In the case that we are switching camera-device the controls will be
+            // repopulated by QAndroidCamera.
+            resetControls();
         }
     }
 
@@ -374,8 +401,8 @@ public class QtCamera2 {
                    mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureBuilder.addTarget(mCapturedPhotoReader.getSurface());
             captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, mFlashMode);
-            if (mZoom != null)
-                captureBuilder.set(CaptureRequest.SCALER_CROP_REGION, mZoom);
+            if (mZoomFactor != 1.0f)
+                updateZoom(captureBuilder);
 
             CameraCaptureSession.CaptureCallback captureCallback
                         = new CameraCaptureSession.CaptureCallback() {
@@ -406,7 +433,7 @@ public class QtCamera2 {
         }
     }
 
-    public void takePhoto() {
+    void takePhoto() {
         try {
             if (mAFMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE) {
                 mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START);
@@ -420,7 +447,7 @@ public class QtCamera2 {
         }
     }
 
-    public void saveExifToFile(String path)
+    void saveExifToFile(String path)
     {
         if (mExifDataHandler != null)
             mExifDataHandler.save(path);
@@ -428,21 +455,38 @@ public class QtCamera2 {
             Log.e("QtCamera2", "No Exif data that could be saved to " + path);
     }
 
-    public void zoomTo(float factor)
+    private Rect getScalerCropRegion()
+    {
+        Rect activePixels = mVideoDeviceManager.getActiveArraySize(mCameraId);
+        float zoomRatio = 1.0f;
+        if (mZoomFactor != 0.0f)
+            zoomRatio = 1.0f/mZoomFactor;
+        int croppedWidth = activePixels.width() - (int)(activePixels.width() * zoomRatio);
+        int croppedHeight = activePixels.height() - (int)(activePixels.height() * zoomRatio);
+        return new Rect(croppedWidth/2, croppedHeight/2, activePixels.width() - croppedWidth/2,
+                             activePixels.height() - croppedHeight/2);
+    }
+
+    private void updateZoom(CaptureRequest.Builder requBuilder)
+    {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
+            requBuilder.set(CaptureRequest.SCALER_CROP_REGION, getScalerCropRegion());
+        } else {
+            requBuilder.set(CaptureRequest.CONTROL_ZOOM_RATIO, mZoomFactor);
+        }
+    }
+
+    void zoomTo(float factor)
     {
         synchronized (mStartMutex) {
+            mZoomFactor = factor;
+
             if (!mIsStarted) {
-                Log.w("QtCamera2", "Cannot set zoom on invalid camera");
+                // Camera capture has not begun. Zoom will be applied during start().
                 return;
             }
 
-            Rect activePixels = mVideoDeviceManager.getActiveArraySize(mCameraId);
-            float zoomRatio = 1/factor;
-            int croppedWidth = activePixels.width() - (int)(activePixels.width() * zoomRatio);
-            int croppedHeight = activePixels.height() - (int)(activePixels.height() * zoomRatio);
-            mZoom = new Rect(croppedWidth/2, croppedHeight/2, activePixels.width() - croppedWidth/2,
-                                 activePixels.height() - croppedHeight/2);
-            mPreviewRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, mZoom);
+            updateZoom(mPreviewRequestBuilder);
             mPreviewRequest = mPreviewRequestBuilder.build();
 
             try {
@@ -452,7 +496,7 @@ public class QtCamera2 {
             }
         }
     }
-    public void setFlashMode(String flashMode)
+    void setFlashMode(String flashMode)
     {
         synchronized (mStartMutex) {
 
@@ -482,7 +526,7 @@ public class QtCamera2 {
         return mode ? CameraMetadata.FLASH_MODE_TORCH : CameraMetadata.FLASH_MODE_OFF;
     }
 
-    public void setTorchMode(boolean torchMode)
+    void setTorchMode(boolean torchMode)
     {
         synchronized (mStartMutex) {
             mTorchMode = getTorchModeValue(torchMode);

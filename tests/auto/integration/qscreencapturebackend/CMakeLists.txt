@@ -10,8 +10,10 @@ qt_internal_add_test(tst_qscreencapturebackend
         tst_qscreencapturebackend.cpp
     LIBRARIES
         Qt::Multimedia
+        Qt::MultimediaPrivate
         Qt::Gui
         Qt::Widgets
+        Qt::MultimediaTestLibPrivate
 )
 
 

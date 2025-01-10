@@ -33,7 +33,7 @@ QT_BEGIN_NAMESPACE
     \ingroup qmlvaluetypes
     \inqmlmodule QtMultimedia
     \since 6.2
-    //! \instantiates QCameraFormat
+    //! \nativetype QCameraFormat
     \brief Describes a video format supported by a camera device.
     \ingroup multimedia_qml
     \ingroup multimedia_video_qml
@@ -140,7 +140,7 @@ float QCameraFormat::minFrameRate() const noexcept
 
     Returns the highest frame rate defined by this format.
 
-    In 6.2, the camera will always try to use the maximum frame rate supported by a
+    The camera will always try to use the maximum frame rate supported by a
     certain video format.
 */
 
@@ -149,7 +149,7 @@ float QCameraFormat::minFrameRate() const noexcept
 
     Returns the highest frame rate defined by this format.
 
-    In 6.2, the camera will always try to use the highest frame rate supported by a
+    The camera will always try to use the highest frame rate supported by a
     certain video format.
 */
 float QCameraFormat::maxFrameRate() const noexcept
@@ -221,7 +221,7 @@ bool QCameraFormat::operator==(const QCameraFormat &other) const
     \ingroup qmlvaluetypes
     \inqmlmodule QtMultimedia
     \since 6.2
-    //! \instantiates QCameraDevice
+    //! \nativetype QCameraDevice
     \brief Describes a camera device.
     \ingroup multimedia_qml
     \ingroup multimedia_video_qml
@@ -321,6 +321,38 @@ bool QCameraDevice::isDefault() const
 }
 
 /*!
+    \since 6.7
+    \qmlproperty QtVideo::Rotation QtMultimedia::cameraDevice::correctionAngle
+
+    Returns the rotation angle needed to compensate for the physical camera rotation of the camera
+    compared to its native orientation. In other words, the property represents the clockwise angle
+    through which the output image needs to be rotated to be upright on the device screen in its
+    native orientation. Since \a correctionAngle is relative to the native orientation, this value
+    does not change with altering the device orientation (portrait/landscape). The correction angle
+    may be non-zero mostly on Android, where native and camera orientations are defined by the manufacturer.
+
+    \image camera_correctionAngle_90.png Example with 90 degrees \a correctionAngle
+*/
+
+/*!
+    \since 6.7
+    \property QCameraDevice::correctionAngle
+
+    Returns the rotation angle needed to compensate for the physical camera rotation of the camera
+    compared to its native orientation. In other words, the property represents the clockwise angle
+    through which the output image needs to be rotated to be upright on the device screen in its
+    native orientation. Since \a correctionAngle is relative to the native orientation, this value
+    does not change with altering the device orientation (portrait/landscape). The correction angle
+    may be non-zero mostly on Android, where native and camera orientations are defined by the manufacturer.
+
+    \image camera_correctionAngle_90.png Example with 90 degrees \a correctionAngle
+*/
+QtVideo::Rotation QCameraDevice::correctionAngle() const
+{
+    return d ? QtVideo::Rotation(d->orientation) : QtVideo::Rotation::None;
+}
+
+/*!
     \qmlproperty string QtMultimedia::cameraDevice::description
 
     Holds a human readable name of the camera.
@@ -350,6 +382,11 @@ QString QCameraDevice::description() const
            mobile device, it means it is on the opposite side to that of the screen.
     \value FrontFace  The camera is on the front face of the system hardware. For example on a
            mobile device, it means it is on the same side as that of the screen.
+           Front-facing cameras generate video frames with the property
+           \l QVideoFrame::mirrored set to \c true. This means that the presentation of these
+           frames is flipped around the vertical axis to display the video output as a mirror,
+           whereas recording only considers the transformations of the surface specified in
+           \l QVideoFrame::surfaceFormat.
 
     \sa position()
 */
@@ -366,6 +403,9 @@ QString QCameraDevice::description() const
            mobile device, it means it is on the opposite side to that of the screen.
     \value cameraDevice.FrontFace  The camera is on the front face of the system hardware. For example on a
            mobile device, it means it is on the same side as that of the screen.
+           Preview of front-facing cameras is flipped around the vertical axis
+           to display the video output as a mirror, whereas this flipping is not
+           performed during recording.
 */
 
 /*!
@@ -423,10 +463,12 @@ QCameraDevice& QCameraDevice::operator=(const QCameraDevice& other) = default;
 #ifndef QT_NO_DEBUG_STREAM
 QDebug operator<<(QDebug d, const QCameraDevice &camera)
 {
-    d.maybeSpace() << QStringLiteral("QCameraDevice(name=%1, position=%2, orientation=%3)")
-                          .arg(camera.description())
-                          .arg(QString::fromLatin1(QCamera::staticMetaObject.enumerator(QCamera::staticMetaObject.indexOfEnumerator("Position"))
-                               .valueToKey(camera.position())));
+    d.maybeSpace() << QStringLiteral("QCameraDevice(name=%1, id=%2, position=%3)")
+                              .arg(camera.description())
+                              .arg(QLatin1StringView(camera.id()))
+                              .arg(QLatin1StringView(
+                                      QMetaEnum::fromType<QCameraDevice::Position>().valueToKey(
+                                              camera.position())));
     return d.space();
 }
 #endif

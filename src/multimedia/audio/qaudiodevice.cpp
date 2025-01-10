@@ -60,7 +60,7 @@ QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QAudioDevicePrivate);
     \qmlvaluetype audioDevice
     \inqmlmodule QtMultimedia
     \since 6.2
-    //! \instantiates QAudioDevice
+    //! \nativetype QAudioDevice
     \brief Describes an audio device.
     \ingroup multimedia_qml
     \ingroup multimedia_audio_qml
@@ -237,7 +237,7 @@ bool QAudioDevice::isFormatSupported(const QAudioFormat &settings) const
 
     These settings are provided by the platform/audio plugin being used.
 
-    They are also dependent on the \l {QAudio}::Mode being used.
+    They are also dependent on the \l {QtAudio}::Mode being used.
 
     A typical audio system would provide something like:
     \list

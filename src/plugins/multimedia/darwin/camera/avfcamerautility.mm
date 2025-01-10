@@ -112,25 +112,31 @@ qt_convert_to_capture_device_format(AVCaptureDevice *captureDevice,
         return nil;
 
     AVCaptureDeviceFormat *newFormat = nil;
+    Float64 newFormatMaxFrameRate = {};
     NSArray<AVCaptureDeviceFormat *> *formats = captureDevice.formats;
     for (AVCaptureDeviceFormat *format in formats) {
         CMFormatDescriptionRef formatDesc = format.formatDescription;
         CMVideoDimensions dim = CMVideoFormatDescriptionGetDimensions(formatDesc);
         FourCharCode cvPixFormat = CMVideoFormatDescriptionGetCodecType(formatDesc);
 
-        if (requiredCvPixFormat == cvPixFormat
-            && cameraFormatPrivate->resolution == QSize(dim.width, dim.height)
-            && (!cvFormatValidator || cvFormatValidator(cvPixFormat))) {
-            for (AVFrameRateRange *frameRateRange in format.videoSupportedFrameRateRanges) {
-                if (frameRateRange.minFrameRate >= cameraFormatPrivate->minFrameRate
-                    && frameRateRange.maxFrameRate <= cameraFormatPrivate->maxFrameRate) {
-                    newFormat = format;
-                    break;
-                }
+        if (cvPixFormat != requiredCvPixFormat)
+            continue;
+
+        if (cameraFormatPrivate->resolution != QSize(dim.width, dim.height))
+            continue;
+
+        if (cvFormatValidator && !cvFormatValidator(cvPixFormat))
+            continue;
+
+        const float epsilon = 0.001f;
+        for (AVFrameRateRange *frameRateRange in format.videoSupportedFrameRateRanges) {
+            if (frameRateRange.minFrameRate >= cameraFormatPrivate->minFrameRate - epsilon
+                && frameRateRange.maxFrameRate <= cameraFormatPrivate->maxFrameRate + epsilon
+                && newFormatMaxFrameRate < frameRateRange.maxFrameRate) {
+                newFormat = format;
+                newFormatMaxFrameRate = frameRateRange.maxFrameRate;
             }
         }
-        if (newFormat)
-            break;
     }
     return newFormat;
 }
@@ -720,5 +726,18 @@ QList<UInt32> qt_supported_channel_layout_tags_for_format(int codecId, int noCha
 
     return result;
 }
+
+#ifdef Q_OS_IOS
+int qt_ui_device_orientation_to_rotation_angle_degrees(UIDeviceOrientation orientation)
+{
+    switch (orientation) {
+    case UIDeviceOrientationLandscapeLeft: return 0;
+    case UIDeviceOrientationPortrait: return 90;
+    case UIDeviceOrientationLandscapeRight: return 180;
+    case UIDeviceOrientationPortraitUpsideDown: return 270;
+    default: return 0;
+    }
+}
+#endif
 
 QT_END_NAMESPACE

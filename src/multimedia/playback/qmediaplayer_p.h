@@ -19,6 +19,7 @@
 #include "qmediametadata.h"
 #include "qvideosink.h"
 #include "qaudiooutput.h"
+#include "qaudiobufferoutput.h"
 #include <private/qplatformmediaplayer_p.h>
 #include <private/qerrorinfo_p.h>
 
@@ -40,9 +41,15 @@ class QMediaPlayerPrivate : public QObjectPrivate
     Q_DECLARE_PUBLIC(QMediaPlayer)
 
 public:
+    static QMediaPlayerPrivate *get(QMediaPlayer *session)
+    {
+        return reinterpret_cast<QMediaPlayerPrivate *>(QObjectPrivate::get(session));
+    }
+
     QMediaPlayerPrivate() = default;
     QPlatformMediaPlayer *control = nullptr;
 
+    QPointer<QAudioBufferOutput> audioBufferOutput;
     QPointer<QAudioOutput> audioOutput;
     QPointer<QVideoSink> videoSink;
     QPointer<QObject> videoOutput;

@@ -17,6 +17,16 @@
 
 #include <QVideoFrameFormat>
 #include <QJniObject>
+#include <QtCore/qjnitypes.h>
+
+Q_DECLARE_JNI_CLASS(QtCamera2, "org/qtproject/qt/android/multimedia/QtCamera2")
+Q_DECLARE_JNI_CLASS(QtVideoDeviceManager,
+                    "org/qtproject/qt/android/multimedia/QtVideoDeviceManager")
+
+Q_DECLARE_JNI_CLASS(AndroidImage, "android/media/Image")
+Q_DECLARE_JNI_CLASS(AndroidImageFormat, "android/graphics/ImageFormat")
+Q_DECLARE_JNI_CLASS(AndroidImagePlane, "android/media/Image$Plane")
+Q_DECLARE_JNI_CLASS(JavaByteBuffer, "java/nio/ByteBuffer")
 
 class QAndroidCameraFrame
 {
@@ -36,7 +46,7 @@ public:
     int numberPlanes() const { return m_numberPlanes; }
     Plane plane(int index) const
     {
-        if (index < 0 || index > numberPlanes())
+        if (index < 0 || index >= numberPlanes())
             return {};
 
         return m_planes[index];

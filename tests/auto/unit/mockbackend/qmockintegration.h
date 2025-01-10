@@ -1,5 +1,5 @@
 // Copyright (C) 2021 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #ifndef QMOCKINTEGRATION_H
 #define QMOCKINTEGRATION_H
@@ -25,6 +25,7 @@ class QMockCamera;
 class QMockMediaCaptureSession;
 class QMockVideoSink;
 class QMockSurfaceCapture;
+class QPlatformMediaFormatInfo;
 
 class QMockIntegration : public QPlatformMediaIntegration
 {
@@ -66,13 +67,13 @@ public:
     QMockVideoSink *lastVideoSink() const { return m_lastVideoSink; }
     QMockSurfaceCapture *lastScreenCapture() { return m_lastScreenCapture; }
     QMockSurfaceCapture *lastWindowCapture() { return m_lastWindowCapture; }
+    QPlatformMediaFormatInfo *getWritableFormatInfo();
 
 protected:
     QPlatformVideoDevices *createVideoDevices() override;
     std::unique_ptr<QPlatformMediaDevices> createMediaDevices() override;
 
 private:
-
     Flags m_flags = {};
     QMockMediaPlayer *m_lastPlayer = nullptr;
     QMockAudioDecoder *m_lastAudioDecoderControl = nullptr;

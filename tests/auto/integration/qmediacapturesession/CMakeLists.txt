@@ -1,8 +1,6 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Generated from qcamerabackend.pro.
-
 #####################################################################
 ## tst_qcamerabackend Test:
 #####################################################################
@@ -14,10 +12,12 @@ qt_internal_add_test(tst_qmediacapturesession
         Qt::Gui
         Qt::MultimediaPrivate
         Qt::MultimediaWidgets
+        Qt::MultimediaTestLibPrivate
 )
 
-if(QT_FEATURE_gstreamer)
-    set_tests_properties(tst_qmediacapturesession
-        PROPERTIES ENVIRONMENT "G_DEBUG=fatal_criticals"
+if(APPLE)
+    set_target_properties(tst_qmediacapturesession PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist
     )
 endif()

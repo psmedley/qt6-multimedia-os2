@@ -1,78 +1,203 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include <qgstreamermediaplayer_p.h>
-#include <qgstpipeline_p.h>
-#include <qgstreamermetadata_p.h>
+#include <common/qgstreamermediaplayer_p.h>
+
+#include <audio/qgstreameraudiodevice_p.h>
+#include <common/qglist_helper_p.h>
+#include <common/qgst_debug_p.h>
+#include <common/qgst_discoverer_p.h>
+#include <common/qgst_play_p.h>
+#include <common/qgstpipeline_p.h>
+#include <common/qgstreameraudiooutput_p.h>
+#include <common/qgstreamermessage_p.h>
+#include <common/qgstreamermetadata_p.h>
+#include <common/qgstreamervideooutput_p.h>
+#include <common/qgstreamervideosink_p.h>
+#include <uri_handler/qgstreamer_qiodevice_handler_p.h>
 #include <qgstreamerformatinfo_p.h>
-#include <qgstreameraudiooutput_p.h>
-#include <qgstreamervideooutput_p.h>
-#include <qgstreamervideosink_p.h>
-#include <qgstreamermessage_p.h>
-#include <qgstreameraudiodevice_p.h>
-#include <qgstappsrc_p.h>
-#include <qgst_debug_p.h>
-#include <qaudiodevice.h>
 
-#include <QtCore/qdir.h>
-#include <QtCore/qsocketnotifier.h>
-#include <QtCore/qurl.h>
+#include <QtMultimedia/qaudiodevice.h>
 #include <QtCore/qdebug.h>
+#include <QtCore/qiodevice.h>
 #include <QtCore/qloggingcategory.h>
+#include <QtCore/qthread.h>
+#include <QtCore/qurl.h>
 #include <QtCore/private/quniquehandle_p.h>
-#include <QtNetwork/qnetworkaccessmanager.h>
-#include <QtNetwork/qnetworkreply.h>
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
 
 static Q_LOGGING_CATEGORY(qLcMediaPlayer, "qt.multimedia.player")
 
 QT_BEGIN_NAMESPACE
 
-QGstreamerMediaPlayer::TrackSelector::TrackSelector(TrackType type, QGstElement selector)
-    : selector(selector), type(type)
+bool QGstreamerMediaPlayer::discover(const QUrl &url)
 {
-    selector.set("sync-streams", true);
-    selector.set("sync-mode", 1 /*clock*/);
+    QGst::QGstDiscoverer discoverer;
 
-    if (type == SubtitleStream)
-        selector.set("cache-buffers", true);
+    using namespace std::chrono;
+    using namespace std::chrono_literals;
+
+    auto discoveryResult = discoverer.discover(url);
+    if (discoveryResult) {
+        m_trackMetaData.fill({});
+        seekableChanged(discoveryResult->isSeekable);
+        if (discoveryResult->duration)
+            m_duration = round<milliseconds>(*discoveryResult->duration);
+        else
+            m_duration = 0ms;
+        durationChanged(m_duration);
+
+        m_metaData = QGst::toContainerMetadata(*discoveryResult);
+
+        videoAvailableChanged(!discoveryResult->videoStreams.empty());
+        audioAvailableChanged(!discoveryResult->audioStreams.empty());
+
+        m_nativeSize.clear();
+        for (const auto &videoInfo : discoveryResult->videoStreams) {
+            m_trackMetaData[0].emplace_back(QGst::toStreamMetadata(videoInfo));
+            QGstStructureView structure = videoInfo.caps.at(0);
+            m_nativeSize.emplace_back(structure.nativeSize());
+        }
+        for (const auto &audioInfo : discoveryResult->audioStreams)
+            m_trackMetaData[1].emplace_back(QGst::toStreamMetadata(audioInfo));
+        for (const auto &subtitleInfo : discoveryResult->subtitleStreams)
+            m_trackMetaData[2].emplace_back(QGst::toStreamMetadata(subtitleInfo));
+
+        using Key = QMediaMetaData::Key;
+        auto copyKeysToRootMetadata = [&](const QMediaMetaData &reference, QSpan<const Key> keys) {
+            for (QMediaMetaData::Key key : keys) {
+                QVariant referenceValue = reference.value(key);
+                if (referenceValue.isValid())
+                    m_metaData.insert(key, referenceValue);
+            }
+        };
+
+        // FIXME: we duplicate some metadata for the first audio / video track
+        // in future we will want to use e.g. the currently selected track
+        if (!m_trackMetaData[0].empty())
+            copyKeysToRootMetadata(m_trackMetaData[0].front(),
+                                   {
+                                           Key::HasHdrContent,
+                                           Key::Orientation,
+                                           Key::Resolution,
+                                           Key::VideoBitRate,
+                                           Key::VideoCodec,
+                                           Key::VideoFrameRate,
+                                   });
+
+        if (!m_trackMetaData[1].empty())
+            copyKeysToRootMetadata(m_trackMetaData[1].front(),
+                                   {
+                                           Key::AudioBitRate,
+                                           Key::AudioCodec,
+                                   });
+
+        if (!m_url.isEmpty())
+            m_metaData.insert(QMediaMetaData::Key::Url, m_url);
+
+        qCDebug(qLcMediaPlayer) << "metadata:" << m_metaData;
+        qCDebug(qLcMediaPlayer) << "video metadata:" << m_trackMetaData[0];
+        qCDebug(qLcMediaPlayer) << "audio metadata:" << m_trackMetaData[1];
+        qCDebug(qLcMediaPlayer) << "subtitle metadata:" << m_trackMetaData[2];
+
+        metaDataChanged();
+        tracksChanged();
+        m_activeTrack = {
+            isVideoAvailable() ? 0 : -1,
+            isAudioAvailable() ? 0 : -1,
+            -1,
+        };
+        updateVideoTrackEnabled();
+        updateAudioTrackEnabled();
+        updateNativeSizeOnVideoOutput();
+    }
+
+    return bool(discoveryResult);
 }
 
-QGstPad QGstreamerMediaPlayer::TrackSelector::createInputPad()
+void QGstreamerMediaPlayer::resetStateForEmptyOrInvalidMedia()
 {
-    auto pad = selector.getRequestPad("sink_%u");
-    tracks.append(pad);
-    return pad;
+    using namespace std::chrono_literals;
+    m_nativeSize.clear();
+
+    bool metadataNeedsSignal = !m_metaData.isEmpty();
+    bool tracksNeedsSignal =
+            std::any_of(m_trackMetaData.begin(), m_trackMetaData.end(), [](const auto &container) {
+        return !container.empty();
+    });
+
+    m_metaData.clear();
+    m_trackMetaData.fill({});
+    m_duration = 0ms;
+    seekableChanged(false);
+
+    videoAvailableChanged(false);
+    audioAvailableChanged(false);
+
+    m_activeTrack.fill(-1);
+
+    if (metadataNeedsSignal)
+        metaDataChanged();
+    if (tracksNeedsSignal)
+        tracksChanged();
 }
 
-void QGstreamerMediaPlayer::TrackSelector::removeAllInputPads()
+void QGstreamerMediaPlayer::updateNativeSizeOnVideoOutput()
 {
-    for (auto &pad : tracks)
-        selector.releaseRequestPad(pad);
-    tracks.clear();
+    int activeVideoTrack = activeTrack(TrackType::VideoStream);
+    bool hasVideoTrack = activeVideoTrack != -1;
+
+    QSize nativeSize = hasVideoTrack ? m_nativeSize[activeTrack(TrackType::VideoStream)] : QSize{};
+
+    QVariant orientation = hasVideoTrack
+            ? m_trackMetaData[TrackType::VideoStream][activeTrack(TrackType::VideoStream)].value(
+                    QMediaMetaData::Key::Orientation)
+            : QVariant{};
+
+    if (orientation.isValid()) {
+        auto rotation = orientation.value<QtVideo::Rotation>();
+        gstVideoOutput->setRotation(rotation);
+    }
+    gstVideoOutput->setNativeSize(nativeSize);
 }
 
-void QGstreamerMediaPlayer::TrackSelector::removeInputPad(QGstPad pad)
+void QGstreamerMediaPlayer::seekToCurrentPosition()
 {
-    selector.releaseRequestPad(pad);
-    tracks.removeOne(pad);
+    gst_play_seek(m_gstPlay.get(), gst_play_get_position(m_gstPlay.get()));
 }
 
-QGstPad QGstreamerMediaPlayer::TrackSelector::inputPad(int index)
+void QGstreamerMediaPlayer::updateVideoTrackEnabled()
 {
-    if (index >= 0 && index < tracks.count())
-        return tracks[index];
-    return {};
+    bool hasTrack = m_activeTrack[TrackType::VideoStream] != -1;
+    bool hasSink = gstVideoOutput->gstreamerVideoSink() != nullptr;
+
+    gstVideoOutput->setActive(hasTrack);
+    gst_play_set_video_track_enabled(m_gstPlay.get(), hasTrack && hasSink);
 }
 
-QGstreamerMediaPlayer::TrackSelector &QGstreamerMediaPlayer::trackSelector(TrackType type)
+void QGstreamerMediaPlayer::updateAudioTrackEnabled()
 {
-    auto &ts = trackSelectors[type];
-    Q_ASSERT(ts.type == type);
-    return ts;
+    bool hasTrack = m_activeTrack[TrackType::AudioStream] != -1;
+    bool hasAudioOut = gstAudioOutput;
+
+    gst_play_set_audio_track_enabled(m_gstPlay.get(), hasTrack && hasAudioOut);
+}
+
+void QGstreamerMediaPlayer::updateBufferProgress(float newProgress)
+{
+    if (qFuzzyIsNull(newProgress - m_bufferProgress))
+        return;
+
+    m_bufferProgress = newProgress;
+    bufferProgressChanged(m_bufferProgress);
+}
+
+void QGstreamerMediaPlayer::disconnectDecoderHandlers()
+{
+    auto handlers = std::initializer_list<QGObjectHandlerScopedConnection *>{ &sourceSetup };
+    for (QGObjectHandlerScopedConnection *handler : handlers)
+        handler->disconnect();
 }
 
 QMaybe<QPlatformMediaPlayer *> QGstreamerMediaPlayer::create(QMediaPlayer *parent)
@@ -81,92 +206,275 @@ QMaybe<QPlatformMediaPlayer *> QGstreamerMediaPlayer::create(QMediaPlayer *paren
     if (!videoOutput)
         return videoOutput.error();
 
-    QGstElement decodebin = QGstElement::createFromFactory("decodebin", nullptr);
-    if (!decodebin)
-        return errorMessageCannotFindElement("decodebin");
+    return new QGstreamerMediaPlayer(videoOutput.value(), parent);
+}
 
-    QGstElement videoInputSelector =
-            QGstElement::createFromFactory("input-selector", "videoInputSelector");
-    if (!videoInputSelector)
-        return errorMessageCannotFindElement("input-selector");
-
-    QGstElement audioInputSelector =
-            QGstElement::createFromFactory("input-selector", "audioInputSelector");
-    if (!audioInputSelector)
-        return errorMessageCannotFindElement("input-selector");
-
-    QGstElement subTitleInputSelector =
-            QGstElement::createFromFactory("input-selector", "subTitleInputSelector");
-    if (!subTitleInputSelector)
-        return errorMessageCannotFindElement("input-selector");
-
-    return new QGstreamerMediaPlayer(videoOutput.value(), decodebin, videoInputSelector,
-                                     audioInputSelector, subTitleInputSelector, parent);
+template <typename T>
+void setSeekAccurate(T *config, gboolean accurate)
+{
+    gst_play_config_set_seek_accurate(config, accurate);
 }
 
 QGstreamerMediaPlayer::QGstreamerMediaPlayer(QGstreamerVideoOutput *videoOutput,
-                                             QGstElement decodebin, QGstElement videoInputSelector,
-                                             QGstElement audioInputSelector,
-                                             QGstElement subTitleInputSelector,
                                              QMediaPlayer *parent)
     : QObject(parent),
       QPlatformMediaPlayer(parent),
-      trackSelectors{ { { VideoStream, videoInputSelector },
-                        { AudioStream, audioInputSelector },
-                        { SubtitleStream, subTitleInputSelector } } },
-      playerPipeline(QGstPipeline::create("playerPipeline")),
-      gstVideoOutput(videoOutput)
+      gstVideoOutput(videoOutput),
+      m_gstPlay{
+          gst_play_new(nullptr),
+      },
+      m_playbin{
+          GST_PIPELINE_CAST(gst_play_get_pipeline(m_gstPlay.get())),
+          QGstPipeline::HasRef,
+      },
+      m_gstPlayBus{
+          QGstBusHandle{ gst_play_get_message_bus(m_gstPlay.get()), QGstBusHandle::HasRef },
+      }
 {
-    playerPipeline.setFlushOnConfigChanges(true);
+#if 1
+    // LATER: remove this hack after meta-freescale decides not to pull in outdated APIs
 
-    gstVideoOutput->setParent(this);
-    gstVideoOutput->setPipeline(playerPipeline);
+    // QTBUG-131300: nxp deliberately reverted to an old gst-play API before the gst-play API
+    // stabilized. compare:
+    // https://github.com/nxp-imx/gst-plugins-bad/commit/ff04fa9ca1b79c98e836d8cdb26ac3502dafba41
+    constexpr bool useNxpWorkaround = std::is_same_v<decltype(&gst_play_config_set_seek_accurate),
+                                                     void (*)(GstPlay *, gboolean)>;
 
-    for (auto &ts : trackSelectors)
-        playerPipeline.add(ts.selector);
-
-    playerPipeline.setState(GST_STATE_NULL);
-    playerPipeline.installMessageFilter(static_cast<QGstreamerBusMessageFilter *>(this));
-    playerPipeline.installMessageFilter(static_cast<QGstreamerSyncMessageFilter *>(this));
-
-    QGstClockHandle systemClock{
-        gst_system_clock_obtain(),
+    QUniqueGstStructureHandle config{
+        gst_play_get_config(m_gstPlay.get()),
     };
 
-    gst_pipeline_use_clock(playerPipeline.pipeline(), systemClock.get());
+    if constexpr (useNxpWorkaround)
+        setSeekAccurate(m_gstPlay.get(), true);
+    else
+        setSeekAccurate(config.get(), true);
 
-    /* Taken from gstdicoverer.c:
-     * This is ugly. We get the GType of decodebin so we can quickly detect
-     * when a decodebin is added to uridecodebin so we can set the
-     * post-stream-topology setting to TRUE */
-    decodebinType = G_OBJECT_TYPE(decodebin.element());
-    connect(&positionUpdateTimer, &QTimer::timeout, this, &QGstreamerMediaPlayer::updatePosition);
+    gst_play_set_config(m_gstPlay.get(), config.release());
+#else
+    QUniqueGstStructureHandle config{
+        gst_play_get_config(m_gstPlay.get()),
+    };
+    gst_play_config_set_seek_accurate(config.get(), true);
+    gst_play_set_config(m_gstPlay.get(), config.release());
+#endif
+
+    gstVideoOutput->setParent(this);
+
+    m_playbin.set("video-sink", gstVideoOutput->gstElement());
+    m_playbin.set("text-sink", gstVideoOutput->gstSubtitleElement());
+
+    m_playbin.set("audio-sink", QGstElement::createFromPipelineDescription("fakesink"));
+
+    m_gstPlayBus.installMessageFilter(this);
+
+    // we start without subtitles
+    gst_play_set_subtitle_track_enabled(m_gstPlay.get(), false);
+
+    sourceSetup = m_playbin.connect("source-setup", GCallback(sourceSetupCallback), this);
+
+    m_activeTrack.fill(-1);
+
+    // TODO: how to detect stalled media?
 }
 
 QGstreamerMediaPlayer::~QGstreamerMediaPlayer()
 {
-    playerPipeline.removeMessageFilter(static_cast<QGstreamerBusMessageFilter *>(this));
-    playerPipeline.removeMessageFilter(static_cast<QGstreamerSyncMessageFilter *>(this));
-    playerPipeline.setStateSync(GST_STATE_NULL);
-    topology.free();
+    m_gstPlayBus.removeMessageFilter(static_cast<QGstreamerBusMessageFilter *>(this));
+    gst_bus_set_flushing(m_gstPlayBus.get(), TRUE);
+    gst_play_stop(m_gstPlay.get());
+
+    // NOTE: gst_play_stop is not sufficient, un-reffing m_gstPlay can deadlock
+    m_playbin.setStateSync(GST_STATE_NULL);
+
+    m_playbin.set("video-sink", QGstElement::createFromPipelineDescription("fakesink"));
+    m_playbin.set("text-sink", QGstElement::createFromPipelineDescription("fakesink"));
+    m_playbin.set("audio-sink", QGstElement::createFromPipelineDescription("fakesink"));
 }
 
-qint64 QGstreamerMediaPlayer::position() const
+void QGstreamerMediaPlayer::updatePositionFromPipeline()
 {
-    if (playerPipeline.isNull() || m_url.isEmpty())
-        return 0;
+    using namespace std::chrono;
 
-    return playerPipeline.position()/1e6;
+    positionChanged(round<milliseconds>(nanoseconds{
+            gst_play_get_position(m_gstPlay.get()),
+    }));
+}
+
+bool QGstreamerMediaPlayer::processBusMessage(const QGstreamerMessage &message)
+{
+    switch (message.type()) {
+    case GST_MESSAGE_APPLICATION:
+        if (gst_play_is_play_message(message.message()))
+            return processBusMessageApplication(message);
+        return false;
+
+    default:
+        qCDebug(qLcMediaPlayer) << message;
+
+        return false;
+    }
+
+    return false;
+}
+
+bool QGstreamerMediaPlayer::processBusMessageApplication(const QGstreamerMessage &message)
+{
+    using namespace std::chrono;
+    GstPlayMessage type;
+    gst_play_message_parse_type(message.message(), &type);
+    qCDebug(qLcMediaPlayer) << QGstPlayMessageAdaptor{ message };
+
+    switch (type) {
+    case GST_PLAY_MESSAGE_URI_LOADED: {
+        mediaStatusChanged(QMediaPlayer::LoadedMedia);
+        return false;
+    }
+
+    case GST_PLAY_MESSAGE_POSITION_UPDATED: {
+        if (state() == QMediaPlayer::PlaybackState::PlayingState) {
+
+            constexpr bool usePayload = false;
+            if constexpr (usePayload) {
+                GstClockTime position;
+                gst_play_message_parse_position_updated(message.message(), &position);
+                positionChanged(round<milliseconds>(nanoseconds{ position }));
+            } else {
+                GstClockTime position = gst_play_get_position(m_gstPlay.get());
+                positionChanged(round<milliseconds>(nanoseconds{ position }));
+            }
+        }
+        return false;
+    }
+    case GST_PLAY_MESSAGE_DURATION_CHANGED: {
+        GstClockTime duration;
+        gst_play_message_parse_duration_updated(message.message(), &duration);
+        milliseconds durationInMs = round<milliseconds>(nanoseconds{ duration });
+        durationChanged(durationInMs);
+
+        m_metaData.insert(QMediaMetaData::Duration, int(durationInMs.count()));
+        metaDataChanged();
+
+        return false;
+    }
+    case GST_PLAY_MESSAGE_BUFFERING: {
+        guint percent;
+        gst_play_message_parse_buffering_percent(message.message(), &percent);
+        updateBufferProgress(percent * 0.01f);
+        return false;
+    }
+    case GST_PLAY_MESSAGE_STATE_CHANGED: {
+        GstPlayState state;
+        gst_play_message_parse_state_changed(message.message(), &state);
+
+        switch (state) {
+        case GstPlayState::GST_PLAY_STATE_STOPPED:
+            if (stateChangeToSkip) {
+                qCDebug(qLcMediaPlayer) << "    skipping StoppedState transition";
+
+                stateChangeToSkip -= 1;
+                return false;
+            }
+            stateChanged(QMediaPlayer::StoppedState);
+            updateBufferProgress(0);
+            return false;
+
+        case GstPlayState::GST_PLAY_STATE_PAUSED:
+            stateChanged(QMediaPlayer::PausedState);
+            mediaStatusChanged(QMediaPlayer::BufferedMedia);
+            gstVideoOutput->setActive(true);
+            updateBufferProgress(1);
+            return false;
+        case GstPlayState::GST_PLAY_STATE_BUFFERING:
+            mediaStatusChanged(QMediaPlayer::BufferingMedia);
+            return false;
+        case GstPlayState::GST_PLAY_STATE_PLAYING:
+            stateChanged(QMediaPlayer::PlayingState);
+            mediaStatusChanged(QMediaPlayer::BufferedMedia);
+            gstVideoOutput->setActive(true);
+            updateBufferProgress(1);
+
+            return false;
+        default:
+            return false;
+        }
+    }
+    case GST_PLAY_MESSAGE_MEDIA_INFO_UPDATED: {
+        using namespace QGstPlaySupport;
+
+        QUniqueGstPlayMediaInfoHandle info{};
+        gst_play_message_parse_media_info_updated(message.message(), &info);
+
+        seekableChanged(gst_play_media_info_is_seekable(info.get()));
+
+        const gchar *title = gst_play_media_info_get_title(info.get());
+        m_metaData.insert(QMediaMetaData::Title, QString::fromUtf8(title));
+
+        metaDataChanged();
+        tracksChanged();
+
+        return false;
+    }
+    case GST_PLAY_MESSAGE_END_OF_STREAM: {
+        if (doLoop()) {
+            positionChanged(m_duration);
+            qCDebug(qLcMediaPlayer) << "EOS: restarting loop";
+            gst_play_play(m_gstPlay.get());
+            positionChanged(0ms);
+
+            // we will still get a GST_PLAY_MESSAGE_STATE_CHANGED message, which we will just ignore
+            // for now
+            stateChangeToSkip += 1;
+        } else {
+            qCDebug(qLcMediaPlayer) << "EOS: done";
+            positionChanged(m_duration);
+            mediaStatusChanged(QMediaPlayer::EndOfMedia);
+            stateChanged(QMediaPlayer::StoppedState);
+            gstVideoOutput->setActive(false);
+        }
+
+        return false;
+    }
+    case GST_PLAY_MESSAGE_ERROR:
+    case GST_PLAY_MESSAGE_WARNING:
+    case GST_PLAY_MESSAGE_VIDEO_DIMENSIONS_CHANGED:
+    case GST_PLAY_MESSAGE_VOLUME_CHANGED:
+    case GST_PLAY_MESSAGE_MUTE_CHANGED:
+    case GST_PLAY_MESSAGE_SEEK_DONE:
+        return false;
+
+    default:
+        Q_UNREACHABLE_RETURN(false);
+    }
 }
 
 qint64 QGstreamerMediaPlayer::duration() const
 {
-    return m_duration;
+    return m_duration.count();
+}
+
+bool QGstreamerMediaPlayer::hasMedia() const
+{
+    return !m_url.isEmpty() || m_stream;
+}
+
+bool QGstreamerMediaPlayer::hasValidMedia() const
+{
+    if (!hasMedia())
+        return false;
+
+    switch (mediaStatus()) {
+    case QMediaPlayer::MediaStatus::NoMedia:
+    case QMediaPlayer::MediaStatus::InvalidMedia:
+        return false;
+
+    default:
+        return true;
+    }
 }
 
 float QGstreamerMediaPlayer::bufferProgress() const
 {
-    return m_bufferProgress/100.;
+    return m_bufferProgress;
 }
 
 QMediaTimeRange QGstreamerMediaPlayer::availablePlaybackRanges() const
@@ -176,23 +484,33 @@ QMediaTimeRange QGstreamerMediaPlayer::availablePlaybackRanges() const
 
 qreal QGstreamerMediaPlayer::playbackRate() const
 {
-    return playerPipeline.playbackRate();
+    return gst_play_get_rate(m_gstPlay.get());
 }
 
 void QGstreamerMediaPlayer::setPlaybackRate(qreal rate)
 {
-    if (playerPipeline.setPlaybackRate(rate))
-        playbackRateChanged(rate);
+    if (rate == playbackRate())
+        return;
+
+    qCDebug(qLcMediaPlayer) << "gst_play_set_rate" << rate;
+    gst_play_set_rate(m_gstPlay.get(), rate);
+    playbackRateChanged(rate);
 }
 
 void QGstreamerMediaPlayer::setPosition(qint64 pos)
 {
-    qint64 currentPos = playerPipeline.position()/1e6;
-    if (pos == currentPos)
-        return;
-    playerPipeline.finishStateChange();
-    playerPipeline.setPosition(pos*1e6);
-    qCDebug(qLcMediaPlayer) << Q_FUNC_INFO << pos << playerPipeline.position()/1e6;
+    std::chrono::milliseconds posInMs{ pos };
+
+    setPosition(posInMs);
+}
+
+void QGstreamerMediaPlayer::setPosition(std::chrono::milliseconds pos)
+{
+    using namespace std::chrono;
+
+    qCDebug(qLcMediaPlayer) << "gst_play_seek" << pos;
+    gst_play_seek(m_gstPlay.get(), nanoseconds(pos).count());
+
     if (mediaStatus() == QMediaPlayer::EndOfMedia)
         mediaStatusChanged(QMediaPlayer::LoadedMedia);
     positionChanged(pos);
@@ -200,259 +518,74 @@ void QGstreamerMediaPlayer::setPosition(qint64 pos)
 
 void QGstreamerMediaPlayer::play()
 {
-    if (state() == QMediaPlayer::PlayingState || m_url.isEmpty())
+    QMediaPlayer::PlaybackState currentState = state();
+    if (currentState == QMediaPlayer::PlayingState || !hasValidMedia())
         return;
-    resetCurrentLoop();
 
-    playerPipeline.setInStoppedState(false);
+    if (currentState != QMediaPlayer::PausedState)
+        resetCurrentLoop();
+
     if (mediaStatus() == QMediaPlayer::EndOfMedia) {
-        playerPipeline.setPosition(0);
-        updatePosition();
+        positionChanged(0);
+        mediaStatusChanged(QMediaPlayer::LoadedMedia);
     }
 
-    qCDebug(qLcMediaPlayer) << "play().";
-    int ret = playerPipeline.setState(GST_STATE_PLAYING);
-    if (m_requiresSeekOnPlay) {
-        // Flushing the pipeline is required to get track changes
-        // immediately, when they happen while paused.
-        playerPipeline.flush();
-        m_requiresSeekOnPlay = false;
+    if (m_pendingSeek) {
+        gst_play_seek(m_gstPlay.get(), m_pendingSeek->count());
+        m_pendingSeek = std::nullopt;
     }
-    if (ret == GST_STATE_CHANGE_FAILURE)
-        qCDebug(qLcMediaPlayer) << "Unable to set the pipeline to the playing state.";
-    if (mediaStatus() == QMediaPlayer::LoadedMedia)
-        mediaStatusChanged(QMediaPlayer::BufferedMedia);
-    emit stateChanged(QMediaPlayer::PlayingState);
-    positionUpdateTimer.start(100);
+
+    qCDebug(qLcMediaPlayer) << "gst_play_play";
+    gstVideoOutput->setActive(true);
+    gst_play_play(m_gstPlay.get());
+    stateChanged(QMediaPlayer::PlayingState);
 }
 
 void QGstreamerMediaPlayer::pause()
 {
-    if (state() == QMediaPlayer::PausedState || m_url.isEmpty())
+    if (state() == QMediaPlayer::PausedState || !hasMedia()
+        || m_resourceErrorState != ResourceErrorState::NoError)
         return;
 
-    positionUpdateTimer.stop();
-    if (playerPipeline.inStoppedState()) {
-        playerPipeline.setInStoppedState(false);
-        playerPipeline.flush();
-    }
-    int ret = playerPipeline.setState(GST_STATE_PAUSED);
-    if (ret == GST_STATE_CHANGE_FAILURE)
-        qCDebug(qLcMediaPlayer) << "Unable to set the pipeline to the paused state.";
-    if (mediaStatus() == QMediaPlayer::EndOfMedia) {
-        playerPipeline.setPosition(0);
-        mediaStatusChanged(QMediaPlayer::BufferedMedia);
-    }
-    updatePosition();
-    emit stateChanged(QMediaPlayer::PausedState);
+    gstVideoOutput->setActive(true);
+
+    qCDebug(qLcMediaPlayer) << "gst_play_pause";
+    gst_play_pause(m_gstPlay.get());
+
+    mediaStatusChanged(QMediaPlayer::BufferedMedia);
+    stateChanged(QMediaPlayer::PausedState);
 }
 
 void QGstreamerMediaPlayer::stop()
 {
-    if (state() == QMediaPlayer::StoppedState)
+    using namespace std::chrono_literals;
+    if (state() == QMediaPlayer::StoppedState) {
+        if (position() != 0) {
+            m_pendingSeek = 0ms;
+            positionChanged(0ms);
+            mediaStatusChanged(QMediaPlayer::LoadedMedia);
+        }
         return;
-    stopOrEOS(false);
+    }
+
+    qCDebug(qLcMediaPlayer) << "gst_play_stop";
+    gstVideoOutput->setActive(false);
+    gst_play_stop(m_gstPlay.get());
+
+    stateChanged(QMediaPlayer::StoppedState);
+
+    mediaStatusChanged(QMediaPlayer::LoadedMedia);
+    positionChanged(0ms);
 }
 
-void *QGstreamerMediaPlayer::nativePipeline()
+const QGstPipeline &QGstreamerMediaPlayer::pipeline() const
 {
-    return playerPipeline.pipeline();
+    return m_playbin;
 }
 
-void QGstreamerMediaPlayer::stopOrEOS(bool eos)
+bool QGstreamerMediaPlayer::canPlayQrc() const
 {
-    positionUpdateTimer.stop();
-    playerPipeline.setInStoppedState(true);
-    bool ret = playerPipeline.setStateSync(GST_STATE_PAUSED);
-    if (!ret)
-        qCDebug(qLcMediaPlayer) << "Unable to set the pipeline to the stopped state.";
-    if (!eos)
-        playerPipeline.setPosition(0);
-    updatePosition();
-    emit stateChanged(QMediaPlayer::StoppedState);
-    mediaStatusChanged(eos ? QMediaPlayer::EndOfMedia : QMediaPlayer::LoadedMedia);
-}
-
-bool QGstreamerMediaPlayer::processBusMessage(const QGstreamerMessage &message)
-{
-    if (message.isNull())
-        return false;
-
-    qCDebug(qLcMediaPlayer) << "received bus message:" << message;
-
-    GstMessage* gm = message.message();
-    switch (message.type()) {
-    case GST_MESSAGE_TAG: {
-        // #### This isn't ideal. We shouldn't catch stream specific tags here, rather the global ones
-        QGstTagListHandle tagList;
-        gst_message_parse_tag(gm, &tagList);
-
-        qCDebug(qLcMediaPlayer) << "    Got tags: " << tagList.get();
-        auto metaData = QGstreamerMetaData::fromGstTagList(tagList.get());
-        for (auto k : metaData.keys())
-            m_metaData.insert(k, metaData.value(k));
-        break;
-    }
-    case GST_MESSAGE_DURATION_CHANGED: {
-        qint64 d = playerPipeline.duration()/1e6;
-        qCDebug(qLcMediaPlayer) << "    duration changed message" << d;
-        if (d != m_duration) {
-            m_duration = d;
-            emit durationChanged(duration());
-        }
-        return false;
-    }
-    case GST_MESSAGE_EOS:
-        if (doLoop()) {
-            setPosition(0);
-            break;
-        }
-        stopOrEOS(true);
-        break;
-    case GST_MESSAGE_BUFFERING: {
-        qCDebug(qLcMediaPlayer) << "    buffering message";
-        int progress = 0;
-        gst_message_parse_buffering(gm, &progress);
-        m_bufferProgress = progress;
-        mediaStatusChanged(m_bufferProgress == 100 ? QMediaPlayer::BufferedMedia : QMediaPlayer::BufferingMedia);
-        emit bufferProgressChanged(m_bufferProgress/100.);
-        break;
-    }
-    case GST_MESSAGE_STATE_CHANGED: {
-        if (message.source() != playerPipeline)
-            return false;
-
-        GstState    oldState;
-        GstState    newState;
-        GstState    pending;
-
-        gst_message_parse_state_changed(gm, &oldState, &newState, &pending);
-        qCDebug(qLcMediaPlayer) << "    state changed message" << oldState << newState << pending;
-
-        switch (newState) {
-        case GST_STATE_VOID_PENDING:
-        case GST_STATE_NULL:
-        case GST_STATE_READY:
-            break;
-        case GST_STATE_PAUSED:
-        {
-            if (prerolling) {
-                qCDebug(qLcMediaPlayer) << "Preroll done, setting status to Loaded";
-                prerolling = false;
-                GST_DEBUG_BIN_TO_DOT_FILE(playerPipeline.bin(), GST_DEBUG_GRAPH_SHOW_ALL, "playerPipeline");
-
-                qint64 d = playerPipeline.duration()/1e6;
-                if (d != m_duration) {
-                    m_duration = d;
-                    qCDebug(qLcMediaPlayer) << "    duration changed" << d;
-                    emit durationChanged(duration());
-                }
-
-                parseStreamsAndMetadata();
-
-                emit tracksChanged();
-                mediaStatusChanged(QMediaPlayer::LoadedMedia);
-
-                GstQuery *query = gst_query_new_seeking(GST_FORMAT_TIME);
-                gboolean canSeek = false;
-                if (gst_element_query(playerPipeline.element(), query)) {
-                    gst_query_parse_seeking(query, nullptr, &canSeek, nullptr, nullptr);
-                    qCDebug(qLcMediaPlayer) << "    pipeline is seekable:" << canSeek;
-                } else {
-                    qCDebug(qLcMediaPlayer) << "    query for seekable failed.";
-                }
-                gst_query_unref(query);
-                seekableChanged(canSeek);
-            }
-
-            break;
-        }
-        case GST_STATE_PLAYING:
-            mediaStatusChanged(QMediaPlayer::BufferedMedia);
-            break;
-        }
-        break;
-    }
-    case GST_MESSAGE_ERROR: {
-        QUniqueGErrorHandle err;
-        QUniqueGStringHandle debug;
-        gst_message_parse_error(gm, &err, &debug);
-        if (err.get()->domain == GST_STREAM_ERROR
-            && err.get()->code == GST_STREAM_ERROR_CODEC_NOT_FOUND)
-            emit error(QMediaPlayer::FormatError, tr("Cannot play stream of type: <unknown>"));
-        else
-            emit error(QMediaPlayer::ResourceError, QString::fromUtf8(err.get()->message));
-        playerPipeline.dumpGraph("error");
-        mediaStatusChanged(QMediaPlayer::InvalidMedia);
-        break;
-    }
-    case GST_MESSAGE_WARNING: {
-        QUniqueGErrorHandle err;
-        QUniqueGStringHandle debug;
-        gst_message_parse_warning (gm, &err, &debug);
-        qCWarning(qLcMediaPlayer) << "Warning:" << err;
-        playerPipeline.dumpGraph("warning");
-        break;
-    }
-    case GST_MESSAGE_INFO: {
-        if (qLcMediaPlayer().isDebugEnabled()) {
-            QUniqueGErrorHandle err;
-            QUniqueGStringHandle debug;
-            gst_message_parse_info (gm, &err, &debug);
-            qCDebug(qLcMediaPlayer) << "Info:" << err;
-        }
-        break;
-    }
-    case GST_MESSAGE_SEGMENT_START: {
-        qCDebug(qLcMediaPlayer) << "    segment start message, updating position";
-        QGstStructure structure(gst_message_get_structure(gm));
-        auto p = structure["position"].toInt64();
-        if (p) {
-            qint64 position = (*p)/1000000;
-            emit positionChanged(position);
-        }
-        break;
-    }
-    case GST_MESSAGE_ELEMENT: {
-        QGstStructure structure(gst_message_get_structure(gm));
-        auto type = structure.name();
-        if (type == "stream-topology") {
-            topology.free();
-            topology = structure.copy();
-        }
-        break;
-    }
-
-    default:
-//        qCDebug(qLcMediaPlayer) << "    default message handler, doing nothing";
-
-        break;
-    }
-
-    return false;
-}
-
-bool QGstreamerMediaPlayer::processSyncMessage(const QGstreamerMessage &message)
-{
-#if QT_CONFIG(gstreamer_gl)
-    if (message.type() != GST_MESSAGE_NEED_CONTEXT)
-        return false;
-    const gchar *type = nullptr;
-    gst_message_parse_context_type (message.message(), &type);
-    if (strcmp(type, GST_GL_DISPLAY_CONTEXT_TYPE))
-        return false;
-    if (!gstVideoOutput || !gstVideoOutput->gstreamerVideoSink())
-        return false;
-    auto *context = gstVideoOutput->gstreamerVideoSink()->gstGlDisplayContext();
-    if (!context)
-        return false;
-    gst_element_set_context(GST_ELEMENT(GST_MESSAGE_SRC(message.message())), context);
-    playerPipeline.dumpGraph("need_context");
     return true;
-#else
-    Q_UNUSED(message);
-    return false;
-#endif
 }
 
 QUrl QGstreamerMediaPlayer::media() const
@@ -465,193 +598,34 @@ const QIODevice *QGstreamerMediaPlayer::mediaStream() const
     return m_stream;
 }
 
-void QGstreamerMediaPlayer::decoderPadAdded(const QGstElement &src, const QGstPad &pad)
+void QGstreamerMediaPlayer::sourceSetupCallback([[maybe_unused]] GstElement *playbin,
+                                                GstElement *source, QGstreamerMediaPlayer *)
 {
-    if (src != decoder)
-        return;
+    // gst_play thread
 
-    auto caps = pad.currentCaps();
-    auto type = caps.at(0).name();
-    qCDebug(qLcMediaPlayer) << "Received new pad" << pad.name() << "from" << src.name() << "type" << type;
-    qCDebug(qLcMediaPlayer) << "    " << caps;
+    const gchar *typeName = g_type_name_from_instance((GTypeInstance *)source);
+    qCDebug(qLcMediaPlayer) << "Setting up source:" << typeName;
 
-    TrackType streamType = NTrackTypes;
-    if (type.startsWith("video/x-raw")) {
-        streamType = VideoStream;
-    } else if (type.startsWith("audio/x-raw")) {
-        streamType = AudioStream;
-    } else if (type.startsWith("text/")) {
-        streamType = SubtitleStream;
-    } else {
-        qCWarning(qLcMediaPlayer) << "Ignoring unknown media stream:" << pad.name() << type;
-        return;
-    }
-
-    auto &ts = trackSelector(streamType);
-    QGstPad sinkPad = ts.createInputPad();
-    if (!pad.link(sinkPad)) {
-        qCWarning(qLcMediaPlayer) << "Failed to add track, cannot link pads";
-        return;
-    }
-    qCDebug(qLcMediaPlayer) << "Adding track";
-
-    if (ts.trackCount() == 1) {
-        if (streamType == VideoStream) {
-            connectOutput(ts);
-            ts.setActiveInputPad(sinkPad);
-            emit videoAvailableChanged(true);
-        }
-        else if (streamType == AudioStream) {
-            connectOutput(ts);
-            ts.setActiveInputPad(sinkPad);
-            emit audioAvailableChanged(true);
-        }
-    }
-
-    if (!prerolling)
-        emit tracksChanged();
-
-    decoderOutputMap.insert(pad.name(), sinkPad);
-}
-
-void QGstreamerMediaPlayer::decoderPadRemoved(const QGstElement &src, const QGstPad &pad)
-{
-    if (src != decoder)
-        return;
-
-    qCDebug(qLcMediaPlayer) << "Removed pad" << pad.name() << "from" << src.name();
-    auto track = decoderOutputMap.value(pad.name());
-    if (track.isNull())
-        return;
-
-    auto ts = std::find_if(std::begin(trackSelectors), std::end(trackSelectors),
-                           [&](TrackSelector &ts){ return ts.selector == track.parent(); });
-    if (ts == std::end(trackSelectors))
-        return;
-
-    qCDebug(qLcMediaPlayer) << "   was linked to pad" << track.name() << "from" << ts->selector.name();
-    ts->removeInputPad(track);
-
-    if (ts->trackCount() == 0) {
-        removeOutput(*ts);
-        if (ts->type == AudioStream)
-            audioAvailableChanged(false);
-        else if (ts->type == VideoStream)
-            videoAvailableChanged(false);
-    }
-
-    if (!prerolling)
-        tracksChanged();
-}
-
-void QGstreamerMediaPlayer::removeAllOutputs()
-{
-    for (auto &ts : trackSelectors) {
-        removeOutput(ts);
-        ts.removeAllInputPads();
-    }
-    audioAvailableChanged(false);
-    videoAvailableChanged(false);
-}
-
-void QGstreamerMediaPlayer::connectOutput(TrackSelector &ts)
-{
-    if (ts.isConnected)
-        return;
-
-    QGstElement e;
-    switch (ts.type) {
-    case AudioStream:
-        e = gstAudioOutput ? gstAudioOutput->gstElement() : QGstElement{};
-        break;
-    case VideoStream:
-        e = gstVideoOutput ? gstVideoOutput->gstElement() : QGstElement{};
-        break;
-    case SubtitleStream:
-        if (gstVideoOutput)
-            gstVideoOutput->linkSubtitleStream(ts.selector);
-        break;
-    default:
-        return;
-    }
-
-    if (!e.isNull()) {
-        qCDebug(qLcMediaPlayer) << "connecting output for track type" << ts.type;
-        playerPipeline.add(e);
-        qLinkGstElements(ts.selector, e);
-        e.setState(GST_STATE_PAUSED);
-    }
-
-    ts.isConnected = true;
-}
-
-void QGstreamerMediaPlayer::removeOutput(TrackSelector &ts)
-{
-    if (!ts.isConnected)
-        return;
-
-    QGstElement e;
-    switch (ts.type) {
-    case AudioStream:
-        e = gstAudioOutput ? gstAudioOutput->gstElement() : QGstElement{};
-        break;
-    case VideoStream:
-        e = gstVideoOutput ? gstVideoOutput->gstElement() : QGstElement{};
-        break;
-    case SubtitleStream:
-        if (gstVideoOutput)
-            gstVideoOutput->unlinkSubtitleStream();
-        break;
-    default:
-        break;
-    }
-
-    if (!e.isNull()) {
-        qCDebug(qLcMediaPlayer) << "removing output for track type" << ts.type;
-        playerPipeline.stopAndRemoveElements(e);
-    }
-
-    ts.isConnected = false;
-}
-
-void QGstreamerMediaPlayer::uridecodebinElementAddedCallback(GstElement */*uridecodebin*/, GstElement *child, QGstreamerMediaPlayer *that)
-{
-    QGstElement c(child);
-    qCDebug(qLcMediaPlayer) << "New element added to uridecodebin:" << c.name();
-
-    if (G_OBJECT_TYPE(child) == that->decodebinType) {
-        qCDebug(qLcMediaPlayer) << "     -> setting post-stream-topology property";
-        c.set("post-stream-topology", true);
-    }
-}
-
-void QGstreamerMediaPlayer::sourceSetupCallback(GstElement *uridecodebin, GstElement *source, QGstreamerMediaPlayer *that)
-{
-    Q_UNUSED(uridecodebin)
-    Q_UNUSED(that)
-
-    qCDebug(qLcMediaPlayer) << "Setting up source:" << g_type_name_from_instance((GTypeInstance*)source);
-
-    if (QLatin1String("GstRTSPSrc") == QString::fromUtf8(g_type_name_from_instance((GTypeInstance*)source))) {
-        QGstElement s(source);
+    if (typeName == std::string_view("GstRTSPSrc")) {
+        QGstElement s(source, QGstElement::NeedsRef);
         int latency{40};
         bool ok{false};
-        int v = QString::fromLocal8Bit(qgetenv("QT_MEDIA_RTSP_LATENCY")).toUInt(&ok);
+        int v = qEnvironmentVariableIntValue("QT_MEDIA_RTSP_LATENCY", &ok);
         if (ok)
             latency = v;
         qCDebug(qLcMediaPlayer) << "    -> setting source latency to:" << latency << "ms";
         s.set("latency", latency);
 
         bool drop{true};
-        v = QString::fromLocal8Bit(qgetenv("QT_MEDIA_RTSP_DROP_ON_LATENCY")).toUInt(&ok);
+        v = qEnvironmentVariableIntValue("QT_MEDIA_RTSP_DROP_ON_LATENCY", &ok);
         if (ok && v == 0)
             drop = false;
         qCDebug(qLcMediaPlayer) << "    -> setting drop-on-latency to:" << drop;
         s.set("drop-on-latency", drop);
 
         bool retrans{false};
-        v = QString::fromLocal8Bit(qgetenv("QT_MEDIA_RTSP_DO_RETRANSMISSION")).toUInt(&ok);
-        if (ok && v not_eq 0)
+        v = qEnvironmentVariableIntValue("QT_MEDIA_RTSP_DO_RETRANSMISSION", &ok);
+        if (ok && v != 0)
             retrans = true;
         qCDebug(qLcMediaPlayer) << "    -> setting do-retransmission to:" << retrans;
         s.set("do-retransmission", retrans);
@@ -660,100 +634,40 @@ void QGstreamerMediaPlayer::sourceSetupCallback(GstElement *uridecodebin, GstEle
 
 void QGstreamerMediaPlayer::setMedia(const QUrl &content, QIODevice *stream)
 {
-    qCDebug(qLcMediaPlayer) << Q_FUNC_INFO << "setting location to" << content;
+    using namespace Qt::Literals;
+    using namespace std::chrono;
+    using namespace std::chrono_literals;
 
-    prerolling = true;
-
-    bool ret = playerPipeline.setStateSync(GST_STATE_NULL);
-    if (!ret)
-        qCDebug(qLcMediaPlayer) << "Unable to set the pipeline to the stopped state.";
-
+    m_resourceErrorState = ResourceErrorState::NoError;
     m_url = content;
     m_stream = stream;
+    QUrl streamURL;
+    if (stream)
+        streamURL = qGstRegisterQIODevice(stream);
 
-    if (!src.isNull())
-        playerPipeline.remove(src);
-    if (!decoder.isNull())
-        playerPipeline.remove(decoder);
-    src = QGstElement();
-    decoder = QGstElement();
-    removeAllOutputs();
-    seekableChanged(false);
-    playerPipeline.setInStoppedState(true);
+    const QUrl &playUrl = stream ? streamURL : content;
 
-    if (m_duration != 0) {
-        m_duration = 0;
-        durationChanged(0);
-    }
-    stateChanged(QMediaPlayer::StoppedState);
-    if (position() != 0)
-        positionChanged(0);
-    mediaStatusChanged(QMediaPlayer::NoMedia);
-    if (!m_metaData.isEmpty()) {
-        m_metaData.clear();
-        metaDataChanged();
-    }
-
-    if (content.isEmpty())
+    if (content.isEmpty() && !stream) {
+        mediaStatusChanged(QMediaPlayer::NoMedia);
+        resetStateForEmptyOrInvalidMedia();
         return;
-
-    if (m_stream) {
-        if (!m_appSrc) {
-            auto maybeAppSrc = QGstAppSrc::create(this);
-            if (maybeAppSrc) {
-                m_appSrc = maybeAppSrc.value();
-            } else {
-                emit error(QMediaPlayer::ResourceError, maybeAppSrc.error());
-                return;
-            }
-        }
-        src = m_appSrc->element();
-        decoder = QGstElement::createFromFactory("decodebin", "decoder");
-        if (!decoder) {
-            emit error(QMediaPlayer::ResourceError, errorMessageCannotFindElement("decodebin"));
-            return;
-        }
-        decoder.set("post-stream-topology", true);
-        playerPipeline.add(src, decoder);
-        qLinkGstElements(src, decoder);
-
-        m_appSrc->setup(m_stream);
-        seekableChanged(!stream->isSequential());
-    } else {
-        // use uridecodebin
-        decoder = QGstElement::createFromFactory("uridecodebin", "uridecoder");
-        if (!decoder) {
-            emit error(QMediaPlayer::ResourceError, errorMessageCannotFindElement("uridecodebin"));
-            return;
-        }
-        playerPipeline.add(decoder);
-        // can't set post-stream-topology to true, as uridecodebin doesn't have the property. Use a hack
-        decoder.connect("element-added", GCallback(QGstreamerMediaPlayer::uridecodebinElementAddedCallback), this);
-        decoder.connect("source-setup", GCallback(QGstreamerMediaPlayer::sourceSetupCallback), this);
-
-        decoder.set("uri", content.toEncoded().constData());
-        if (m_bufferProgress != 0) {
-            m_bufferProgress = 0;
-            emit bufferProgressChanged(0.);
-        }
     }
-    decoder.onPadAdded<&QGstreamerMediaPlayer::decoderPadAdded>(this);
-    decoder.onPadRemoved<&QGstreamerMediaPlayer::decoderPadRemoved>(this);
 
     mediaStatusChanged(QMediaPlayer::LoadingMedia);
 
-    if (state() == QMediaPlayer::PlayingState) {
-            int ret = playerPipeline.setState(GST_STATE_PLAYING);
-            if (ret == GST_STATE_CHANGE_FAILURE)
-                qCWarning(qLcMediaPlayer) << "Unable to set the pipeline to the playing state.";
-    } else {
-        int ret = playerPipeline.setState(GST_STATE_PAUSED);
-        if (!ret)
-            qCWarning(qLcMediaPlayer) << "Unable to set the pipeline to the paused state.";
+    // LATER: discover is synchronous, but we would be way more friendly to make it asynchronous.
+    bool mediaDiscovered = discover(playUrl);
+    if (!mediaDiscovered) {
+        m_resourceErrorState = ResourceErrorState::ErrorOccurred;
+        error(QMediaPlayer::Error::ResourceError, u"Resource cannot be discovered"_s);
+        mediaStatusChanged(QMediaPlayer::InvalidMedia);
+        resetStateForEmptyOrInvalidMedia();
+        return;
     }
 
-    playerPipeline.setPosition(0);
-    positionChanged(0);
+    positionChanged(0ms);
+
+    gst_play_set_uri(m_gstPlay.get(), playUrl.toEncoded().constData());
 }
 
 void QGstreamerMediaPlayer::setAudioOutput(QPlatformAudioOutput *output)
@@ -761,19 +675,20 @@ void QGstreamerMediaPlayer::setAudioOutput(QPlatformAudioOutput *output)
     if (gstAudioOutput == output)
         return;
 
-    auto &ts = trackSelector(AudioStream);
+    auto *gstOutput = static_cast<QGstreamerAudioOutput *>(output);
+    if (gstOutput)
+        gstOutput->setAsync(true);
 
-    playerPipeline.modifyPipelineWhileNotRunning([&] {
-        if (gstAudioOutput) {
-            removeOutput(ts);
-            gstAudioOutput->setPipeline({});
-        }
-        gstAudioOutput = static_cast<QGstreamerAudioOutput *>(output);
-        if (gstAudioOutput) {
-            gstAudioOutput->setPipeline(playerPipeline);
-            connectOutput(ts);
-        }
-    });
+    gstAudioOutput = static_cast<QGstreamerAudioOutput *>(output);
+    if (gstAudioOutput)
+        m_playbin.set("audio-sink", gstAudioOutput->gstElement());
+    else
+        m_playbin.set("audio-sink", QGstElement::createFromPipelineDescription("fakesink"));
+    updateAudioTrackEnabled();
+
+    // FIXME: we need to have a gst_play API to change the sinks on the fly.
+    // finishStateChange a hack to avoid assertion failures in gstreamer
+    m_playbin.finishStateChange();
 }
 
 QMediaMetaData QGstreamerMediaPlayer::metaData() const
@@ -783,150 +698,75 @@ QMediaMetaData QGstreamerMediaPlayer::metaData() const
 
 void QGstreamerMediaPlayer::setVideoSink(QVideoSink *sink)
 {
+    auto *gstSink = sink ? static_cast<QGstreamerVideoSink *>(sink->platformVideoSink()) : nullptr;
+    if (gstSink)
+        gstSink->setAsync(false);
+
     gstVideoOutput->setVideoSink(sink);
-}
+    updateVideoTrackEnabled();
 
-static QGstStructure endOfChain(const QGstStructure &s)
-{
-    QGstStructure e = s;
-    while (1) {
-        auto next = e["next"].toStructure();
-        if (!next.isNull())
-            e = next;
-        else
-            break;
+    if (sink && state() == QMediaPlayer::PausedState) {
+        // FIXME: we want to get a the existing frame, but gst_play does not have such capabilities.
+        // seeking to the current position is a rather bad hack, but it's the best we can do for now
+        seekToCurrentPosition();
     }
-    return e;
-}
-
-void QGstreamerMediaPlayer::parseStreamsAndMetadata()
-{
-    qCDebug(qLcMediaPlayer) << "============== parse topology ============";
-    if (topology.isNull()) {
-        qCDebug(qLcMediaPlayer) << "    null topology";
-        return;
-    }
-    auto caps = topology["caps"].toCaps();
-    auto structure = caps.at(0);
-    auto fileFormat = QGstreamerFormatInfo::fileFormatForCaps(structure);
-    qCDebug(qLcMediaPlayer) << caps << fileFormat;
-    m_metaData.insert(QMediaMetaData::FileFormat, QVariant::fromValue(fileFormat));
-    m_metaData.insert(QMediaMetaData::Duration, duration());
-    m_metaData.insert(QMediaMetaData::Url, m_url);
-    QGValue tags = topology["tags"];
-    if (!tags.isNull()) {
-        QGstTagListHandle tagList;
-        gst_structure_get(topology.structure, "tags", GST_TYPE_TAG_LIST, &tagList, nullptr);
-
-        const auto metaData = QGstreamerMetaData::fromGstTagList(tagList.get());
-        for (auto k : metaData.keys())
-            m_metaData.insert(k, metaData.value(k));
-    }
-
-    auto demux = endOfChain(topology);
-    auto next = demux["next"];
-    if (!next.isList()) {
-        qCDebug(qLcMediaPlayer) << "    no additional streams";
-        emit metaDataChanged();
-        return;
-    }
-
-    // collect stream info
-    int size = next.listSize();
-    for (int i = 0; i < size; ++i) {
-        auto val = next.at(i);
-        caps = val.toStructure()["caps"].toCaps();
-        structure = caps.at(0);
-        if (structure.name().startsWith("audio/")) {
-            auto codec = QGstreamerFormatInfo::audioCodecForCaps(structure);
-            m_metaData.insert(QMediaMetaData::AudioCodec, QVariant::fromValue(codec));
-            qCDebug(qLcMediaPlayer) << "    audio" << caps << (int)codec;
-        } else if (structure.name().startsWith("video/")) {
-            auto codec = QGstreamerFormatInfo::videoCodecForCaps(structure);
-            m_metaData.insert(QMediaMetaData::VideoCodec, QVariant::fromValue(codec));
-            qCDebug(qLcMediaPlayer) << "    video" << caps << (int)codec;
-            auto framerate = structure["framerate"].getFraction();
-            if (framerate)
-                m_metaData.insert(QMediaMetaData::VideoFrameRate, *framerate);
-
-            QSize resolution = structure.resolution();
-            if (resolution.isValid())
-                m_metaData.insert(QMediaMetaData::Resolution, resolution);
-        }
-    }
-
-    auto sinkPad = trackSelector(VideoStream).activeInputPad();
-    if (!sinkPad.isNull()) {
-        QGstTagListHandle tagList;
-
-        g_object_get(sinkPad.object(), "tags", &tagList, nullptr);
-        if (tagList)
-            qCDebug(qLcMediaPlayer) << "    tags=" << tagList.get();
-        else
-            qCDebug(qLcMediaPlayer) << "    tags=(null)";
-
-        QSize nativeSize = structure.nativeSize();
-        gstVideoOutput->gstreamerVideoSink()->setNativeSize(nativeSize);
-    }
-
-
-    qCDebug(qLcMediaPlayer) << "============== end parse topology ============";
-    emit metaDataChanged();
-    playerPipeline.dumpGraph("playback");
 }
 
 int QGstreamerMediaPlayer::trackCount(QPlatformMediaPlayer::TrackType type)
 {
-    return trackSelector(type).trackCount();
+    QSpan<const QMediaMetaData> tracks = m_trackMetaData[type];
+    return tracks.size();
 }
 
 QMediaMetaData QGstreamerMediaPlayer::trackMetaData(QPlatformMediaPlayer::TrackType type, int index)
 {
-    auto track = trackSelector(type).inputPad(index);
-    if (track.isNull())
-        return {};
-
-    QGstTagListHandle tagList;
-    g_object_get(track.object(), "tags", &tagList, nullptr);
-
-    return tagList ? QGstreamerMetaData::fromGstTagList(tagList.get()) : QMediaMetaData{};
+    QSpan<const QMediaMetaData> tracks = m_trackMetaData[type];
+    if (index < tracks.size())
+        return tracks[index];
+    return {};
 }
 
 int QGstreamerMediaPlayer::activeTrack(TrackType type)
 {
-    return trackSelector(type).activeInputIndex();
+    return m_activeTrack[type];
 }
 
 void QGstreamerMediaPlayer::setActiveTrack(TrackType type, int index)
 {
-    auto &ts = trackSelector(type);
-    auto track = ts.inputPad(index);
-    if (track.isNull() && index != -1) {
-        qCWarning(qLcMediaPlayer) << "Attempt to set an incorrect index" << index
-                                  << "for the track type" << type;
+    if (m_activeTrack[type] == index)
         return;
+
+    int formerTrack = m_activeTrack[type];
+    m_activeTrack[type] = index;
+
+    switch (type) {
+    case TrackType::VideoStream: {
+        if (index != -1)
+            gst_play_set_video_track(m_gstPlay.get(), index);
+        updateVideoTrackEnabled();
+        updateNativeSizeOnVideoOutput();
+        break;
     }
+    case TrackType::AudioStream: {
+        if (index != -1)
+            gst_play_set_audio_track(m_gstPlay.get(), index);
+        updateAudioTrackEnabled();
+        break;
+    }
+    case TrackType::SubtitleStream: {
+        if (index != -1)
+            gst_play_set_subtitle_track(m_gstPlay.get(), index);
+        gst_play_set_subtitle_track_enabled(m_gstPlay.get(), index != -1);
+        break;
+    }
+    default:
+        Q_UNREACHABLE();
+    };
 
-    qCDebug(qLcMediaPlayer) << "Setting the index" << index << "for the track type" << type;
-    if (type == QPlatformMediaPlayer::SubtitleStream)
-        gstVideoOutput->flushSubtitles();
-
-    playerPipeline.modifyPipelineWhileNotRunning([&] {
-        if (track.isNull()) {
-            removeOutput(ts);
-        } else {
-            ts.setActiveInputPad(track);
-            connectOutput(ts);
-        }
-    });
-
-    // seek to force an immediate change of the stream
-    if (playerPipeline.state() == GST_STATE_PLAYING)
-        playerPipeline.flush();
-    else
-        m_requiresSeekOnPlay = true;
+    if (formerTrack != -1 && index != -1)
+        // it can take several seconds for gstreamer to switch the track. so we seek to the current
+        // position
+        seekToCurrentPosition();
 }
 
 QT_END_NAMESPACE
-
-#include "moc_qgstreamermediaplayer_p.cpp"

@@ -27,6 +27,8 @@
 #include <qdarwinaudiodevice_p.h>
 #include <qsemaphore.h>
 
+#include "../audio/qaudioringbuffer_p.h"
+
 QT_BEGIN_NAMESPACE
 
 class QDarwinAudioSinkBuffer;
@@ -72,7 +74,7 @@ private:
     const int m_periodTime = 0;
     QIODevice *m_device = nullptr;
     QTimer *m_fillTimer = nullptr;
-    std::unique_ptr<CoreAudioRingBuffer> m_buffer;
+    QtPrivate::QAudioRingBuffer<char> m_buffer;
 };
 
 class QDarwinAudioSinkDevice : public QIODevice
@@ -159,7 +161,6 @@ private:
 #if defined(Q_OS_MACOS)
     qreal m_volume = 1.;
 #endif
-    bool m_pullMode = false;
 
     QAudioStateMachine m_stateMachine;
     QSemaphore m_drainSemaphore;

@@ -16,81 +16,17 @@
 //
 
 #include <QtMultimedia/qtmultimediaglobal.h>
-#include <QtCore/private/qglobal_p.h>
-#include <qstring.h>
-#include <qsize.h>
-#include <utility>
-#include <optional>
+#include <QtMultimedia/private/qmaybe_p.h>
+#include <QtMultimedia/private/qvideotransformation_p.h>
+#include <QtCore/qsize.h>
+#include <QtCore/qurl.h>
+#include <QtGui/rhi/qrhi.h>
 
 QT_BEGIN_NAMESPACE
 
-struct QUnexpect
-{
-};
-
-static constexpr QUnexpect unexpect{};
-
-template<typename Value, typename Error = QString>
-class QMaybe
-{
-public:
-    QMaybe(const Value &v)
-    {
-        if constexpr (std::is_pointer_v<Value>) {
-            if (!v)
-                return; // nullptr is treated as nullopt (for raw pointer types only)
-        }
-        m_value = v;
-    }
-
-    QMaybe(Value &&v)
-    {
-        if constexpr (std::is_pointer_v<Value>) {
-            if (!v)
-                return; // nullptr is treated as nullopt (for raw pointer types only)
-        }
-        m_value = std::move(v);
-    }
-
-    QMaybe(const QMaybe &other) = default;
-
-    QMaybe &operator=(const QMaybe &other) = default;
-
-    QMaybe(const Error& error) : m_error(error) { }
-
-    template<class... Args>
-    QMaybe(QUnexpect, Args &&...args) : m_error{ std::forward<Args>(args)... }
-    {
-        static_assert(std::is_constructible_v<Error, Args &&...>,
-                      "Invalid arguments for creating an error type");
-    }
-
-    constexpr explicit operator bool() const noexcept { return m_value.has_value(); }
-
-    constexpr Value &value()
-    {
-        Q_ASSERT(m_value.has_value());
-        return *m_value;
-    }
-
-    constexpr const Value &value() const
-    {
-        Q_ASSERT(m_value.has_value());
-        return *m_value;
-    }
-
-    constexpr Value *operator->() noexcept { return &value(); }
-    constexpr const Value *operator->() const noexcept { return &value(); }
-
-    constexpr Value &operator*() & noexcept { return value(); }
-    constexpr const Value &operator*() const & noexcept { return value(); }
-
-    constexpr const Error &error() const { return m_error; }
-
-private:
-    std::optional<Value> m_value;
-    Error m_error;
-};
+class QRhiSwapChain;
+class QVideoFrame;
+class QVideoFrameFormat;
 
 struct Fraction {
     int numerator;
@@ -100,6 +36,53 @@ struct Fraction {
 Q_MULTIMEDIA_EXPORT Fraction qRealToFraction(qreal value);
 
 Q_MULTIMEDIA_EXPORT QSize qCalculateFrameSize(QSize resolution, Fraction pixelAspectRatio);
+
+// TODO: after adding pixel aspect ratio to QVideoFrameFormat, the function should
+// consider PAR as well as rotation
+Q_MULTIMEDIA_EXPORT QSize qRotatedFrameSize(QSize size, int rotation);
+
+inline QSize qRotatedFrameSize(QSize size, QtVideo::Rotation rotation)
+{
+    return qRotatedFrameSize(size, qToUnderlying(rotation));
+}
+
+Q_MULTIMEDIA_EXPORT QSize qRotatedFramePresentationSize(const QVideoFrame &frame);
+
+Q_MULTIMEDIA_EXPORT QUrl qMediaFromUserInput(QUrl fileName);
+
+Q_MULTIMEDIA_EXPORT bool qIsAutoHdrEnabled();
+
+Q_MULTIMEDIA_EXPORT QRhiSwapChain::Format
+qGetRequiredSwapChainFormat(const QVideoFrameFormat &format);
+
+Q_MULTIMEDIA_EXPORT bool
+qShouldUpdateSwapChainFormat(QRhiSwapChain *swapChain,
+                             QRhiSwapChain::Format requiredSwapChainFormat);
+
+Q_MULTIMEDIA_EXPORT VideoTransformation
+qNormalizedSurfaceTransformation(const QVideoFrameFormat &format);
+
+Q_MULTIMEDIA_EXPORT VideoTransformation qNormalizedFrameTransformation(const QVideoFrame &frame,
+                                                                       int additionalRotaton = 0);
+
+Q_MULTIMEDIA_EXPORT QtVideo::Rotation
+qVideoRotationFromDegrees(int clockwiseDegrees);
+
+/* The function get mirroring and rotation from the specified QTransform.
+ *
+ * Matrix translation is not taken into consideration.
+ * Matrix negative scaling is interpreted as mirroring.
+ * Absolute X and Y scale values are not taken into consideration as
+ * QVideoFrame and QVideoFrameFormat don't support scaling transformations.
+ *
+ * Sheared matrixes are not supported,
+ * as shearing can make the transformation ambiguous
+ * (the same matrix can be reached by different angle,scaleX,scaleY,shearV,shearH).
+ *
+ * If the given matrix is invalid, or the scale sign is ambiguous,
+ * the function returns an empty optional value.
+ */
+Q_MULTIMEDIA_EXPORT VideoTransformationOpt qVideoTransformationFromMatrix(const QTransform &matrix);
 
 QT_END_NAMESPACE
 

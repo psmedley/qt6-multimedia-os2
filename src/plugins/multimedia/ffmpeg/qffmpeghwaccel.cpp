@@ -19,6 +19,7 @@
 #    include "qffmpeghwaccel_mediacodec_p.h"
 #endif
 #include "qffmpeg_p.h"
+#include "qffmpegcodecstorage_p.h"
 #include "qffmpegvideobuffer_p.h"
 #include "qscopedvaluerollback.h"
 #include "QtCore/qfile.h"
@@ -93,6 +94,11 @@ static bool precheckDriver(AVHWDeviceType type)
     if (type == AV_HWDEVICE_TYPE_D3D11VA)
         return QSystemLibrary(QLatin1String("d3d11.dll")).load();
 
+#if QT_FFMPEG_HAS_D3D12VA
+    if (type == AV_HWDEVICE_TYPE_D3D12VA)
+        return QSystemLibrary(QLatin1String("d3d12.dll")).load();
+#endif
+
     if (type == AV_HWDEVICE_TYPE_DXVA2)
         return QSystemLibrary(QLatin1String("d3d9.dll")).load();
 
@@ -122,6 +128,9 @@ static bool checkHwType(AVHWDeviceType type)
     if (type == AV_HWDEVICE_TYPE_MEDIACODEC ||
         type == AV_HWDEVICE_TYPE_VIDEOTOOLBOX ||
         type == AV_HWDEVICE_TYPE_D3D11VA ||
+#if QT_FFMPEG_HAS_D3D12VA
+        type == AV_HWDEVICE_TYPE_D3D12VA ||
+#endif
         type == AV_HWDEVICE_TYPE_DXVA2)
         return true; // Don't waste time; it's expected to work fine of the precheck is OK
 
@@ -143,10 +152,11 @@ static const std::vector<AVHWDeviceType> &deviceTypes()
         std::unordered_set<AVPixelFormat> hwPixFormats;
         void *opaque = nullptr;
         while (auto codec = av_codec_iterate(&opaque)) {
-            if (auto pixFmt = codec->pix_fmts)
-                for (; *pixFmt != AV_PIX_FMT_NONE; ++pixFmt)
-                    if (isHwPixelFormat(*pixFmt))
-                        hwPixFormats.insert(*pixFmt);
+            findAVPixelFormat(codec, [&](AVPixelFormat format) {
+                if (isHwPixelFormat(format))
+                    hwPixFormats.insert(format);
+                return false;
+            });
         }
 
         // create a device types list
@@ -197,14 +207,14 @@ static std::vector<AVHWDeviceType> deviceTypes(const char *envVarName)
     return result;
 }
 
-template<typename CodecFinder>
-std::pair<const AVCodec *, std::unique_ptr<HWAccel>>
+template <typename CodecFinder>
+std::pair<const AVCodec *, HWAccelUPtr>
 findCodecWithHwAccel(AVCodecID id, const std::vector<AVHWDeviceType> &deviceTypes,
                      CodecFinder codecFinder,
                      const std::function<bool(const HWAccel &)> &hwAccelPredicate)
 {
     for (auto type : deviceTypes) {
-        const auto codec = codecFinder(id, type, {});
+        const auto codec = codecFinder(id, pixelFormatForHwDevice(type));
 
         if (!codec)
             continue;
@@ -292,7 +302,11 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *sugge
             const bool shouldCheckCodecFormats = config->pix_fmt == AV_PIX_FMT_NONE;
 
             auto scoresGettor = [&](AVPixelFormat format) {
-                if (shouldCheckCodecFormats && !isAVFormatSupported(codecContext->codec, format))
+                // check in supported codec->pix_fmts (avcodec_get_supported_config with
+                // AV_CODEC_CONFIG_PIX_FORMAT since n7.1); no reason to use findAVPixelFormat as
+                // we're already in the hw_config loop
+                const auto pixelFormats = getCodecPixelFormats(codecContext->codec);
+                if (shouldCheckCodecFormats && !hasAVValue(pixelFormats, format))
                     return NotSuitableAVScore;
 
                 if (!shouldCheckCodecFormats && config->pix_fmt != format)
@@ -308,7 +322,7 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *sugge
                 return result;
             };
 
-            const auto found = findBestAVFormat(suggestedFormats, scoresGettor);
+            const auto found = findBestAVValue(suggestedFormats, scoresGettor);
 
             if (found.second > formatAndScore.second)
                 formatAndScore = found;
@@ -323,7 +337,7 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *sugge
     }
 
     // prefer video formats we can handle directly
-    const auto noConversionFormat = findAVFormat(suggestedFormats, &isNoConversionFormat);
+    const auto noConversionFormat = findAVValue(suggestedFormats, &isNoConversionFormat);
     if (noConversionFormat != AV_PIX_FMT_NONE) {
         qCDebug(qLHWAccel) << "Selected format with no conversion" << noConversionFormat;
         return noConversionFormat;
@@ -337,10 +351,10 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *sugge
 
 HWAccel::~HWAccel() = default;
 
-std::unique_ptr<HWAccel> HWAccel::create(AVHWDeviceType deviceType)
+HWAccelUPtr HWAccel::create(AVHWDeviceType deviceType)
 {
     if (auto ctx = loadHWContext(deviceType))
-        return std::unique_ptr<HWAccel>(new HWAccel(std::move(ctx)));
+        return HWAccelUPtr(new HWAccel(std::move(ctx)));
     else
         return {};
 }
@@ -387,16 +401,30 @@ const AVHWFramesConstraints *HWAccel::constraints() const
     return m_constraints.get();
 }
 
-std::pair<const AVCodec *, std::unique_ptr<HWAccel>>
-HWAccel::findEncoderWithHwAccel(AVCodecID id, const std::function<bool(const HWAccel &)>& hwAccelPredicate)
+bool HWAccel::matchesSizeContraints(QSize size) const
 {
-    auto finder = qOverload<AVCodecID, const std::optional<AVHWDeviceType> &,
-                            const std::optional<PixelOrSampleFormat> &>(&QFFmpeg::findAVEncoder);
+    const auto constraints = this->constraints();
+    if (!constraints)
+        return true;
+
+    return size.width() >= constraints->min_width
+            && size.height() >= constraints->min_height
+            && size.width() <= constraints->max_width
+            && size.height() <= constraints->max_height;
+}
+
+std::pair<const AVCodec *, HWAccelUPtr>
+HWAccel::findEncoderWithHwAccel(AVCodecID id,
+                                const std::function<bool(const HWAccel &)> &hwAccelPredicate)
+{
+    auto finder = qOverload<AVCodecID, const std::optional<PixelOrSampleFormat> &>(
+            &QFFmpeg::findAVEncoder);
     return findCodecWithHwAccel(id, encodingDeviceTypes(), finder, hwAccelPredicate);
 }
 
-std::pair<const AVCodec *, std::unique_ptr<HWAccel>>
-HWAccel::findDecoderWithHwAccel(AVCodecID id, const std::function<bool(const HWAccel &)>& hwAccelPredicate)
+std::pair<const AVCodec *, HWAccelUPtr>
+HWAccel::findDecoderWithHwAccel(AVCodecID id,
+                                const std::function<bool(const HWAccel &)> &hwAccelPredicate)
 {
     return findCodecWithHwAccel(id, decodingDeviceTypes(), &QFFmpeg::findAVDecoder,
                                 hwAccelPredicate);
@@ -486,6 +514,15 @@ void TextureConverter::updateBackend(AVPixelFormat fmt)
         break;
     }
     d->format = fmt;
+}
+
+AVFrameUPtr copyFromHwPool(AVFrameUPtr frame)
+{
+#if QT_CONFIG(wmf)
+    return copyFromHwPoolD3D11(std::move(frame));
+#else
+    return frame;
+#endif
 }
 
 } // namespace QFFmpeg

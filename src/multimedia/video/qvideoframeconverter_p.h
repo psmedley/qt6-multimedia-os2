@@ -16,11 +16,16 @@
 //
 
 #include <qvideoframe.h>
-#include <private/qtvideo_p.h>
 
 QT_BEGIN_NAMESPACE
 
-Q_MULTIMEDIA_EXPORT QImage qImageFromVideoFrame(const QVideoFrame &frame, QtVideo::Rotation rotation = QtVideo::Rotation::None, bool mirrorX = false, bool mirrorY = false);
+struct VideoTransformation;
+
+Q_MULTIMEDIA_EXPORT QImage qImageFromVideoFrame(const QVideoFrame &frame,
+                                                const VideoTransformation &transformation,
+                                                bool forceCpu = false);
+
+Q_MULTIMEDIA_EXPORT QImage qImageFromVideoFrame(const QVideoFrame &frame, bool forceCpu = false);
 
 /**
  *  @brief Maps the video frame and returns an image having a shared ownership for the video frame

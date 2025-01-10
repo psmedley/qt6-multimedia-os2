@@ -1,7 +1,7 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
-if (MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+if(MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     set(NO_SIMD_DEFINES PFFFT_SIMD_DISABLE DISABLE_SIMD)
 endif()
 
@@ -212,6 +212,10 @@ qt_internal_add_3rdparty_library(BundledResonanceAudio
         ${PFFFT_DIR}
         ${SADIE_HRTFS_DIR}
         ../3rdparty/eigen
+    ATTRIBUTION_FILE_DIR_PATHS
+        ${RA_TOPLEVEL_DIR}
+        ${PFFFT_DIR}
+        ../3rdparty/eigen
 )
 
 # Required by pffft on certain PowerPC archs
@@ -227,7 +231,7 @@ qt_internal_extend_target(BundledResonanceAudio CONDITION (${CMAKE_SYSTEM_PROCES
 )
 
 # Use fallback mode if SSE is not available
-qt_internal_extend_target(BundledResonanceAudio CONDITION (${CMAKE_SYSTEM_PROCESSOR} MATCHES "i[3-6]86$")
+qt_internal_extend_target(BundledResonanceAudio CONDITION (${CMAKE_SYSTEM_PROCESSOR} MATCHES "i[3-6]86(-AT386)?$")
     COMPILE_OPTIONS
         -DPFFFT_SIMD_DISABLE
 )

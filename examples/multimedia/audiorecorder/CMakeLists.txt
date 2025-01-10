@@ -1,5 +1,5 @@
 # Copyright (C) 2022 The Qt Company Ltd.
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 cmake_minimum_required(VERSION 3.16)
 project(audiorecorder LANGUAGES CXX)
@@ -21,14 +21,12 @@ qt_add_executable(audiorecorder
     main.cpp
 )
 
+qt_add_ios_ffmpeg_libraries(audiorecorder)
+
 set_target_properties(audiorecorder PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in
-)
-
-target_include_directories(audiorecorder PUBLIC
-    ../shared
 )
 
 target_link_libraries(audiorecorder PUBLIC
@@ -37,12 +35,6 @@ target_link_libraries(audiorecorder PUBLIC
     Qt::Multimedia
     Qt::Widgets
 )
-
-if(WIN32)
-    target_include_directories(audiorecorder PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-endif()
 
 install(TARGETS audiorecorder
     RUNTIME DESTINATION "${INSTALL_EXAMPLEDIR}"

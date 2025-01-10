@@ -3,7 +3,9 @@
 
 #include "qmediaplayer_p.h"
 
+#include <private/qmultimediautils_p.h>
 #include <private/qplatformmediaintegration_p.h>
+#include <private/qaudiobufferoutput_p.h>
 #include <qvideosink.h>
 #include <qaudiooutput.h>
 
@@ -11,10 +13,10 @@
 #include <QtCore/qmetaobject.h>
 #include <QtCore/qtimer.h>
 #include <QtCore/qdebug.h>
+#include <QtCore/qdir.h>
 #include <QtCore/qpointer.h>
 #include <QtCore/qfileinfo.h>
 #include <QtCore/qtemporaryfile.h>
-#include <QtCore/qdir.h>
 #include <QtCore/qcoreapplication.h>
 
 #if defined(Q_OS_ANDROID)
@@ -44,7 +46,7 @@ QT_BEGIN_NAMESPACE
 
 /*!
     \qmltype MediaPlayer
-    \instantiates QMediaPlayer
+    \nativetype QMediaPlayer
     \brief Adds media playback to a scene.
 
     \inqmlmodule QtMultimedia
@@ -133,7 +135,8 @@ void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
     // Back ends can't play qrc files directly.
     // If the back end supports StreamPlayback, we pass a QFile for that resource.
     // If it doesn't, we copy the data to a temporary file and pass its path.
-    if (!media.isEmpty() && !stream && media.scheme() == QLatin1String("qrc")) {
+    if (!media.isEmpty() && !stream && media.scheme() == QLatin1String("qrc")
+        && !control->canPlayQrc()) {
         qrcMedia = media;
 
         file.reset(new QFile(QLatin1Char(':') + media.path()));
@@ -188,9 +191,7 @@ void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
         }
     } else {
         qrcMedia = QUrl();
-        QUrl url = media;
-        if (url.scheme().isEmpty() || url.scheme() == QLatin1String("file"))
-            url = QUrl::fromUserInput(media.toString(), QDir::currentPath(), QUrl::AssumeLocalFile);
+        QUrl url = qMediaFromUserInput(media);
         if (url.scheme() == QLatin1String("content") && !stream) {
             file.reset(new QFile(media.url()));
             stream = file.get();
@@ -591,12 +592,18 @@ void QMediaPlayer::setPlaybackRate(qreal rate)
 
     Setting the media to a null QUrl will cause the player to discard all
     information relating to the current media source and to cease all I/O operations related
-    to that media.
+    to that media. Setting the media will stop the playback.
 
     \note This function returns immediately after recording the specified source of the media.
     It does not wait for the media to finish loading and does not check for errors. Listen for
     the mediaStatusChanged() and error() signals to be notified when the media is loaded and
     when an error occurs during loading.
+
+    \note FFmpeg, used by the FFmpeg media backend, restricts use of nested protocols for
+    security reasons. In controlled environments where all inputs are trusted, the list of
+    approved protocols can be overridden using the QT_FFMPEG_PROTOCOL_WHITELIST environment
+    variable. This environment variable is Qt's private API and can change between patch
+    releases without notice.
 */
 
 void QMediaPlayer::setSource(const QUrl &source)
@@ -641,6 +648,84 @@ void QMediaPlayer::setSourceDevice(QIODevice *device, const QUrl &sourceUrl)
 
     d->setMedia(d->source, device);
     emit sourceChanged(d->source);
+}
+
+/*!
+    \qmlproperty QAudioBufferOutput QtMultimedia::MediaPlayer::audioBufferOutput
+    \since 6.8
+
+    This property holds the target audio buffer output.
+
+    Normal usage of MediaPlayer from QML should not require using this property.
+
+    \sa QMediaPlayer::audioBufferOutput()
+*/
+
+/*!
+    \property QMediaPlayer::audioBufferOutput
+    \since 6.8
+    \brief The output audio buffer used by the media player.
+
+    Sets an audio buffer \a output to the media player.
+
+    If \l QAudioBufferOutput is specified and the media source
+    contains an audio stream, the media player, it will emit
+    the signal \l{QAudioBufferOutput::audioBufferReceived} with
+    audio buffers containing decoded audio data. At the end of
+    the audio stream, \c QMediaPlayer emits an empty \l QAudioBuffer.
+
+    \c QMediaPlayer emits outputs audio buffers at the same time as it
+    pushes the matching data to the audio output if it's specified.
+    However, the sound can be played with a small delay due to
+    audio bufferization.
+
+    The format of emitted audio buffers is taken from the
+    specified \a output or from the matching audio stream
+    if the \a output returns an invalid format. Emitted
+    audio data is not scaled depending on the current playback rate.
+
+    Potential use cases of utilizing \c QAudioBufferOutput
+    with \c QMediaPlayer might be:
+    \list
+    \li Audio visualization. If the playback rate of the media player
+    is not \c 1, you may scale the output image dimensions,
+    or image update interval according to the requirements
+    of the visualizer.
+    \li Any AI sound processing, e.g. voice recognition.
+    \li Sending the data to external audio output.
+    Playback rate changing, synchronization with video, and manual
+    flushing on stoping and seeking should be considered.
+    We don't recommend using the audio buffer output
+    for this purpose unless you have a strong reason for this.
+    \endlist
+
+*/
+void QMediaPlayer::setAudioBufferOutput(QAudioBufferOutput *output)
+{
+    Q_D(QMediaPlayer);
+
+    QAudioBufferOutput *oldOutput = d->audioBufferOutput;
+    if (oldOutput == output)
+        return;
+
+    d->audioBufferOutput = output;
+
+    if (oldOutput) {
+        auto oldPlayer = QAudioBufferOutputPrivate::exchangeMediaPlayer(*oldOutput, this);
+        if (oldPlayer)
+            oldPlayer->setAudioBufferOutput(nullptr);
+    }
+
+    if (d->control)
+        d->control->setAudioBufferOutput(output);
+
+    emit audioBufferOutputChanged();
+}
+
+QAudioBufferOutput *QMediaPlayer::audioBufferOutput() const
+{
+    Q_D(const QMediaPlayer);
+    return d->audioBufferOutput;
 }
 
 /*!

@@ -1,8 +1,6 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Generated from qvideowidget.pro.
-
 #####################################################################
 ## tst_qvideowidget Test:
 #####################################################################
@@ -17,5 +15,6 @@ qt_internal_add_test(tst_qvideowidget
         Qt::MultimediaPrivate
         Qt::MultimediaWidgetsPrivate
         Qt::Widgets
-        MockMultimediaPlugin
+        Qt::MockMultimediaPlugin
+        Qt::MultimediaTestLibPrivate
 )

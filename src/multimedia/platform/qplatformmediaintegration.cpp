@@ -13,6 +13,7 @@
 #include <qcameradevice.h>
 #include <qloggingcategory.h>
 #include <QtCore/qcoreapplication.h>
+#include <QtCore/qapplicationstatic.h>
 
 #include "qplatformcapturablewindows_p.h"
 #include "qplatformmediadevices_p.h"
@@ -26,7 +27,7 @@ namespace {
 class QFallbackIntegration : public QPlatformMediaIntegration
 {
 public:
-    QFallbackIntegration()
+    QFallbackIntegration() : QPlatformMediaIntegration(QLatin1String("fallback"))
     {
         qWarning("No QtMultimedia backends found. Only QMediaDevices, QAudioDevice, QSoundEffect, QAudioSink, and QAudioSource are available.");
     }
@@ -70,11 +71,11 @@ struct InstanceHolder
             qCCritical(qLcMediaPlugin()) << "Qt Multimedia requires a QCoreApplication instance";
 
         const QStringList backends = QPlatformMediaIntegration::availableBackends();
-        QString backend = QString::fromUtf8(qgetenv("QT_MEDIA_BACKEND"));
+        QString backend = QString::fromUtf8(qgetenv("QT_MEDIA_BACKEND")).toLower();
         if (backend.isEmpty() && !backends.isEmpty())
             backend = defaultBackend(backends);
 
-        qCDebug(qLcMediaPlugin) << "loading backend" << backend;
+        qCDebug(qLcMediaPlugin) << "Loading media backend" << backend;
         instance.reset(
                 qLoadPlugin<QPlatformMediaIntegration, QPlatformMediaPlugin>(loader(), backend));
 
@@ -84,10 +85,16 @@ struct InstanceHolder
         }
     }
 
+    ~InstanceHolder()
+    {
+        instance.reset();
+        qCDebug(qLcMediaPlugin) << "Released media backend";
+    }
+
     std::unique_ptr<QPlatformMediaIntegration> instance;
 };
 
-Q_GLOBAL_STATIC(InstanceHolder, instanceHolder);
+Q_APPLICATION_STATIC(InstanceHolder, s_instanceHolder);
 
 } // namespace
 
@@ -95,7 +102,7 @@ QT_BEGIN_NAMESPACE
 
 QPlatformMediaIntegration *QPlatformMediaIntegration::instance()
 {
-    return instanceHolder->instance.get();
+    return s_instanceHolder->instance.get();
 }
 
 QList<QCameraDevice> QPlatformMediaIntegration::videoInputs()
@@ -146,19 +153,12 @@ QPlatformMediaFormatInfo *QPlatformMediaIntegration::createFormatInfo()
     return new QPlatformMediaFormatInfo;
 }
 
-// clang-format off
 std::unique_ptr<QPlatformMediaDevices> QPlatformMediaIntegration::createMediaDevices()
 {
-    // Avoid releasing WMF resources and uninitializing WMF during static
-    // destruction, QTBUG-120198
-    if (QCoreApplication::instance())
-        connect(qApp, &QObject::destroyed, this, [this] {
-            m_mediaDevices = nullptr;
-        });
-
     return QPlatformMediaDevices::create();
 }
 
+// clang-format off
 QPlatformVideoDevices *QPlatformMediaIntegration::videoDevices()
 {
     std::call_once(m_videoDevicesOnceFlag,
@@ -202,7 +202,18 @@ QStringList QPlatformMediaIntegration::availableBackends()
     return list;
 }
 
-QPlatformMediaIntegration::QPlatformMediaIntegration() = default;
+QLatin1String QPlatformMediaIntegration::name()
+{
+    return m_backendName;
+}
+
+QVideoFrame QPlatformMediaIntegration::convertVideoFrame(QVideoFrame &,
+                                                         const QVideoFrameFormat &)
+{
+    return {};
+}
+
+QPlatformMediaIntegration::QPlatformMediaIntegration(QLatin1String name) : m_backendName(name) { }
 
 QPlatformMediaIntegration::~QPlatformMediaIntegration() = default;
 

@@ -15,9 +15,7 @@
 // We mean it.
 //
 
-#include <private/qtmultimediaglobal_p.h>
-#include <private/qabstractvideobuffer_p.h>
-#include <qvideoframe.h>
+#include <private/qhwvideobuffer_p.h>
 #include <QtCore/qvariant.h>
 
 #include "qffmpeg_p.h"
@@ -25,7 +23,7 @@
 
 QT_BEGIN_NAMESPACE
 
-class QFFmpegVideoBuffer : public QAbstractVideoBuffer
+class QFFmpegVideoBuffer : public QHwVideoBuffer
 {
 public:
     using AVFrameUPtr = QFFmpeg::AVFrameUPtr;
@@ -33,12 +31,11 @@ public:
     QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio = { 1, 1 });
     ~QFFmpegVideoBuffer() override;
 
-    QVideoFrame::MapMode mapMode() const override;
     MapData map(QVideoFrame::MapMode mode) override;
     void unmap() override;
 
     virtual std::unique_ptr<QVideoFrameTextures> mapTextures(QRhi *) override;
-    virtual quint64 textureHandle(int plane) const override;
+    virtual quint64 textureHandle(QRhi *rhi, int plane) const override;
 
     QVideoFrameFormat::PixelFormat pixelFormat() const;
     QSize size() const;

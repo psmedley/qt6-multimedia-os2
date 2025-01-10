@@ -5,13 +5,11 @@
 #define QAUDIODECODER_H
 
 #include <QtCore/qobject.h>
-#include <QtMultimedia/qmediaenumdebug.h>
-
 #include <QtMultimedia/qaudiobuffer.h>
 
 QT_BEGIN_NAMESPACE
 
-class QPlatformAudioDecoder;
+class QAudioDecoderPrivate;
 class Q_MULTIMEDIA_EXPORT QAudioDecoder : public QObject
 {
     Q_OBJECT
@@ -76,11 +74,12 @@ Q_SIGNALS:
 
 private:
     Q_DISABLE_COPY(QAudioDecoder)
-    QPlatformAudioDecoder *decoder = nullptr;
+    Q_DECLARE_PRIVATE(QAudioDecoder)
+
+    // ### Qt7: remove unused member
+    QT6_ONLY(void *unused = nullptr;) // for ABI compatibility
 };
 
 QT_END_NAMESPACE
-
-Q_MEDIA_ENUM_DEBUG(QAudioDecoder, Error)
 
 #endif  // QAUDIODECODER_H

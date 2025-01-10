@@ -5,12 +5,17 @@
 #include "private/qvideotexturehelper_p.h"
 #include "private/qmultimediautils_p.h"
 #include "qffmpeghwaccel_p.h"
+#include "qloggingcategory.h"
 
 extern "C" {
 #include <libavutil/pixdesc.h>
 #include <libavutil/hdr_dynamic_metadata.h>
 #include <libavutil/mastering_display_metadata.h>
 }
+
+QT_BEGIN_NAMESPACE
+
+using namespace QFFmpeg;
 
 static bool isFrameFlipped(const AVFrame& frame) {
     for (int i = 0; i < AV_NUM_DATA_POINTERS && frame.data[i]; ++i) {
@@ -21,17 +26,17 @@ static bool isFrameFlipped(const AVFrame& frame) {
     return false;
 }
 
-QT_BEGIN_NAMESPACE
+static Q_LOGGING_CATEGORY(qLcFFmpegVideoBuffer, "qt.multimedia.ffmpeg.videobuffer");
 
 QFFmpegVideoBuffer::QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio)
-    : QAbstractVideoBuffer(QVideoFrame::NoHandle),
+    : QHwVideoBuffer(QVideoFrame::NoHandle),
       m_frame(frame.get()),
       m_size(qCalculateFrameSize({ frame->width, frame->height },
                                  { pixelAspectRatio.num, pixelAspectRatio.den }))
 {
     if (frame->hw_frames_ctx) {
         m_hwFrame = std::move(frame);
-        m_pixelFormat = toQtPixelFormat(QFFmpeg::HWAccel::format(m_hwFrame.get()));
+        m_pixelFormat = toQtPixelFormat(HWAccel::format(m_hwFrame.get()));
         return;
     }
 
@@ -50,29 +55,29 @@ void QFFmpegVideoBuffer::convertSWFrame()
     const auto actualAVPixelFormat = AVPixelFormat(m_swFrame->format);
     const auto targetAVPixelFormat = toAVPixelFormat(m_pixelFormat);
 
+    const QSize actualSize(m_swFrame->width, m_swFrame->height);
     if (actualAVPixelFormat != targetAVPixelFormat || isFrameFlipped(*m_swFrame)
-        || m_size != QSize(m_swFrame->width, m_swFrame->height)) {
+        || m_size != actualSize) {
         Q_ASSERT(toQtPixelFormat(targetAVPixelFormat) == m_pixelFormat);
         // convert the format into something we can handle
-        SwsContext *c = sws_getContext(m_swFrame->width, m_swFrame->height, actualAVPixelFormat,
-                                       m_size.width(), m_size.height(), targetAVPixelFormat,
-                                       SWS_BICUBIC, nullptr, nullptr, nullptr);
+        SwsContextUPtr scaleContext = createSwsContext(actualSize, actualAVPixelFormat, m_size,
+                                                       targetAVPixelFormat, SWS_BICUBIC);
 
-        auto newFrame = QFFmpeg::makeAVFrame();
+        auto newFrame = makeAVFrame();
         newFrame->width = m_size.width();
         newFrame->height = m_size.height();
         newFrame->format = targetAVPixelFormat;
         av_frame_get_buffer(newFrame.get(), 0);
 
-        sws_scale(c, m_swFrame->data, m_swFrame->linesize, 0, m_swFrame->height, newFrame->data, newFrame->linesize);
+        sws_scale(scaleContext.get(), m_swFrame->data, m_swFrame->linesize, 0, m_swFrame->height,
+                  newFrame->data, newFrame->linesize);
         if (m_frame == m_swFrame.get())
             m_frame = newFrame.get();
         m_swFrame = std::move(newFrame);
-        sws_freeContext(c);
     }
 }
 
-void QFFmpegVideoBuffer::setTextureConverter(const QFFmpeg::TextureConverter &converter)
+void QFFmpegVideoBuffer::setTextureConverter(const TextureConverter &converter)
 {
     m_textureConverter = converter;
     m_textureConverter.init(m_hwFrame.get());
@@ -81,72 +86,17 @@ void QFFmpegVideoBuffer::setTextureConverter(const QFFmpeg::TextureConverter &co
 
 QVideoFrameFormat::ColorSpace QFFmpegVideoBuffer::colorSpace() const
 {
-    switch (m_frame->colorspace) {
-    default:
-    case AVCOL_SPC_UNSPECIFIED:
-    case AVCOL_SPC_RESERVED:
-    case AVCOL_SPC_FCC:
-    case AVCOL_SPC_SMPTE240M:
-    case AVCOL_SPC_YCGCO:
-    case AVCOL_SPC_SMPTE2085:
-    case AVCOL_SPC_CHROMA_DERIVED_NCL:
-    case AVCOL_SPC_CHROMA_DERIVED_CL:
-    case AVCOL_SPC_ICTCP: // BT.2100 ICtCp
-        return QVideoFrameFormat::ColorSpace_Undefined;
-    case AVCOL_SPC_RGB:
-        return QVideoFrameFormat::ColorSpace_AdobeRgb;
-    case AVCOL_SPC_BT709:
-        return QVideoFrameFormat::ColorSpace_BT709;
-    case AVCOL_SPC_BT470BG: // BT601
-    case AVCOL_SPC_SMPTE170M: // Also BT601
-        return QVideoFrameFormat::ColorSpace_BT601;
-    case AVCOL_SPC_BT2020_NCL: // Non constant luminence
-    case AVCOL_SPC_BT2020_CL: // Constant luminence
-        return QVideoFrameFormat::ColorSpace_BT2020;
-    }
+    return fromAvColorSpace(m_frame->colorspace);
 }
 
 QVideoFrameFormat::ColorTransfer QFFmpegVideoBuffer::colorTransfer() const
 {
-    switch (m_frame->color_trc) {
-    case AVCOL_TRC_BT709:
-    // The following three cases have transfer characteristics identical to BT709
-    case AVCOL_TRC_BT1361_ECG:
-    case AVCOL_TRC_BT2020_10:
-    case AVCOL_TRC_BT2020_12:
-    case AVCOL_TRC_SMPTE240M: // almost identical to bt709
-        return QVideoFrameFormat::ColorTransfer_BT709;
-    case AVCOL_TRC_GAMMA22:
-    case AVCOL_TRC_SMPTE428 : // No idea, let's hope for the best...
-    case AVCOL_TRC_IEC61966_2_1: // sRGB, close enough to 2.2...
-    case AVCOL_TRC_IEC61966_2_4: // not quite, but probably close enough
-        return QVideoFrameFormat::ColorTransfer_Gamma22;
-    case AVCOL_TRC_GAMMA28:
-        return QVideoFrameFormat::ColorTransfer_Gamma28;
-    case AVCOL_TRC_SMPTE170M:
-        return QVideoFrameFormat::ColorTransfer_BT601;
-    case AVCOL_TRC_LINEAR:
-        return QVideoFrameFormat::ColorTransfer_Linear;
-    case AVCOL_TRC_SMPTE2084:
-        return QVideoFrameFormat::ColorTransfer_ST2084;
-    case AVCOL_TRC_ARIB_STD_B67:
-        return QVideoFrameFormat::ColorTransfer_STD_B67;
-    default:
-        break;
-    }
-    return QVideoFrameFormat::ColorTransfer_Unknown;
+    return fromAvColorTransfer(m_frame->color_trc);
 }
 
 QVideoFrameFormat::ColorRange QFFmpegVideoBuffer::colorRange() const
 {
-    switch (m_frame->color_range) {
-    case AVCOL_RANGE_MPEG:
-        return QVideoFrameFormat::ColorRange_Video;
-    case AVCOL_RANGE_JPEG:
-        return QVideoFrameFormat::ColorRange_Full;
-    default:
-        return QVideoFrameFormat::ColorRange_Unknown;
-    }
+    return fromAvColorRange(m_frame->color_range);
 }
 
 float QFFmpegVideoBuffer::maxNits()
@@ -157,7 +107,7 @@ float QFFmpegVideoBuffer::maxNits()
         // TODO: Longer term we might want to also support HDR10+ dynamic metadata
         if (sd->type == AV_FRAME_DATA_MASTERING_DISPLAY_METADATA) {
             auto *data = reinterpret_cast<AVMasteringDisplayMetadata *>(sd->data);
-            auto maybeLum = QFFmpeg::mul(10'000., data->max_luminance);
+            auto maybeLum = QFFmpeg::mul(qreal(10'000.), data->max_luminance);
             if (maybeLum)
                 maxNits = float(maybeLum.value());
         }
@@ -165,16 +115,11 @@ float QFFmpegVideoBuffer::maxNits()
     return maxNits;
 }
 
-QVideoFrame::MapMode QFFmpegVideoBuffer::mapMode() const
-{
-    return m_mode;
-}
-
 QAbstractVideoBuffer::MapData QFFmpegVideoBuffer::map(QVideoFrame::MapMode mode)
 {
     if (!m_swFrame) {
         Q_ASSERT(m_hwFrame && m_hwFrame->hw_frames_ctx);
-        m_swFrame = QFFmpeg::makeAVFrame();
+        m_swFrame = makeAVFrame();
         /* retrieve data from GPU to CPU */
         int ret = av_hwframe_transfer_data(m_swFrame.get(), m_hwFrame.get(), 0);
         if (ret < 0) {
@@ -188,20 +133,35 @@ QAbstractVideoBuffer::MapData QFFmpegVideoBuffer::map(QVideoFrame::MapMode mode)
 
     MapData mapData;
     auto *desc = QVideoTextureHelper::textureDescription(pixelFormat());
-    mapData.nPlanes = desc->nplanes;
-    for (int i = 0; i < mapData.nPlanes; ++i) {
+    mapData.planeCount = desc->nplanes;
+    for (int i = 0; i < mapData.planeCount; ++i) {
         Q_ASSERT(m_swFrame->linesize[i] >= 0);
 
         mapData.data[i] = m_swFrame->data[i];
         mapData.bytesPerLine[i] = m_swFrame->linesize[i];
-        mapData.size[i] = mapData.bytesPerLine[i]*desc->heightForPlane(m_swFrame->height, i);
+        mapData.dataSize[i] = mapData.bytesPerLine[i]*desc->heightForPlane(m_swFrame->height, i);
     }
+
+    if ((mode & QVideoFrame::WriteOnly) != 0 && m_hwFrame) {
+        m_type = QVideoFrame::NoHandle;
+        m_hwFrame.reset();
+        if (m_textures) {
+            qCDebug(qLcFFmpegVideoBuffer)
+                    << "Mapping of FFmpeg video buffer with write mode when "
+                       "textures have been created. Visual artifacts might "
+                       "happen if the frame is still in the rendering pipeline";
+            m_textures.reset();
+        }
+    }
+
     return mapData;
 }
 
 void QFFmpegVideoBuffer::unmap()
 {
-    // nothing to do here for SW buffers
+    // nothing to do here for SW buffers.
+    // Set NotMapped mode to ensure map/unmap/mapMode consisteny.
+    m_mode = QVideoFrame::NotMapped;
 }
 
 std::unique_ptr<QVideoFrameTextures> QFFmpegVideoBuffer::mapTextures(QRhi *)
@@ -224,9 +184,9 @@ std::unique_ptr<QVideoFrameTextures> QFFmpegVideoBuffer::mapTextures(QRhi *)
     return {};
 }
 
-quint64 QFFmpegVideoBuffer::textureHandle(int plane) const
+quint64 QFFmpegVideoBuffer::textureHandle(QRhi *rhi, int plane) const
 {
-    return m_textures ? m_textures->textureHandle(plane) : 0;
+    return m_textures ? m_textures->textureHandle(rhi, plane) : 0;
 }
 
 QVideoFrameFormat::PixelFormat QFFmpegVideoBuffer::pixelFormat() const

@@ -6,9 +6,10 @@
 
 #include <rhi/qrhi.h>
 #include <QtGui/private/qopenglextensions_p.h>
-#include <private/qabstractvideobuffer_p.h>
+#include <private/qhwvideobuffer_p.h>
 #include <private/qvideoframeconverter_p.h>
 #include <private/qplatformvideosink_p.h>
+#include <private/qvideoframe_p.h>
 #include <qvideosink.h>
 #include <qopenglcontext.h>
 #include <qopenglfunctions.h>
@@ -41,27 +42,25 @@ class QRhiWithThreadGuard : public QObject {
     Q_OBJECT
 public:
     QRhiWithThreadGuard(std::shared_ptr<QRhi> r, std::shared_ptr<AndroidTextureThread> t)
-        : m_rhi(std::move(r)), m_thread(std::move(t)) {}
+        : m_guardRhi(std::move(r)), m_thread(std::move(t)) {}
     ~QRhiWithThreadGuard();
+protected:
+    std::shared_ptr<QRhi> m_guardRhi;
 private:
-    std::shared_ptr<QRhi> m_rhi;
     std::shared_ptr<AndroidTextureThread> m_thread;
 };
 
-
-class AndroidTextureVideoBuffer : public QRhiWithThreadGuard, public QAbstractVideoBuffer
+class AndroidTextureVideoBuffer : public QRhiWithThreadGuard, public QHwVideoBuffer
 {
 public:
-    AndroidTextureVideoBuffer(
-            std::shared_ptr<QRhi> rhi, std::shared_ptr<AndroidTextureThread> thread,
-            std::unique_ptr<QRhiTexture> tex, const QSize &size)
-        : QRhiWithThreadGuard(std::move(rhi), std::move(thread))
-          , QAbstractVideoBuffer(QVideoFrame::RhiTextureHandle, rhi.get())
-          , m_size(size)
-          , m_tex(std::move(tex))
+    AndroidTextureVideoBuffer(std::shared_ptr<QRhi> rhi,
+                              std::shared_ptr<AndroidTextureThread> thread,
+                              std::unique_ptr<QRhiTexture> tex, const QSize &size)
+        : QRhiWithThreadGuard(std::move(rhi), std::move(thread)),
+          QHwVideoBuffer(QVideoFrame::RhiTextureHandle, m_guardRhi.get()),
+          m_size(size),
+          m_tex(std::move(tex))
     {}
-
-    QVideoFrame::MapMode mapMode() const override { return m_mapMode; }
 
     MapData map(QVideoFrame::MapMode mode) override;
 
@@ -83,18 +82,17 @@ private:
     QVideoFrame::MapMode m_mapMode = QVideoFrame::NotMapped;
 };
 
-class ImageFromVideoFrameHelper : public QAbstractVideoBuffer
+class ImageFromVideoFrameHelper : public QHwVideoBuffer
 {
 public:
     ImageFromVideoFrameHelper(AndroidTextureVideoBuffer &atvb)
-        : QAbstractVideoBuffer(QVideoFrame::RhiTextureHandle, atvb.rhi())
-          , m_atvb(atvb)
+        : QHwVideoBuffer(QVideoFrame::RhiTextureHandle, atvb.rhi()), m_atvb(atvb)
     {}
     std::unique_ptr<QVideoFrameTextures> mapTextures(QRhi *rhi) override
     {
         return m_atvb.mapTextures(rhi);
     }
-    QVideoFrame::MapMode mapMode() const override { return QVideoFrame::NotMapped; }
+
     MapData map(QVideoFrame::MapMode) override { return {}; }
     void unmap() override {}
 
@@ -108,11 +106,12 @@ QAbstractVideoBuffer::MapData AndroidTextureVideoBuffer::map(QVideoFrame::MapMod
 
     if (m_mapMode == QVideoFrame::NotMapped && mode == QVideoFrame::ReadOnly) {
         m_mapMode = QVideoFrame::ReadOnly;
-        m_image = qImageFromVideoFrame(QVideoFrame(new ImageFromVideoFrameHelper(*this),
-                                                   QVideoFrameFormat(m_size, QVideoFrameFormat::Format_RGBA8888)));
-        mapData.nPlanes = 1;
+        m_image = qImageFromVideoFrame(QVideoFramePrivate::createFrame(
+                std::make_unique<ImageFromVideoFrameHelper>(*this),
+                QVideoFrameFormat(m_size, QVideoFrameFormat::Format_RGBA8888)));
+        mapData.planeCount = 1;
         mapData.bytesPerLine[0] = m_image.bytesPerLine();
-        mapData.size[0] = static_cast<int>(m_image.sizeInBytes());
+        mapData.dataSize[0] = static_cast<int>(m_image.sizeInBytes());
         mapData.data[0] = m_image.bits();
     }
 
@@ -367,7 +366,7 @@ private:
 QRhiWithThreadGuard::~QRhiWithThreadGuard() {
     // It may happen that reseting m_rhi shared_ptr will delete it (if it is the last reference)
     // QRHI need to be deleted from the thread that created it.
-    QMetaObject::invokeMethod(m_thread.get(), [&]() {m_rhi.reset();}, Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(m_thread.get(), [&]() {m_guardRhi.reset();}, Qt::BlockingQueuedConnection);
 }
 
 QAndroidTextureVideoOutput::QAndroidTextureVideoOutput(QVideoSink *sink, QObject *parent)

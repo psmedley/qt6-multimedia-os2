@@ -11,20 +11,82 @@
 
 qt_find_package(ALSA PROVIDED_TARGETS ALSA::ALSA MODULE_NAME multimedia QMAKE_LIB alsa)
 qt_find_package(AVFoundation PROVIDED_TARGETS AVFoundation::AVFoundation MODULE_NAME multimedia QMAKE_LIB avfoundation)
-qt_find_package(GStreamer PROVIDED_TARGETS GStreamer::GStreamer MODULE_NAME multimedia QMAKE_LIB gstreamer_1_0)
-qt_find_package(GStreamer COMPONENTS App PROVIDED_TARGETS GStreamer::App MODULE_NAME multimedia QMAKE_LIB gstreamer_app_1_0)
+qt_find_package(GStreamer 1.20
+    PROVIDED_TARGETS GStreamer::GStreamer
+    MODULE_NAME multimedia
+    QMAKE_LIB gstreamer_1_0)
+qt_find_package(GStreamer 1.20
+    COMPONENTS App
+    PROVIDED_TARGETS GStreamer::App
+    MODULE_NAME multimedia
+    QMAKE_LIB gstreamer_app_1_0)
+qt_find_package(GStreamer 1.20
+    COMPONENTS Play
+    PROVIDED_TARGETS GStreamer::Play
+    MODULE_NAME multimedia
+    QMAKE_LIB gstreamer_play_1_0)
 qt_add_qmake_lib_dependency(gstreamer_app_1_0 gstreamer_1_0)
-qt_find_package(GStreamer OPTIONAL_COMPONENTS Photography PROVIDED_TARGETS GStreamer::Photography MODULE_NAME multimedia QMAKE_LIB gstreamer_photography_1_0) # special case
+qt_find_package(GStreamer 1.20
+    OPTIONAL_COMPONENTS Photography
+    PROVIDED_TARGETS GStreamer::Photography
+    MODULE_NAME multimedia
+    QMAKE_LIB gstreamer_photography_1_0) # special case
 qt_add_qmake_lib_dependency(gstreamer_photography_1_0 gstreamer_1_0)
-qt_find_package(GStreamer OPTIONAL_COMPONENTS Gl PROVIDED_TARGETS GStreamer::Gl MODULE_NAME multimedia QMAKE_LIB gstreamer_gl_1_0) # special case
+qt_find_package(GStreamer 1.20
+    OPTIONAL_COMPONENTS Gl
+    PROVIDED_TARGETS GStreamer::Gl
+    MODULE_NAME multimedia
+    QMAKE_LIB gstreamer_gl_1_0) # special case
 qt_add_qmake_lib_dependency(gstreamer_gl_1_0 gstreamer_1_0)
+qt_find_package(GStreamer 1.20
+    OPTIONAL_COMPONENTS GlWayland
+    PROVIDED_TARGETS GStreamer::GlWayland
+    MODULE_NAME multimedia
+    QMAKE_LIB gstreamer_gl_wayland_1_0) # special case
+qt_add_qmake_lib_dependency(gstreamer_gl_wayland_1_0 gstreamer_1_0)
+qt_find_package(GStreamer 1.20
+    OPTIONAL_COMPONENTS GlEgl
+    PROVIDED_TARGETS GStreamer::GlEgl
+    MODULE_NAME multimedia
+    QMAKE_LIB gstreamer_gl_egl_1_0) # special case
+qt_add_qmake_lib_dependency(gstreamer_gl_egl_1_0 gstreamer_1_0)
+qt_find_package(GStreamer 1.20
+    OPTIONAL_COMPONENTS GlX11
+    PROVIDED_TARGETS GStreamer::GlX11
+    MODULE_NAME multimedia
+    QMAKE_LIB gstreamer_gl_x11_1_0) # special case
+qt_add_qmake_lib_dependency(gstreamer_gl_x11_1_0 gstreamer_1_0)
 qt_find_package(MMRendererCore PROVIDED_TARGETS MMRendererCore::MMRendererCore MODULE_NAME multimedia QMAKE_LIB mmrndcore)
 qt_find_package(MMRenderer PROVIDED_TARGETS MMRenderer::MMRenderer MODULE_NAME multimedia QMAKE_LIB mmrndclient)
 qt_find_package(WrapPulseAudio PROVIDED_TARGETS WrapPulseAudio::WrapPulseAudio MODULE_NAME multimedia QMAKE_LIB pulseaudio)
 qt_find_package(WMF PROVIDED_TARGETS WMF::WMF MODULE_NAME multimedia QMAKE_LIB wmf)
-qt_find_package(EGL)
+if(TARGET EGL::EGL)
+    qt_internal_disable_find_package_global_promotion(EGL::EGL)
+endif()
+qt_find_package(EGL PROVIDED_TARGETS EGL::EGL)
 
-qt_find_package(FFmpeg OPTIONAL_COMPONENTS AVCODEC AVFORMAT AVUTIL SWRESAMPLE SWSCALE PROVIDED_TARGETS FFmpeg::avcodec FFmpeg::avformat FFmpeg::avutil FFmpeg::swresample FFmpeg::swscale MODULE_NAME multimedia QMAKE_LIB ffmpeg)
+# If FFMPEG_DIR is specified, we require FFmpeg to be present. This makes
+# configuration problems easier to detect, and reduces risk of silent
+# fallback to native backends.
+if (DEFINED FFMPEG_DIR)
+    set(ffmpeg_required REQUIRED)
+endif()
+
+qt_find_package(FFmpeg OPTIONAL_COMPONENTS AVCODEC AVFORMAT AVUTIL SWRESAMPLE SWSCALE PROVIDED_TARGETS FFmpeg::avcodec FFmpeg::avformat FFmpeg::avutil FFmpeg::swresample FFmpeg::swscale MODULE_NAME multimedia QMAKE_LIB ffmpeg ${ffmpeg_required})
+qt_find_package_extend_sbom(
+    TARGETS
+        FFmpeg::avcodec
+        FFmpeg::avformat
+        FFmpeg::avutil
+        FFmpeg::swresample
+        FFmpeg::swscale
+    ATTRIBUTION_FILE_DIR_PATHS
+        # Need to pass an absolute path here, otherwise the file will be relative to the root of
+        # the source tree, not the current dir, because system libraries are processed in the
+        # source root directory.
+        ${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/ffmpeg
+)
+qt_find_package(PipeWire PROVIDED_TARGETS PipeWire::PipeWire MODULE_NAME multimedia QMAKE_LIB pipewire)
 qt_find_package(VAAPI COMPONENTS VA DRM PROVIDED_TARGETS VAAPI::VAAPI MODULE_NAME multimedia QMAKE_LIB vaapi)
 
 #### Tests
@@ -78,6 +140,11 @@ qt_feature("ffmpeg" PRIVATE
     DISABLE INPUT_ffmpeg STREQUAL 'no'
     CONDITION FFmpeg_FOUND AND (APPLE OR WIN32 OR ANDROID OR QNX OR QT_FEATURE_pulseaudio)
 )
+qt_feature("pipewire" PRIVATE
+    LABEL "PipeWire"
+    ENABLE INPUT_pipewire STREQUAL 'yes'
+    CONDITION QT_FEATURE_dbus AND TARGET PipeWire::PipeWire
+)
 qt_feature("alsa" PUBLIC PRIVATE
     LABEL "ALSA (experimental)"
     AUTODETECT false
@@ -99,28 +166,32 @@ qt_feature("evr" PUBLIC PRIVATE
     LABEL "evr.h"
     CONDITION WIN32 AND TEST_evr
 )
-qt_feature("gstreamer_1_0" PRIVATE
-    LABEL "GStreamer 1.0"
-    CONDITION ( LINUX AND GStreamer_FOUND )
+qt_feature("gstreamer" PRIVATE
+    LABEL "QtMM GStreamer plugin"
+    CONDITION TARGET GStreamer::GStreamer AND TARGET GStreamer::App AND TARGET GStreamer::Play
     ENABLE INPUT_gstreamer STREQUAL 'yes'
     DISABLE INPUT_gstreamer STREQUAL 'no'
 )
-qt_feature("gstreamer" PRIVATE
-    CONDITION QT_FEATURE_gstreamer_1_0
-)
-qt_feature("gstreamer_app" PRIVATE
-    LABEL "GStreamer App"
-    CONDITION ( QT_FEATURE_gstreamer_1_0 AND GStreamer_App_FOUND )
-)
 qt_feature("gstreamer_photography" PRIVATE
     LABEL "GStreamer Photography"
-    CONDITION ( QT_FEATURE_gstreamer_1_0 AND GStreamer_Photography_FOUND )
+    CONDITION QT_FEATURE_gstreamer AND TARGET GStreamer::Photography
 )
 qt_feature("gstreamer_gl" PRIVATE
     LABEL "GStreamer OpenGL"
-    CONDITION QT_FEATURE_opengl AND QT_FEATURE_gstreamer_1_0 AND GStreamer_Gl_FOUND AND EGL_FOUND
+    CONDITION QT_FEATURE_opengl AND QT_FEATURE_gstreamer AND TARGET GStreamer::Gl
 )
-
+qt_feature("gstreamer_gl_wayland" PRIVATE
+    LABEL "GStreamer Wayland"
+    CONDITION QT_FEATURE_wayland AND QT_FEATURE_gstreamer_gl AND TARGET GStreamer::GlWayland
+)
+qt_feature("gstreamer_gl_egl" PRIVATE
+    LABEL "GStreamer EGL"
+    CONDITION QT_FEATURE_egl AND QT_FEATURE_gstreamer_gl AND TARGET GStreamer::GlEgl
+)
+qt_feature("gstreamer_gl_x11" PRIVATE
+    LABEL "GStreamer X11"
+    CONDITION QT_FEATURE_xcb AND QT_FEATURE_gstreamer_gl AND TARGET GStreamer::GlX11
+)
 qt_feature("gpu_vivante" PRIVATE
     LABEL "Vivante GPU"
     CONDITION QT_FEATURE_gui AND QT_FEATURE_opengles2 AND TEST_gpu_vivante
@@ -186,8 +257,11 @@ qt_configure_add_summary_entry(ARGS "opensles")
 qt_configure_add_summary_entry(ARGS "wasm")
 qt_configure_end_summary_section()
 qt_configure_add_summary_section(NAME "Plugin")
-qt_configure_add_summary_entry(ARGS "gstreamer_1_0")
+qt_configure_add_summary_entry(ARGS "gstreamer")
 qt_configure_add_summary_entry(ARGS "ffmpeg")
+qt_configure_add_summary_section(NAME "FFmpeg plugin features")
+qt_configure_add_summary_entry(ARGS "pipewire")
+qt_configure_end_summary_section()
 qt_configure_add_summary_entry(ARGS "mmrenderer")
 qt_configure_add_summary_entry(ARGS "avfoundation")
 qt_configure_add_summary_entry(ARGS "wmf")
@@ -204,4 +278,10 @@ qt_configure_add_report_entry(
     TYPE WARNING
     MESSAGE "No backend for low level audio found."
     CONDITION NOT QT_FEATURE_alsa AND NOT QT_FEATURE_pulseaudio AND NOT QT_FEATURE_mmrenderer AND NOT QT_FEATURE_coreaudio AND NOT QT_FEATURE_wmsdk AND NOT ANDROID AND NOT WASM
+)
+
+qt_configure_add_report_entry(
+    TYPE WARNING
+    MESSAGE "No media backend found"
+    CONDITION LINUX AND NOT (QT_FEATURE_gstreamer OR QT_FEATURE_ffmpeg)
 )

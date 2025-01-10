@@ -1,12 +1,10 @@
 // Copyright (C) 2016 The Qt Company Ltd.
-// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 #ifndef QMEDIAPLAYLIST_H
 #define QMEDIAPLAYLIST_H
 
 #include <QObject>
-
-#include <qmediaenumdebug.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -83,13 +81,10 @@ signals:
     void loadFailed();
 
 private:
-    QMediaPlaylistPrivate *d_ptr;
+    QMediaPlaylistPrivate *d_ptr = nullptr;
     Q_DECLARE_PRIVATE(QMediaPlaylist)
 };
 
 QT_END_NAMESPACE
-
-Q_MEDIA_ENUM_DEBUG(QMediaPlaylist, PlaybackMode)
-Q_MEDIA_ENUM_DEBUG(QMediaPlaylist, Error)
 
 #endif // QMEDIAPLAYLIST_H
