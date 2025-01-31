@@ -71,8 +71,8 @@ class QD3D11TextureVideoBuffer : public QAbstractVideoBuffer
 {
 public:
     QD3D11TextureVideoBuffer(const ComPtr<ID3D11Device> &device, std::shared_ptr<QMutex> &mutex,
-                             const ComPtr<ID3D11Texture2D> &texture, QSize size)
-        : m_device(device), m_texture(texture), m_ctxMutex(mutex), m_size(size)
+                             const ComPtr<ID3D11Texture2D> &texture)
+        : m_device(device), m_texture(texture), m_ctxMutex(mutex)
     {}
 
     ~QD3D11TextureVideoBuffer() { Q_ASSERT(m_mapMode == QVideoFrame::NotMapped); }
@@ -113,7 +113,7 @@ public:
             mapData.planeCount = 1;
             mapData.bytesPerLine[0] = int(resource.RowPitch);
             mapData.data[0] = reinterpret_cast<uchar*>(resource.pData);
-            mapData.dataSize[0] = m_size.height() * int(resource.RowPitch);
+            mapData.dataSize[0] = int(texDesc.Height * resource.RowPitch);
         }
 
         return mapData;
@@ -152,19 +152,82 @@ private:
     ComPtr<ID3D11Texture2D> m_cpuTexture;
     ComPtr<ID3D11DeviceContext> m_ctx;
     std::shared_ptr<QMutex> m_ctxMutex;
-    QSize m_size;
     QVideoFrame::MapMode m_mapMode = QVideoFrame::NotMapped;
 };
 
 namespace {
+
+struct DxgiScreen
+{
+    QMaybe<QSize, ComStatus> physicalSize() const
+    {
+        DXGI_OUTPUT_DESC desc{};
+        const HRESULT hr = output->GetDesc(&desc);
+        if (hr != S_OK)
+            return { unexpect, hr };
+
+        const RECT bounds = desc.DesktopCoordinates;
+        const QRect displayRect{ bounds.left, bounds.top,
+                                 bounds.right - bounds.left,
+                                 bounds.bottom - bounds.top };
+        return displayRect.size();
+    }
+
+    QMaybe<QtVideo::Rotation, ComStatus> rotation() const
+    {
+        DXGI_OUTPUT_DESC desc{};
+        const HRESULT hr = output->GetDesc(&desc);
+        if (hr != S_OK)
+            return { unexpect, hr };
+
+        switch (desc.Rotation) {
+
+        case DXGI_MODE_ROTATION_ROTATE90:
+            return QtVideo::Rotation::Clockwise90;
+        case DXGI_MODE_ROTATION_ROTATE180:
+            return QtVideo::Rotation::Clockwise180;
+        case DXGI_MODE_ROTATION_ROTATE270:
+            return QtVideo::Rotation::Clockwise270;
+        default:
+            return QtVideo::Rotation::None;
+        }
+    }
+
+    ComPtr<IDXGIAdapter1> adapter;
+    ComPtr<IDXGIOutput> output;
+};
+
+QMaybe<DxgiScreen, ComStatus> findDxgiScreen(const QScreen *screen)
+{
+    if (!screen)
+        return { unexpect, E_FAIL, "Cannot find nullptr screen"_L1 };
+
+    auto *winScreen = screen->nativeInterface<QNativeInterface::QWindowsScreen>();
+    HMONITOR handle = winScreen ? winScreen->handle() : nullptr;
+
+    ComPtr<IDXGIFactory1> factory;
+    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+    if (FAILED(hr))
+        return { unexpect, hr, "Failed to create IDXGIFactory"_L1 };
+
+    ComPtr<IDXGIAdapter1> adapter;
+    for (quint32 i = 0; factory->EnumAdapters1(i, adapter.ReleaseAndGetAddressOf()) == S_OK; i++) {
+        ComPtr<IDXGIOutput> output;
+        for (quint32 j = 0; adapter->EnumOutputs(j, output.ReleaseAndGetAddressOf()) == S_OK; ++j) {
+            DXGI_OUTPUT_DESC desc = {};
+            output->GetDesc(&desc);
+            qCDebug(qLcScreenCaptureDxgi) << i << j << QString::fromWCharArray(desc.DeviceName);
+            auto match = handle ? handle == desc.Monitor
+                                : QString::fromWCharArray(desc.DeviceName) == screen->name();
+            if (match)
+                return DxgiScreen{ adapter, output };
+        }
+    }
+    return { unexpect, DXGI_ERROR_NOT_FOUND, "Could not find screen adapter "_L1 + screen->name() };
+}
+
 class DxgiDuplication
 {
-    struct DxgiScreen
-    {
-        ComPtr<IDXGIAdapter1> adapter;
-        ComPtr<IDXGIOutput> output;
-    };
-
 public:
     ~DxgiDuplication()
     {
@@ -206,15 +269,6 @@ public:
 
     bool valid() const { return m_dup != nullptr; }
 
-    QSize getFrameSize() const
-    {
-        DXGI_OUTDUPL_DESC outputDesc = {};
-        m_dup->GetDesc(&outputDesc);
-
-        return { static_cast<int>(outputDesc.ModeDesc.Width),
-                 static_cast<int>(outputDesc.ModeDesc.Height) };
-    }
-
     QMaybe<std::unique_ptr<QD3D11TextureVideoBuffer>, ComStatus> getNextVideoFrame()
     {
         const ComProduct<ID3D11Texture2D> texture = getNextFrame();
@@ -222,8 +276,7 @@ public:
         if (!texture)
             return texture.error();
 
-        return std::make_unique<QD3D11TextureVideoBuffer>(m_device, m_ctxMutex, *texture,
-                                                          getFrameSize());
+        return std::make_unique<QD3D11TextureVideoBuffer>(m_device, m_ctxMutex, *texture);
     }
 
 private:
@@ -272,36 +325,6 @@ private:
         return texCopy;
     }
 
-    static QMaybe<DxgiScreen, ComStatus> findDxgiScreen(const QScreen *screen)
-    {
-        if (!screen)
-            return { unexpect, E_FAIL, "Cannot find nullptr screen"_L1 };
-
-        auto *winScreen = screen->nativeInterface<QNativeInterface::QWindowsScreen>();
-        HMONITOR handle = winScreen ? winScreen->handle() : nullptr;
-
-        ComPtr<IDXGIFactory1> factory;
-        HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
-        if (FAILED(hr))
-            return { unexpect, hr, "Failed to create IDXGIFactory"_L1 };
-
-        ComPtr<IDXGIAdapter1> adapter;
-        for (quint32 i = 0; factory->EnumAdapters1(i, adapter.ReleaseAndGetAddressOf()) == S_OK; i++) {
-            ComPtr<IDXGIOutput> output;
-            for (quint32 j = 0; adapter->EnumOutputs(j, output.ReleaseAndGetAddressOf()) == S_OK; ++j) {
-                DXGI_OUTPUT_DESC desc = {};
-                output->GetDesc(&desc);
-                qCDebug(qLcScreenCaptureDxgi) << i << j << QString::fromWCharArray(desc.DeviceName);
-                auto match = handle ? handle == desc.Monitor
-                                    : QString::fromWCharArray(desc.DeviceName) == screen->name();
-                if (match)
-                    return DxgiScreen{ adapter, output };
-            }
-        }
-        return { unexpect, DXGI_ERROR_NOT_FOUND,
-                 "Could not find screen adapter "_L1 + screen->name() };
-    }
-
     ComPtr<IDXGIAdapter1> m_adapter;
     ComPtr<IDXGIOutput> m_output;
     ComPtr<ID3D11Device> m_device;
@@ -310,31 +333,22 @@ private:
     std::shared_ptr<QMutex> m_ctxMutex = std::make_shared<QMutex>();
 };
 
-QSize getPhysicalSizePixels(const QScreen *screen)
+QMaybe<QVideoFrameFormat, ComStatus> getFrameFormat(const QScreen* screen)
 {
-    const auto *winScreen = screen->nativeInterface<QNativeInterface::QWindowsScreen>();
-    if (!winScreen)
-        return {};
+    const auto dxgiScreen = findDxgiScreen(screen);
+    if (!dxgiScreen)
+        return dxgiScreen.error();
 
-    const HMONITOR handle = winScreen->handle();
-    if (!handle)
-        return {};
+    const auto screenSize = dxgiScreen->physicalSize();
+    if (!screenSize)
+        return screenSize.error();
 
-    MONITORINFO info{};
-    info.cbSize = sizeof(info);
+    const auto rotation = dxgiScreen->rotation();
+    if (!rotation)
+        return rotation.error();
 
-    if (!GetMonitorInfoW(handle, &info))
-        return {};
-
-    return { info.rcMonitor.right - info.rcMonitor.left,
-             info.rcMonitor.bottom - info.rcMonitor.top };
-}
-
-QVideoFrameFormat getFrameFormat(QScreen* screen)
-{
-    const QSize screenSize = getPhysicalSizePixels(screen);
-
-    QVideoFrameFormat format = { screenSize, QVideoFrameFormat::Format_BGRA8888 };
+    QVideoFrameFormat format = { *screenSize, QVideoFrameFormat::Format_BGRA8888 };
+    format.setRotation(*rotation);
     format.setStreamFrameRate(static_cast<int>(screen->refreshRate()));
 
     return format;
@@ -448,13 +462,13 @@ bool QFFmpegScreenCaptureDxgi::setActiveInternal(bool active)
         if (!checkScreenWithError(screen))
             return false;
 
-        const QVideoFrameFormat format = getFrameFormat(screen);
-        if (!format.isValid()) {
-            updateError(NotFound, QLatin1String("Unable to determine screen size or format"));
+        const auto format = getFrameFormat(screen);
+        if (!format) {
+            updateError(NotFound, "Unable to determine screen size or format"_L1 + format.error().str());
             return false;
         }
 
-        m_grabber.reset(new Grabber(*this, screen, format));
+        m_grabber.reset(new Grabber(*this, screen, *format));
         m_grabber->start();
     }
 

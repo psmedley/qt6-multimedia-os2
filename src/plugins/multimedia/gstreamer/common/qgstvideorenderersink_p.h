@@ -88,7 +88,7 @@ class QGstVideoRenderer : public QObject
 
 public:
     explicit QGstVideoRenderer(QGstreamerVideoSink *);
-    ~QGstVideoRenderer();
+    ~QGstVideoRenderer() override;
 
     const QGstCaps &caps();
 
@@ -131,7 +131,6 @@ private:
     QVideoFrame m_currentVideoFrame;
     bool m_isActive{ false };
 
-    RenderBufferState m_currentState;
     QGstUtils::QConcurrentQueue<RenderBufferState> m_bufferQueue;
     bool m_flushing{ false };
 };

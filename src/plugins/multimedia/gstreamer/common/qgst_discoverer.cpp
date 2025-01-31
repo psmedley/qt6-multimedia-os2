@@ -142,10 +142,13 @@ QGstDiscovererInfo parseGstDiscovererInfo(GstDiscovererInfo *info)
     if (duration != GST_CLOCK_TIME_NONE)
         result.duration = std::chrono::nanoseconds{ duration };
 
-    GstDiscovererStreamInfo *streamInfo = gst_discoverer_info_get_stream_info(info);
-    if (streamInfo && GST_IS_DISCOVERER_CONTAINER_INFO(streamInfo))
+    QGstDiscovererStreamInfoHandle streamInfo{
+        gst_discoverer_info_get_stream_info(info),
+        QGstDiscovererStreamInfoHandle::HasRef,
+    };
+    if (streamInfo && GST_IS_DISCOVERER_CONTAINER_INFO(streamInfo.get()))
         result.containerInfo =
-                parseGstDiscovererContainerInfo(GST_DISCOVERER_CONTAINER_INFO(streamInfo));
+                parseGstDiscovererContainerInfo(GST_DISCOVERER_CONTAINER_INFO(streamInfo.get()));
     result.tags = duplicateTagList(gst_discoverer_info_get_tags(info));
 
     GstDiscovererStreamInfoList<GstDiscovererVideoInfo> videoStreams{
@@ -184,6 +187,7 @@ static constexpr std::chrono::nanoseconds discovererTimeout = std::chrono::secon
 QGstDiscoverer::QGstDiscoverer()
     : m_instance{
           gst_discoverer_new(discovererTimeout.count(), nullptr),
+          QGstDiscovererHandle::HasRef,
       }
 {
 }
@@ -208,6 +212,7 @@ QMaybe<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(const c
     QUniqueGErrorHandle error;
     QGstDiscovererInfoHandle info{
         gst_discoverer_discover_uri(m_instance.get(), uri, &error),
+        QGstDiscovererInfoHandle::HasRef,
     };
 
     if (error)

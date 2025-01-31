@@ -25,6 +25,7 @@
 
 #include <QtCore/QIODevice>
 #include <qdarwinaudiodevice_p.h>
+#include <qdarwinaudiounit_p.h>
 #include <qsemaphore.h>
 
 #include "../audio/qaudioringbuffer_p.h"
@@ -121,6 +122,7 @@ public:
 private slots:
     void inputReady();
     void updateAudioDevice();
+    void appStateChanged(Qt::ApplicationState state);
 
 private:
     enum ThreadState { Running, Draining, Stopped };
@@ -138,8 +140,7 @@ private:
     void onAudioDeviceError();
     void onAudioDeviceDrained();
 
-    QAudioDevice m_audioDeviceInfo;
-    QByteArray m_device;
+    QAudioDevice m_audioDevice;
 
     static constexpr int DEFAULT_BUFFER_SIZE = 8 * 1024;
 
@@ -150,11 +151,11 @@ private:
     QAudioFormat m_audioFormat;
     QIODevice *m_audioIO = nullptr;
 #if defined(Q_OS_MACOS)
+    // TODO: The CoreAudio AudioDeviceId will change in between device connection sessions.
+    // This value should be updated accordingly or be reloaded during stream setup.
     AudioDeviceID m_audioDeviceId;
 #endif
     AudioUnit m_audioUnit = 0;
-    bool m_audioUnitStarted = false;
-    Float64 m_clockFrequency = 0;
     AudioStreamBasicDescription m_streamFormat;
     std::unique_ptr<QDarwinAudioSinkBuffer> m_audioBuffer;
     qreal m_cachedVolume = 1.;
@@ -164,6 +165,7 @@ private:
 
     QAudioStateMachine m_stateMachine;
     QSemaphore m_drainSemaphore;
+    AudioUnitState m_audioUnitState = AudioUnitState::Stopped;
 };
 
 QT_END_NAMESPACE

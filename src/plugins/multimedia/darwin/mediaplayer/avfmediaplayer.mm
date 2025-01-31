@@ -442,6 +442,9 @@ static QMutex sessionMutex;
 
     [m_mimeType release];
     [m_playerLayer release];
+    // 'videoTrack' is a 'retain' property, but still needs a
+    // manual 'release' (i.e. setting to nil):
+    self.videoTrack = nil;
     [super dealloc];
 }
 
@@ -945,9 +948,9 @@ void AVFMediaPlayer::updateAudioOutputDevice()
         return;
 
     if (!m_audioOutput || m_audioOutput->device.id().isEmpty()) {
-        player.audioOutputDeviceUniqueID = nil;
         if (!m_audioOutput)
             player.muted = true;
+        player.audioOutputDeviceUniqueID = nil;
     } else {
         NSString *str = QString::fromUtf8(m_audioOutput->device.id()).toNSString();
         player.audioOutputDeviceUniqueID = str;

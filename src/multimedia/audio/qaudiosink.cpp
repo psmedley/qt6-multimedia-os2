@@ -7,7 +7,7 @@
 #include "qaudiosystem_p.h"
 #include "qaudiosink.h"
 
-#include <private/qplatformmediadevices_p.h>
+#include <private/qplatformaudiodevices_p.h>
 #include <private/qplatformmediaintegration_p.h>
 
 QT_BEGIN_NAMESPACE
@@ -87,7 +87,7 @@ QAudioSink::QAudioSink(const QAudioFormat &format, QObject *parent)
 QAudioSink::QAudioSink(const QAudioDevice &audioDevice, const QAudioFormat &format, QObject *parent):
     QObject(parent)
 {
-    d = QPlatformMediaIntegration::instance()->mediaDevices()->audioOutputDevice(format, audioDevice, parent);
+    d = QPlatformMediaIntegration::instance()->audioDevices()->audioOutputDevice(format, audioDevice, parent);
     if (d)
         connect(d, &QPlatformAudioSink::stateChanged, this, [this](QAudio::State state) {
             // if the signal has been emitted from another thread,
@@ -191,8 +191,10 @@ void QAudioSink::stop()
 }
 
 /*!
-    Drops all audio data in the buffers, resets buffers to zero.
+    Immediately halts audio output and discards any audio data currently in the buffers. All pending
+    audio data pushed to QIODevice is ignored.
 
+    \sa stop()
 */
 void QAudioSink::reset()
 {

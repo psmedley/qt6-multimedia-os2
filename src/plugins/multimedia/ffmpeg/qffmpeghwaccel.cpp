@@ -4,39 +4,32 @@
 #include "libavutil/version.h"
 
 #include "qffmpeghwaccel_p.h"
-#if QT_CONFIG(vaapi)
-#include "qffmpeghwaccel_vaapi_p.h"
-#endif
-#ifdef Q_OS_DARWIN
-#include "qffmpeghwaccel_videotoolbox_p.h"
-#endif
-#if QT_CONFIG(wmf)
-#include "qffmpeghwaccel_d3d11_p.h"
-#include <QtCore/private/qsystemlibrary_p.h>
 
+#if QT_CONFIG(wmf)
+#  include "qffmpeghwaccel_d3d11_p.h"
+#  include <QtCore/private/qsystemlibrary_p.h>
 #endif
-#ifdef Q_OS_ANDROID
-#    include "qffmpeghwaccel_mediacodec_p.h"
-#endif
+
 #include "qffmpeg_p.h"
 #include "qffmpegcodecstorage_p.h"
+#include "qffmpegmediaintegration_p.h"
 #include "qffmpegvideobuffer_p.h"
 #include "qscopedvaluerollback.h"
-#include "QtCore/qfile.h"
+
+#ifdef Q_OS_LINUX
+#  include "QtCore/qfile.h"
+#  include <QLibrary>
+#endif
 
 #include <rhi/qrhi.h>
 #include <qloggingcategory.h>
 #include <unordered_set>
-#ifdef Q_OS_LINUX
-#include <QLibrary>
-#endif
 
 /* Infrastructure for HW acceleration goes into this file. */
 
 QT_BEGIN_NAMESPACE
 
 static Q_LOGGING_CATEGORY(qLHWAccel, "qt.multimedia.ffmpeg.hwaccel");
-extern bool thread_local FFmpegLogsEnabledInThread;
 
 namespace QFFmpeg {
 
@@ -150,12 +143,10 @@ static const std::vector<AVHWDeviceType> &deviceTypes()
 
         // gather hw pix formats
         std::unordered_set<AVPixelFormat> hwPixFormats;
-        void *opaque = nullptr;
-        while (auto codec = av_codec_iterate(&opaque)) {
-            findAVPixelFormat(codec, [&](AVPixelFormat format) {
+        for (const Codec codec : CodecEnumerator()) {
+            forEachAVPixelFormat(codec, [&](AVPixelFormat format) {
                 if (isHwPixelFormat(format))
                     hwPixFormats.insert(format);
-                return false;
             });
         }
 
@@ -207,30 +198,21 @@ static std::vector<AVHWDeviceType> deviceTypes(const char *envVarName)
     return result;
 }
 
-template <typename CodecFinder>
-std::pair<const AVCodec *, HWAccelUPtr>
-findCodecWithHwAccel(AVCodecID id, const std::vector<AVHWDeviceType> &deviceTypes,
-                     CodecFinder codecFinder,
-                     const std::function<bool(const HWAccel &)> &hwAccelPredicate)
+std::pair<std::optional<Codec>, HWAccelUPtr> HWAccel::findDecoderWithHwAccel(AVCodecID id)
 {
-    for (auto type : deviceTypes) {
-        const auto codec = codecFinder(id, pixelFormatForHwDevice(type));
+    for (auto type : decodingDeviceTypes()) {
+        const std::optional<Codec> codec = findAVDecoder(id, pixelFormatForHwDevice(type));
 
         if (!codec)
             continue;
 
-        qCDebug(qLHWAccel) << "Found potential codec" << codec->name << "for hw accel" << type
+        qCDebug(qLHWAccel) << "Found potential codec" << codec->name() << "for hw accel" << type
                            << "; Checking the hw device...";
 
-        auto hwAccel = QFFmpeg::HWAccel::create(type);
+        HWAccelUPtr hwAccel = create(type);
 
         if (!hwAccel)
             continue;
-
-        if (hwAccelPredicate && !hwAccelPredicate(*hwAccel)) {
-            qCDebug(qLHWAccel) << "HW device is available but doesn't suit due to restrictions";
-            continue;
-        }
 
         qCDebug(qLHWAccel) << "HW device is OK";
 
@@ -239,7 +221,7 @@ findCodecWithHwAccel(AVCodecID id, const std::vector<AVHWDeviceType> &deviceType
 
     qCDebug(qLHWAccel) << "No hw acceleration found for codec id" << id;
 
-    return { nullptr, nullptr };
+    return { std::nullopt, nullptr };
 }
 
 static bool isNoConversionFormat(AVPixelFormat f)
@@ -249,49 +231,18 @@ static bool isNoConversionFormat(AVPixelFormat f)
     return !needsConversion;
 };
 
-namespace {
-
-bool hwTextureConversionEnabled()
-{
-
-    // HW textures conversions are not stable in specific cases, dependent on the hardware and OS.
-    // We need the env var for testing with no textures conversion on the user's side.
-    static const int disableHwConversion =
-            qEnvironmentVariableIntValue("QT_DISABLE_HW_TEXTURES_CONVERSION");
-
-    return !disableHwConversion;
-}
-
-void setupDecoder(const AVPixelFormat format, AVCodecContext *const codecContext)
-{
-    if (!hwTextureConversionEnabled())
-        return;
-
-#if QT_CONFIG(wmf)
-    if (format == AV_PIX_FMT_D3D11)
-        QFFmpeg::D3D11TextureConverter::SetupDecoderTextures(codecContext);
-#elif defined Q_OS_ANDROID
-    if (format == AV_PIX_FMT_MEDIACODEC)
-        QFFmpeg::MediaCodecTextureConverter::setupDecoderSurface(codecContext);
-#else
-    Q_UNUSED(codecContext);
-    Q_UNUSED(format);
-#endif
-}
-
-} // namespace
-
 // Used for the AVCodecContext::get_format callback
-AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *suggestedFormats)
+AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
 {
+    QSpan<const AVPixelFormat> suggestedFormats = makeSpan(fmt);
     // First check HW accelerated codecs, the HW device context must be set
     if (codecContext->hw_device_ctx) {
         auto *device_ctx = (AVHWDeviceContext *)codecContext->hw_device_ctx->data;
-        std::pair formatAndScore(AV_PIX_FMT_NONE, NotSuitableAVScore);
+        ValueAndScore<AVPixelFormat> formatAndScore;
 
         // to be rewritten via findBestAVFormat
-        for (int i = 0;
-             const AVCodecHWConfig *config = avcodec_get_hw_config(codecContext->codec, i); i++) {
+        const Codec codec{ codecContext->codec };
+        for (const AVCodecHWConfig *config : codec.hwConfigs()) {
             if (!(config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX))
                 continue;
 
@@ -305,8 +256,8 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *sugge
                 // check in supported codec->pix_fmts (avcodec_get_supported_config with
                 // AV_CODEC_CONFIG_PIX_FORMAT since n7.1); no reason to use findAVPixelFormat as
                 // we're already in the hw_config loop
-                const auto pixelFormats = getCodecPixelFormats(codecContext->codec);
-                if (shouldCheckCodecFormats && !hasAVValue(pixelFormats, format))
+                const auto pixelFormats = codec.pixelFormats();
+                if (shouldCheckCodecFormats && !hasValue(pixelFormats, format))
                     return NotSuitableAVScore;
 
                 if (!shouldCheckCodecFormats && config->pix_fmt != format)
@@ -322,31 +273,32 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *sugge
                 return result;
             };
 
-            const auto found = findBestAVValue(suggestedFormats, scoresGettor);
+            const auto found = findBestAVValueWithScore(suggestedFormats, scoresGettor);
 
-            if (found.second > formatAndScore.second)
+            if (found.score > formatAndScore.score)
                 formatAndScore = found;
         }
 
-        const auto &format = formatAndScore.first;
-        if (format != AV_PIX_FMT_NONE) {
-            setupDecoder(format, codecContext);
-            qCDebug(qLHWAccel) << "Selected format" << format << "for hw" << device_ctx->type;
-            return format;
+        const auto format = formatAndScore.value;
+        if (format) {
+            TextureConverter::applyDecoderPreset(*format, *codecContext);
+            qCDebug(qLHWAccel) << "Selected format" << *format << "for hw" << device_ctx->type;
+            return *format;
         }
     }
 
     // prefer video formats we can handle directly
-    const auto noConversionFormat = findAVValue(suggestedFormats, &isNoConversionFormat);
-    if (noConversionFormat != AV_PIX_FMT_NONE) {
-        qCDebug(qLHWAccel) << "Selected format with no conversion" << noConversionFormat;
-        return noConversionFormat;
+    const auto noConversionFormat = findIf(suggestedFormats, &isNoConversionFormat);
+    if (noConversionFormat) {
+        qCDebug(qLHWAccel) << "Selected format with no conversion" << *noConversionFormat;
+        return *noConversionFormat;
     }
 
-    qCDebug(qLHWAccel) << "Selected format with conversion" << *suggestedFormats;
+    const AVPixelFormat format = !suggestedFormats.empty() ? suggestedFormats[0] : AV_PIX_FMT_NONE;
+    qCDebug(qLHWAccel) << "Selected format with conversion" << format;
 
     // take the native format, this will involve one additional format conversion on the CPU side
-    return *suggestedFormats;
+    return format;
 }
 
 HWAccel::~HWAccel() = default;
@@ -413,23 +365,6 @@ bool HWAccel::matchesSizeContraints(QSize size) const
             && size.height() <= constraints->max_height;
 }
 
-std::pair<const AVCodec *, HWAccelUPtr>
-HWAccel::findEncoderWithHwAccel(AVCodecID id,
-                                const std::function<bool(const HWAccel &)> &hwAccelPredicate)
-{
-    auto finder = qOverload<AVCodecID, const std::optional<PixelOrSampleFormat> &>(
-            &QFFmpeg::findAVEncoder);
-    return findCodecWithHwAccel(id, encodingDeviceTypes(), finder, hwAccelPredicate);
-}
-
-std::pair<const AVCodec *, HWAccelUPtr>
-HWAccel::findDecoderWithHwAccel(AVCodecID id,
-                                const std::function<bool(const HWAccel &)> &hwAccelPredicate)
-{
-    return findCodecWithHwAccel(id, decodingDeviceTypes(), &QFFmpeg::findAVDecoder,
-                                hwAccelPredicate);
-}
-
 AVHWDeviceType HWAccel::deviceType() const
 {
     return m_hwDeviceContext ? hwDeviceContext()->type : AV_HWDEVICE_TYPE_NONE;
@@ -464,56 +399,25 @@ AVHWFramesContext *HWAccel::hwFramesContext() const
     return m_hwFramesContext ? (AVHWFramesContext *)m_hwFramesContext->data : nullptr;
 }
 
-
-TextureConverter::TextureConverter(QRhi *rhi)
-    : d(new Data)
+static void deleteHwFrameContextData(AVHWFramesContext *context)
 {
-    d->rhi = rhi;
+    delete reinterpret_cast<HwFrameContextData *>(context->user_opaque);
 }
 
-TextureSet *TextureConverter::getTextures(AVFrame *frame)
+HwFrameContextData &HwFrameContextData::ensure(AVFrame &hwFrame)
 {
-    if (!frame || isNull())
-        return nullptr;
+    Q_ASSERT(hwFrame.hw_frames_ctx && hwFrame.hw_frames_ctx->data);
 
-    Q_ASSERT(frame->format == d->format);
-    return d->backend->getTextures(frame);
-}
-
-void TextureConverter::updateBackend(AVPixelFormat fmt)
-{
-    d->backend = nullptr;
-    if (!d->rhi)
-        return;
-
-    if (!hwTextureConversionEnabled())
-        return;
-
-    switch (fmt) {
-#if QT_CONFIG(vaapi)
-    case AV_PIX_FMT_VAAPI:
-        d->backend = std::make_unique<VAAPITextureConverter>(d->rhi);
-        break;
-#endif
-#ifdef Q_OS_DARWIN
-    case AV_PIX_FMT_VIDEOTOOLBOX:
-        d->backend = std::make_unique<VideoToolBoxTextureConverter>(d->rhi);
-        break;
-#endif
-#if QT_CONFIG(wmf)
-    case AV_PIX_FMT_D3D11:
-        d->backend = std::make_unique<D3D11TextureConverter>(d->rhi);
-        break;
-#endif
-#ifdef Q_OS_ANDROID
-    case AV_PIX_FMT_MEDIACODEC:
-        d->backend = std::make_unique<MediaCodecTextureConverter>(d->rhi);
-        break;
-#endif
-    default:
-        break;
+    auto context = reinterpret_cast<AVHWFramesContext *>(hwFrame.hw_frames_ctx->data);
+    if (!context->user_opaque) {
+        context->user_opaque = new HwFrameContextData;
+        Q_ASSERT(!context->free);
+        context->free = deleteHwFrameContextData;
+    } else {
+        Q_ASSERT(context->free == deleteHwFrameContextData);
     }
-    d->format = fmt;
+
+    return *reinterpret_cast<HwFrameContextData *>(context->user_opaque);
 }
 
 AVFrameUPtr copyFromHwPool(AVFrameUPtr frame)

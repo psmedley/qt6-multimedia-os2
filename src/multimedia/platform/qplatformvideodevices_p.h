@@ -20,6 +20,7 @@
 
 QT_BEGIN_NAMESPACE
 
+class QCameraDevice;
 class QPlatformMediaIntegration;
 
 class Q_MULTIMEDIA_EXPORT QPlatformVideoDevices : public QObject
@@ -32,7 +33,7 @@ public:
 
     ~QPlatformVideoDevices() override;
 
-    virtual QList<QCameraDevice> videoDevices() const = 0;
+    virtual QList<QCameraDevice> videoInputs() const = 0;
 
 Q_SIGNALS:
     void videoInputsChanged();

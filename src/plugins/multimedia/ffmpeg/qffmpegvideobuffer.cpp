@@ -6,6 +6,7 @@
 #include "private/qmultimediautils_p.h"
 #include "qffmpeghwaccel_p.h"
 #include "qloggingcategory.h"
+#include <QtCore/qthread.h>
 
 extern "C" {
 #include <libavutil/pixdesc.h>
@@ -25,8 +26,6 @@ static bool isFrameFlipped(const AVFrame& frame) {
 
     return false;
 }
-
-static Q_LOGGING_CATEGORY(qLcFFmpegVideoBuffer, "qt.multimedia.ffmpeg.videobuffer");
 
 QFFmpegVideoBuffer::QFFmpegVideoBuffer(AVFrameUPtr frame, AVRational pixelAspectRatio)
     : QHwVideoBuffer(QVideoFrame::NoHandle),
@@ -77,11 +76,49 @@ void QFFmpegVideoBuffer::convertSWFrame()
     }
 }
 
-void QFFmpegVideoBuffer::setTextureConverter(const TextureConverter &converter)
+void QFFmpegVideoBuffer::initTextureConverter(QRhi &rhi)
 {
-    m_textureConverter = converter;
-    m_textureConverter.init(m_hwFrame.get());
-    m_type = converter.isNull() ? QVideoFrame::NoHandle : QVideoFrame::RhiTextureHandle;
+    if (!m_hwFrame)
+        return;
+
+    // don't use the result reference here
+    ensureTextureConverter(rhi);
+
+    // the type is to be clarified in the method mapTextures
+    m_type = m_hwFrame && TextureConverter::isBackendAvailable(*m_hwFrame)
+            ? QVideoFrame::RhiTextureHandle
+            : QVideoFrame::NoHandle;
+}
+
+QFFmpeg::TextureConverter &QFFmpegVideoBuffer::ensureTextureConverter(QRhi &rhi)
+{
+    Q_ASSERT(m_hwFrame);
+
+    HwFrameContextData &frameContextData = HwFrameContextData::ensure(*m_hwFrame);
+    TextureConverter *converter = frameContextData.textureConverterMapper.get(rhi);
+
+    if (!converter) {
+        TextureConverter newConverter(rhi);
+
+        bool added = false;
+        std::tie(converter, added) =
+                frameContextData.textureConverterMapper.tryMap(rhi, TextureConverter(rhi));
+        // no issues are expected if it's already added in another thread, however,it's worth to
+        // check it
+        Q_ASSERT(converter && added);
+    }
+
+    return *converter;
+}
+
+QRhi *QFFmpegVideoBuffer::rhi() const
+{
+    if (!m_hwFrame)
+        return nullptr;
+
+    HwFrameContextData &frameContextData = HwFrameContextData::ensure(*m_hwFrame);
+    return frameContextData.textureConverterMapper.findRhi(
+            [](QRhi &rhi) { return rhi.thread()->isCurrentThread(); });
 }
 
 QVideoFrameFormat::ColorSpace QFFmpegVideoBuffer::colorSpace() const
@@ -145,13 +182,6 @@ QAbstractVideoBuffer::MapData QFFmpegVideoBuffer::map(QVideoFrame::MapMode mode)
     if ((mode & QVideoFrame::WriteOnly) != 0 && m_hwFrame) {
         m_type = QVideoFrame::NoHandle;
         m_hwFrame.reset();
-        if (m_textures) {
-            qCDebug(qLcFFmpegVideoBuffer)
-                    << "Mapping of FFmpeg video buffer with write mode when "
-                       "textures have been created. Visual artifacts might "
-                       "happen if the frame is still in the rendering pipeline";
-            m_textures.reset();
-        }
     }
 
     return mapData;
@@ -164,29 +194,63 @@ void QFFmpegVideoBuffer::unmap()
     m_mode = QVideoFrame::NotMapped;
 }
 
-std::unique_ptr<QVideoFrameTextures> QFFmpegVideoBuffer::mapTextures(QRhi *)
+QVideoFrameTexturesUPtr QFFmpegVideoBuffer::mapTextures(QRhi &rhi, QVideoFrameTexturesUPtr& oldTextures)
 {
-    if (m_textures)
-        return {};
-    if (!m_hwFrame)
-        return {};
-    if (m_textureConverter.isNull()) {
-        m_textures = nullptr;
-        return {};
-    }
+    Q_ASSERT(rhi.thread()->isCurrentThread());
 
-    m_textures.reset(m_textureConverter.getTextures(m_hwFrame.get()));
-    if (!m_textures) {
-        static thread_local int lastFormat = 0;
-        if (std::exchange(lastFormat, m_hwFrame->format) != m_hwFrame->format) // prevent logging spam
-            qWarning() << "    failed to get textures for frame; format:" << m_hwFrame->format;
-    }
-    return {};
+    QVideoFrameTexturesUPtr result = createTexturesFromHwFrame(rhi, oldTextures);
+
+    // update m_type according to the real result
+    m_type = result ? QVideoFrame::RhiTextureHandle : QVideoFrame::NoHandle;
+    return result;
 }
 
-quint64 QFFmpegVideoBuffer::textureHandle(QRhi *rhi, int plane) const
-{
-    return m_textures ? m_textures->textureHandle(rhi, plane) : 0;
+QVideoFrameTexturesUPtr QFFmpegVideoBuffer::createTexturesFromHwFrame(QRhi &rhi, QVideoFrameTexturesUPtr& oldTextures) {
+
+    if (!m_hwFrame)
+        return {};
+
+    // QTBUG-132200:
+    // We aim to set initTextureConverterForAnyRhi=true for as much platforms as we can,
+    // and remove the check after all platforms work fine on CI. If the flag is enabled,
+    // QVideoFrame::toImage can work faster, and we can test hw texture conversion on CI.
+    // Currently, enabling the flag fails some CI platforms.
+    constexpr bool initTextureConverterForAnyRhi = false;
+
+    TextureConverter *converter = initTextureConverterForAnyRhi
+            ? &ensureTextureConverter(rhi)
+            : HwFrameContextData::ensure(*m_hwFrame).textureConverterMapper.get(rhi);
+
+    if (!converter)
+        return {};
+
+    if (!converter->init(*m_hwFrame))
+        return {};
+
+    const QVideoFrameTextures *oldTexturesRaw = oldTextures.get();
+    if (QVideoFrameTexturesUPtr newTextures = converter->createTextures(*m_hwFrame, oldTextures))
+        return newTextures;
+
+    Q_ASSERT(oldTextures.get() == oldTexturesRaw);
+
+    QVideoFrameTexturesHandlesUPtr oldTextureHandles =
+            oldTextures ? oldTextures->takeHandles() : nullptr;
+    QVideoFrameTexturesHandlesUPtr newTextureHandles =
+            converter->createTextureHandles(*m_hwFrame, std::move(oldTextureHandles));
+
+    if (newTextureHandles) {
+        QVideoFrameTexturesUPtr newTextures = QVideoTextureHelper::createTexturesFromHandles(
+                std::move(newTextureHandles), rhi, m_pixelFormat,
+                { m_hwFrame->width, m_hwFrame->height });
+
+        return newTextures;
+    }
+
+    static thread_local int lastFormat = 0;
+    if (std::exchange(lastFormat, m_hwFrame->format) != m_hwFrame->format) // prevent logging spam
+        qWarning() << "    failed to get textures for frame; format:" << m_hwFrame->format;
+
+    return {};
 }
 
 QVideoFrameFormat::PixelFormat QFFmpegVideoBuffer::pixelFormat() const

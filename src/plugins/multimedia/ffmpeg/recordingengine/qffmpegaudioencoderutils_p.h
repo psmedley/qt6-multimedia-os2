@@ -5,21 +5,18 @@
 #define QFFMPEGAUDIOENCODERUTILS_P_H
 
 #include "qffmpeg_p.h"
+#include <QtCore/qspan.h>
 
 QT_BEGIN_NAMESPACE
 
 namespace QFFmpeg {
 
-AVSampleFormat adjustSampleFormat(const AVSampleFormat *supportedFormats, AVSampleFormat requested);
+AVSampleFormat adjustSampleFormat(QSpan<const AVSampleFormat> supportedFormats, AVSampleFormat requested);
 
-int adjustSampleRate(const int *supportedRates, int requested);
+int adjustSampleRate(QSpan<const int> supportedRates, int requested);
 
-#if QT_FFMPEG_HAS_AV_CHANNEL_LAYOUT
-AVChannelLayout adjustChannelLayout(const AVChannelLayout *supportedLayouts,
-                                    const AVChannelLayout &requested);
-#else
-uint64_t adjustChannelLayout(const uint64_t *supportedLayouts, uint64_t requested);
-#endif
+ChannelLayoutT adjustChannelLayout(QSpan<const ChannelLayoutT> supportedLayouts,
+                                   const ChannelLayoutT &requested);
 
 } // namespace QFFmpeg
 

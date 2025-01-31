@@ -85,7 +85,8 @@ class D3D11TextureConverter : public TextureConverterBackend
 public:
     D3D11TextureConverter(QRhi *rhi);
 
-    TextureSet *getTextures(AVFrame *frame) override;
+    QVideoFrameTexturesHandlesUPtr
+    createTextureHandles(AVFrame *frame, QVideoFrameTexturesHandlesUPtr oldHandles) override;
 
     static void SetupDecoderTextures(AVCodecContext *s);
 

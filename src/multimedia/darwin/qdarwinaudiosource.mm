@@ -4,11 +4,12 @@
 #include "qcoreaudiosessionmanager_p.h"
 #include "qdarwinaudiodevice_p.h"
 #include "qcoreaudioutils_p.h"
-#include "qdarwinmediadevices_p.h"
+#include "qdarwinaudiodevices_p.h"
 #include <qmediadevices.h>
 
 #if defined(Q_OS_MACOS)
 # include <AudioUnit/AudioComponent.h>
+# include "qmacosaudiodatautils_p.h"
 #endif
 
 #if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
@@ -17,9 +18,15 @@
 
 #include <QtMultimedia/private/qaudiohelpers_p.h>
 #include <QtCore/QDataStream>
+
 #include <QtCore/QDebug>
 
+#include <QtWidgets/qapplication.h>
+#include <QtCore/qloggingcategory.h>
+
 QT_BEGIN_NAMESPACE
+
+Q_LOGGING_CATEGORY(qLcDarwinAudioSource, "qt.multimedia.darwin.audiosource")
 
 static const int DEFAULT_BUFFER_SIZE = 4 * 1024;
 
@@ -166,14 +173,14 @@ QDarwinAudioSourceBuffer::QDarwinAudioSourceBuffer(const QDarwinAudioSource &aud
             m_maxPeriodSize / m_outputFormat.mBytesPerFrame * 1000 / m_outputFormat.mSampleRate;
     m_flushTimer->start(qMax(1, periodTime));
 
-    if (CoreAudioUtils::toQAudioFormat(inputFormat) != CoreAudioUtils::toQAudioFormat(outputFormat)) {
+    if (QCoreAudioUtils::toQAudioFormat(inputFormat) != QCoreAudioUtils::toQAudioFormat(outputFormat)) {
         if (AudioConverterNew(&inputFormat, &m_outputFormat, &m_audioConverter) != noErr) {
             qWarning() << "QAudioSource: Unable to create an Audio Converter";
             m_audioConverter = 0;
         }
     }
 
-    m_qFormat = CoreAudioUtils::toQAudioFormat(inputFormat); // we adjust volume before conversion
+    m_qFormat = QCoreAudioUtils::toQAudioFormat(inputFormat); // we adjust volume before conversion
 }
 
 qint64 QDarwinAudioSourceBuffer::renderFromDevice(AudioUnit audioUnit,
@@ -360,22 +367,20 @@ qint64 QDarwinAudioSourceDevice::writeData(const char *data, qint64 len)
 
 QDarwinAudioSource::QDarwinAudioSource(const QAudioDevice &device, QObject *parent)
     : QPlatformAudioSource(parent),
-      m_audioDeviceInfo(device),
       m_internalBufferSize(DEFAULT_BUFFER_SIZE),
-      m_clockFrequency(CoreAudioUtils::frequency() / 1000),
       m_stateMachine(*this)
 {
-    QAudioDevice di = device;
-    if (di.isNull())
-        di = QMediaDevices::defaultAudioInput();
-#if defined(Q_OS_MACOS)
-    const QCoreAudioDeviceInfo *info = static_cast<const QCoreAudioDeviceInfo *>(di.handle());
-    Q_ASSERT(info);
-    m_audioDeviceId = info->deviceID();
-#endif
-    m_device = di.id();
+    // If incoming device is null, fallback to default device.
+    // Note: Default device can still be null in the case no devices are connected.
+    m_audioDevice = device.isNull()
+        ? QMediaDevices::defaultAudioInput()
+        : device;
 
     connect(this, &QDarwinAudioSource::stateChanged, this, &QDarwinAudioSource::updateAudioDevice);
+#ifdef Q_OS_IOS
+    if (qApp)
+        connect(qApp, &QApplication::applicationStateChanged, this, &QDarwinAudioSource::appStateChanged);
+#endif
 }
 
 
@@ -393,6 +398,10 @@ bool QDarwinAudioSource::open()
 
     if (m_isOpen)
         return true;
+
+    // TODO: It's possible that the audio-device is set to null-device at this point,
+    // i.e as a result of no audio-devices being connected. We should likely do some error-handling here
+    // and early return.
 
     AudioComponentDescription componentDescription;
     componentDescription.componentType = kAudioUnitType_Output;
@@ -456,25 +465,35 @@ bool QDarwinAudioSource::open()
     }
 
 #if defined(Q_OS_MACOS)
+    // Find the the most recent CoreAudio AudioDeviceID for the current device
+    // to start the audio stream.
+    const std::optional<AudioDeviceID> nativeDeviceIdOpt = qCoreAudioFindAudioDeviceId(m_audioDevice);
+    if (!nativeDeviceIdOpt.has_value()) {
+        qWarning() <<
+            "QAudioSource: Unable to use find most recent CoreAudio AudioDeviceID for "
+            "given device-id. The device might not be connected.";
+        return false;
+    }
+    const AudioDeviceID nativeDeviceId = nativeDeviceIdOpt.value();
     //Set Audio Device
     if (AudioUnitSetProperty(m_audioUnit,
                              kAudioOutputUnitProperty_CurrentDevice,
                              kAudioUnitScope_Global,
                              0,
-                             &m_audioDeviceId,
-                             sizeof(m_audioDeviceId)) != noErr) {
+                             &nativeDeviceId,
+                             sizeof(nativeDeviceId)) != noErr) {
         qWarning() << "QAudioSource: Unable to use configured device";
         return false;
     }
 #endif
 
     //set format
-    m_streamFormat = CoreAudioUtils::toAudioStreamBasicDescription(m_audioFormat);
+    m_streamFormat = QCoreAudioUtils::toAudioStreamBasicDescription(m_audioFormat);
 
 #if defined(Q_OS_MACOS)
     UInt32 size = 0;
 
-    if (m_audioFormat == m_audioDeviceInfo.preferredFormat()) {
+    if (m_audioFormat == m_audioDevice.preferredFormat()) {
 #endif
         m_deviceFormat = m_streamFormat;
         AudioUnitSetProperty(m_audioUnit,
@@ -603,33 +622,45 @@ void QDarwinAudioSource::onAudioDeviceError()
 
 void QDarwinAudioSource::updateAudioDevice()
 {
-    const QtAudio::State state = m_stateMachine.state();
 
-    Q_ASSERT(m_audioBuffer);
+    auto desiredAudioUnitState = AudioUnitState::Stopped;
+    const auto state = m_stateMachine.state();
+    if (state == QAudio::ActiveState || state == QAudio::IdleState)
+        desiredAudioUnitState = AudioUnitState::Started;
+
     Q_ASSERT(m_audioUnit);
-
-    // stop before m_audioBuffer->reset to get around potential
-    // race conditions
-    const bool unitStarted = state == QAudio::ActiveState || state == QAudio::IdleState;
-    if (m_audioUnitStarted != unitStarted) {
-        m_audioUnitStarted = unitStarted;
-        if (unitStarted)
-            AudioOutputUnitStart(m_audioUnit);
-        else
-            AudioOutputUnitStop(m_audioUnit);
+    if (m_audioUnitState != desiredAudioUnitState) {
+        if (desiredAudioUnitState == AudioUnitState::Started) {
+            const auto status = AudioOutputUnitStart(m_audioUnit);
+            if (status != noErr) {
+                qCWarning(qLcDarwinAudioSource) << "AudioOutputUnitStart failed with error:"
+                                                << status << "the current application state is:"
+                                                << QGuiApplication::applicationState();
+                m_audioUnitState = AudioUnitState::StartFailed;
+            } else {
+                m_audioUnitState = desiredAudioUnitState;
+            }
+        } else {
+            if (m_audioUnitState == AudioUnitState::Started)
+                AudioOutputUnitStop(m_audioUnit);
+            m_audioUnitState = desiredAudioUnitState;
+        }
     }
 
-    if (state == QAudio::StoppedState)
+    Q_ASSERT(m_audioBuffer);
+    if (state == QAudio::StoppedState) {
         m_audioBuffer->reset();
-    else
-        m_audioBuffer->setFlushingEnabled(state != QAudio::SuspendedState);
+    } else {
+        m_audioBuffer->setFlushingEnabled(state != QAudio::SuspendedState
+                                          && m_audioUnitState != AudioUnitState::StartFailed);
+    }
 }
 
 void QDarwinAudioSource::start(QIODevice *device)
 {
     reset();
 
-    if (!m_audioDeviceInfo.isFormatSupported(m_audioFormat) || !open()) {
+    if (!m_audioDevice.isFormatSupported(m_audioFormat) || !open()) {
         m_stateMachine.setError(QAudio::OpenError);
         return;
     }
@@ -650,7 +681,7 @@ QIODevice *QDarwinAudioSource::start()
 {
     reset();
 
-    if (!m_audioDeviceInfo.isFormatSupported(m_audioFormat) || !open()) {
+    if (!m_audioDevice.isFormatSupported(m_audioFormat) || !open()) {
         m_stateMachine.setError(QAudio::OpenError);
         return m_audioIO;
     }
@@ -775,6 +806,23 @@ OSStatus QDarwinAudioSource::inputCallback(void *inRefCon,
     }
 
     return noErr;
+}
+
+void QDarwinAudioSource::appStateChanged(Qt::ApplicationState newState)
+{
+#ifdef Q_OS_IOS
+    if (newState == Qt::ApplicationActive && m_audioUnitState == AudioUnitState::StartFailed) {
+        // Retry audio unit start:
+        updateAudioDevice();
+        if (m_audioUnitState != AudioUnitState::Started) {
+            // Failed again?
+            m_stateMachine.forceSetState(QAudio::StoppedState, QAudio::IOError);
+        }
+    }
+#else
+    Q_UNUSED(newState);
+#endif // Q_OS_IOS
+
 }
 
 QT_END_NAMESPACE

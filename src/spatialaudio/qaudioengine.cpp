@@ -35,7 +35,7 @@ public:
     {
         open(QIODevice::ReadOnly);
     }
-    ~QAudioOutputStream();
+    ~QAudioOutputStream() override;
 
     qint64 readData(char *data, qint64 len) override;
 
@@ -178,6 +178,7 @@ qint64 QAudioOutputStream::readData(char *data, qint64 len)
 
 QAudioEnginePrivate::QAudioEnginePrivate()
 {
+    audioThread.setObjectName(u"QAudioThread");
     device = QMediaDevices::defaultAudioOutput();
 }
 

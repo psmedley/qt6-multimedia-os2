@@ -21,16 +21,16 @@ static Q_LOGGING_CATEGORY(qLcFFmpegUtils, "qt.multimedia.ffmpeg.utils");
 
 namespace QFFmpeg {
 
-bool isAVFormatSupported(const AVCodec *codec, PixelOrSampleFormat format)
+bool isAVFormatSupported(const Codec &codec, PixelOrSampleFormat format)
 {
-    if (codec->type == AVMEDIA_TYPE_VIDEO) {
+    if (codec.type() == AVMEDIA_TYPE_VIDEO) {
         auto checkFormat = [format](AVPixelFormat f) { return f == format; };
-        return findAVPixelFormat(codec, checkFormat) != AV_PIX_FMT_NONE;
+        return findAVPixelFormat(codec, checkFormat).has_value();
     }
 
-    if (codec->type == AVMEDIA_TYPE_AUDIO) {
-        const auto sampleFormats = getCodecSampleFormats(codec);
-        return hasAVValue(sampleFormats, AVSampleFormat(format));
+    if (codec.type() == AVMEDIA_TYPE_AUDIO) {
+        const auto sampleFormats = codec.sampleFormats();
+        return hasValue(sampleFormats, AVSampleFormat(format));
     }
 
     return false;
@@ -42,16 +42,11 @@ bool isHwPixelFormat(AVPixelFormat format)
     return desc && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) != 0;
 }
 
-bool isAVCodecExperimental(const AVCodec *codec)
+void applyExperimentalCodecOptions(const Codec &codec, AVDictionary **opts)
 {
-    return (codec->capabilities & AV_CODEC_CAP_EXPERIMENTAL) != 0;
-}
-
-void applyExperimentalCodecOptions(const AVCodec *codec, AVDictionary** opts)
-{
-    if (isAVCodecExperimental(codec)) {
+    if (codec.isExperimental()) {
         qCWarning(qLcFFmpegUtils) << "Applying the option 'strict -2' for the experimental codec"
-                                  << codec->name << ". it's unlikely to work properly";
+                                  << codec.name() << ". it's unlikely to work properly";
         av_dict_set(opts, "strict", "-2", 0);
     }
 }
@@ -336,14 +331,6 @@ std::string cvFormatToString(uint32_t cvFormat)
     return std::string(formatDescIt - 4, formatDescIt);
 }
 
-#endif
-
-#if QT_FFMPEG_HAS_AVCODEC_GET_SUPPORTED_CONFIG
-void logGetCodecConfigError(const AVCodec *codec, AVCodecConfig config, int error)
-{
-    qCWarning(qLcFFmpegUtils) << "Failed to retrieve config" << config << "for codec" << codec->name
-                              << "with error" << error << err2str(error);
-}
 #endif
 
 } // namespace QFFmpeg

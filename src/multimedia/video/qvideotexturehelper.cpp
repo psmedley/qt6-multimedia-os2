@@ -6,6 +6,7 @@
 #include "qvideotexturehelper_p.h"
 #include "qvideoframeconverter_p.h"
 #include "qvideoframe_p.h"
+#include "qvideoframetexturefromsource_p.h"
 #include "private/qmultimediautils_p.h"
 
 #include <qpainter.h>
@@ -20,121 +21,121 @@ static const TextureDescription descriptions[QVideoFrameFormat::NPixelFormats] =
     //  Format_Invalid
     { 0, 0,
       [](int, int) { return 0; },
-     { QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat},
+     { TextureDescription::UnknownFormat, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat},
      { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_ARGB8888
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_ARGB8888_Premultiplied
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_XRGB8888
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_BGRA8888
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::BGRA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::BGRA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_BGRA8888_Premultiplied
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::BGRA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::BGRA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_BGRX8888
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::BGRA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::BGRA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_ABGR8888
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_XBGR8888
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_RGBA8888
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_RGBX8888
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_AYUV
     { 1, 4,
       [](int stride, int height) { return stride*height; },
-     { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+     { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_AYUV_Premultiplied
     { 1, 4,
         [](int stride, int height) { return stride*height; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_YUV420P
     { 3, 1,
       [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
-     { QRhiTexture::R8, QRhiTexture::R8, QRhiTexture::R8 },
+     { TextureDescription::Red_8, TextureDescription::Red_8, TextureDescription::Red_8 },
      { { 1, 1 }, { 2, 2 }, { 2, 2 } }
     },
      // Format_YUV422P
     { 3, 1,
       [](int stride, int height) { return stride * height * 2; },
-     { QRhiTexture::R8, QRhiTexture::R8, QRhiTexture::R8 },
+     {TextureDescription::Red_8, TextureDescription::Red_8, TextureDescription::Red_8 },
      { { 1, 1 }, { 2, 1 }, { 2, 1 } }
     },
      // Format_YV12
     { 3, 1,
       [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
-     { QRhiTexture::R8, QRhiTexture::R8, QRhiTexture::R8 },
+     {TextureDescription::Red_8, TextureDescription::Red_8, TextureDescription::Red_8 },
      { { 1, 1 }, { 2, 2 }, { 2, 2 } }
     },
     // Format_UYVY
     { 1, 2,
       [](int stride, int height) { return stride*height; },
-     { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+     { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
      { { 2, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_YUYV
     { 1, 2,
       [](int stride, int height) { return stride*height; },
-     { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+     { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
      { { 2, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_NV12
     { 2, 1,
       [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
-     { QRhiTexture::R8, QRhiTexture::RG8, QRhiTexture::UnknownFormat },
+     { TextureDescription::Red_8, TextureDescription::RG_8, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 2, 2 }, { 1, 1 } }
     },
     // Format_NV21
     { 2, 1,
       [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
-     { QRhiTexture::R8, QRhiTexture::RG8, QRhiTexture::UnknownFormat },
+     { TextureDescription::Red_8, TextureDescription::RG_8, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 2, 2 }, { 1, 1 } }
     },
     // Format_IMC1
@@ -145,13 +146,13 @@ static const TextureDescription descriptions[QVideoFrameFormat::NPixelFormats] =
           h += 2*(((h/2) + 15) & ~15);
           return stride * h;
       },
-     { QRhiTexture::R8, QRhiTexture::R8, QRhiTexture::R8 },
+     {TextureDescription::Red_8,TextureDescription::Red_8,TextureDescription::Red_8 },
      { { 1, 1 }, { 2, 2 }, { 2, 2 } }
     },
     // Format_IMC2
     { 2, 1,
       [](int stride, int height) { return 2*stride*height; },
-     { QRhiTexture::R8, QRhiTexture::R8, QRhiTexture::UnknownFormat },
+     {TextureDescription::Red_8,TextureDescription::Red_8, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 1, 2 }, { 1, 1 } }
     },
     // Format_IMC3
@@ -162,66 +163,108 @@ static const TextureDescription descriptions[QVideoFrameFormat::NPixelFormats] =
           h += 2*(((h/2) + 15) & ~15);
           return stride * h;
       },
-     { QRhiTexture::R8, QRhiTexture::R8, QRhiTexture::R8 },
+     {TextureDescription::Red_8,TextureDescription::Red_8,TextureDescription::Red_8 },
      { { 1, 1 }, { 2, 2 }, { 2, 2 } }
     },
     // Format_IMC4
     { 2, 1,
       [](int stride, int height) { return 2*stride*height; },
-     { QRhiTexture::R8, QRhiTexture::R8, QRhiTexture::UnknownFormat },
+     {TextureDescription::Red_8,TextureDescription::Red_8, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 1, 2 }, { 1, 1 } }
     },
     // Format_Y8
     { 1, 1,
       [](int stride, int height) { return stride*height; },
-     { QRhiTexture::R8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+     {TextureDescription::Red_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_Y16
     { 1, 2,
       [](int stride, int height) { return stride*height; },
-     { QRhiTexture::R16, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+     { TextureDescription::Red_16, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_P010
     { 2, 2,
       [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
-     { QRhiTexture::R16, QRhiTexture::RG16, QRhiTexture::UnknownFormat },
+     { TextureDescription::Red_16, TextureDescription::RG_16, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 2, 2 }, { 1, 1 } }
     },
     // Format_P016
     { 2, 2,
       [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
-     { QRhiTexture::R16, QRhiTexture::RG16, QRhiTexture::UnknownFormat },
+     { TextureDescription::Red_16, TextureDescription::RG_16, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 2, 2 }, { 1, 1 } }
     },
     // Format_SamplerExternalOES
     {
         1, 0,
         [](int, int) { return 0; },
-        { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_Jpeg
     { 1, 4,
       [](int stride, int height) { return stride*height; },
-     { QRhiTexture::RGBA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+     { TextureDescription::RGBA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
      { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_SamplerRect
     {
         1, 0,
         [](int, int) { return 0; },
-        { QRhiTexture::BGRA8, QRhiTexture::UnknownFormat, QRhiTexture::UnknownFormat },
+        { TextureDescription::BGRA_8, TextureDescription::UnknownFormat, TextureDescription::UnknownFormat },
         { { 1, 1 }, { 1, 1 }, { 1, 1 } }
     },
     // Format_YUV420P10
     { 3, 2,
         [](int stride, int height) { return stride * ((height * 3 / 2 + 1) & ~1); },
-        { QRhiTexture::R16, QRhiTexture::R16, QRhiTexture::R16 },
+        { TextureDescription::Red_16, TextureDescription::Red_16, TextureDescription::Red_16 },
         { { 1, 1 }, { 2, 2 }, { 2, 2 } }
     },
 };
+
+static QRhiTexture::Format
+resolveRhiTextureFormat(QRhi *rhi, QRhiTexture::Format format,
+                        QRhiTexture::Format fallback = QRhiTexture::UnknownFormat)
+{
+    if (!rhi || rhi->isTextureFormatSupported(format))
+        return format;
+
+    if (fallback != QRhiTexture::UnknownFormat && rhi->isTextureFormatSupported(fallback))
+        return fallback;
+
+    qWarning() << "Cannot determine any usable texture format, using preferred format" << format;
+    return format;
+}
+
+QRhiTexture::Format TextureDescription::rhiTextureFormat(int plane, QRhi *rhi) const
+{
+    switch (textureFormat[plane]) {
+        case UnknownFormat:
+            return QRhiTexture::UnknownFormat;
+        case Red_8:
+            // NOTE: RED_OR_ALPHA8 requires special alpha shaders if rhi doesn't have feature
+            // RedOrAlpha8IsRed
+            return resolveRhiTextureFormat(rhi, QRhiTexture::R8, QRhiTexture::RED_OR_ALPHA8);
+        case RG_8:
+            // TODO: Pack four values in one pixel of texture, requires special handling of
+            // width here and components in shader
+            return resolveRhiTextureFormat(rhi, QRhiTexture::RG8);
+        case RGBA_8:
+            return resolveRhiTextureFormat(rhi, QRhiTexture::RGBA8);
+        case BGRA_8:
+            return resolveRhiTextureFormat(rhi, QRhiTexture::BGRA8);
+        case Red_16:
+            // TODO: Special handling for 16-bit formats, if we want to support them at all.
+            // Otherwise should give an error.
+            return resolveRhiTextureFormat(rhi, QRhiTexture::R16);
+        case RG_16:
+            return resolveRhiTextureFormat(rhi, QRhiTexture::RG16);
+        default:
+            Q_UNREACHABLE();
+    }
+}
 
 const TextureDescription *textureDescription(QVideoFrameFormat::PixelFormat format)
 {
@@ -245,88 +288,89 @@ QString vertexShaderFileName(const QVideoFrameFormat &format)
     return QStringLiteral(":/qt-project.org/multimedia/shaders/vertex.vert.qsb");
 }
 
-QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhiSwapChain::Format surfaceFormat)
+QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhi *rhi,
+                               QRhiSwapChain::Format surfaceFormat)
 {
-    const char *shader = nullptr;
+    QString shaderFile;
     switch (format.pixelFormat()) {
     case QVideoFrameFormat::Format_Y8:
     case QVideoFrameFormat::Format_Y16:
-        shader = "y";
+        shaderFile = QStringLiteral("y");
         break;
     case QVideoFrameFormat::Format_AYUV:
     case QVideoFrameFormat::Format_AYUV_Premultiplied:
-        shader = "ayuv";
+        shaderFile = QStringLiteral("ayuv");
         break;
     case QVideoFrameFormat::Format_ARGB8888:
     case QVideoFrameFormat::Format_ARGB8888_Premultiplied:
     case QVideoFrameFormat::Format_XRGB8888:
-        shader = "argb";
+        shaderFile = QStringLiteral("argb");
         break;
     case QVideoFrameFormat::Format_ABGR8888:
     case QVideoFrameFormat::Format_XBGR8888:
-        shader = "abgr";
+        shaderFile = QStringLiteral("abgr");
         break;
     case QVideoFrameFormat::Format_Jpeg: // Jpeg is decoded transparently into an ARGB texture
-        shader = "bgra";
+        shaderFile = QStringLiteral("bgra");
         break;
     case QVideoFrameFormat::Format_RGBA8888:
     case QVideoFrameFormat::Format_RGBX8888:
     case QVideoFrameFormat::Format_BGRA8888:
     case QVideoFrameFormat::Format_BGRA8888_Premultiplied:
     case QVideoFrameFormat::Format_BGRX8888:
-        shader = "rgba";
+        shaderFile = QStringLiteral("rgba");
         break;
     case QVideoFrameFormat::Format_YUV420P:
     case QVideoFrameFormat::Format_YUV422P:
     case QVideoFrameFormat::Format_IMC3:
-        shader = "yuv_triplanar";
+        shaderFile = QStringLiteral("yuv_triplanar");
         break;
     case QVideoFrameFormat::Format_YUV420P10:
-        shader = "yuv_triplanar_p10";
+        shaderFile = QStringLiteral("yuv_triplanar_p10");
         break;
     case QVideoFrameFormat::Format_YV12:
     case QVideoFrameFormat::Format_IMC1:
-        shader = "yvu_triplanar";
+        shaderFile = QStringLiteral("yvu_triplanar");
         break;
     case QVideoFrameFormat::Format_IMC2:
-        shader = "imc2";
+        shaderFile = QStringLiteral("imc2");
         break;
     case QVideoFrameFormat::Format_IMC4:
-        shader = "imc4";
+        shaderFile = QStringLiteral("imc4");
         break;
     case QVideoFrameFormat::Format_UYVY:
-        shader = "uyvy";
+        shaderFile = QStringLiteral("uyvy");
         break;
     case QVideoFrameFormat::Format_YUYV:
-        shader = "yuyv";
+        shaderFile = QStringLiteral("yuyv");
         break;
     case QVideoFrameFormat::Format_P010:
     case QVideoFrameFormat::Format_P016:
         // P010/P016 have the same layout as NV12, just 16 instead of 8 bits per pixel
         if (format.colorTransfer() == QVideoFrameFormat::ColorTransfer_ST2084) {
-            shader = "nv12_bt2020_pq";
+            shaderFile = QStringLiteral("nv12_bt2020_pq");
             break;
         }
         if (format.colorTransfer() == QVideoFrameFormat::ColorTransfer_STD_B67) {
-            shader = "nv12_bt2020_hlg";
+            shaderFile = QStringLiteral("nv12_bt2020_hlg");
             break;
         }
         // Fall through, should be bt709
         Q_FALLTHROUGH();
     case QVideoFrameFormat::Format_NV12:
-        shader = "nv12";
+        shaderFile = QStringLiteral("nv12");
         break;
     case QVideoFrameFormat::Format_NV21:
-        shader = "nv21";
+        shaderFile = QStringLiteral("nv21");
         break;
     case QVideoFrameFormat::Format_SamplerExternalOES:
 #if 1//def Q_OS_ANDROID
-        shader = "externalsampler";
+        shaderFile = QStringLiteral("externalsampler");
         break;
 #endif
     case QVideoFrameFormat::Format_SamplerRect:
 #if 1//def Q_OS_MACOS
-        shader = "rectsampler_bgra";
+        shaderFile = QStringLiteral("rectsampler_bgra");
         break;
 #endif
         // fallthrough
@@ -334,12 +378,29 @@ QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhiSwapChain::F
     default:
         break;
     }
-    if (!shader)
+
+    if (shaderFile.isEmpty())
         return QString();
-    QString shaderFile = QStringLiteral(":/qt-project.org/multimedia/shaders/") + QString::fromLatin1(shader);
+
+    shaderFile.prepend(u":/qt-project.org/multimedia/shaders/");
+
+    if (rhi && !rhi->isFeatureSupported(QRhi::RedOrAlpha8IsRed)) {
+        // Check if texture description formats contain RED_OR_ALPHA8
+        auto desc = textureDescription(format.pixelFormat());
+        for (auto i = 0; i < desc->nplanes; ++i) {
+            if (desc->rhiTextureFormat(i, rhi) != QRhiTexture::RED_OR_ALPHA8)
+                // Only use alpha shaders with single component textures
+                continue;
+
+            shaderFile.append(u"_a");
+            break;
+        }
+    }
+
     if (surfaceFormat == QRhiSwapChain::HDRExtendedSrgbLinear)
-        shaderFile += QLatin1String("_linear");
-    shaderFile += QStringLiteral(".frag.qsb");
+        shaderFile.append(u"_linear");
+
+    shaderFile.append(u".frag.qsb");
     return shaderFile;
 }
 
@@ -571,8 +632,8 @@ enum class UpdateTextureWithMapResult : uint8_t {
     UpdatedWithDataReference
 };
 
-static UpdateTextureWithMapResult updateTextureWithMap(const QVideoFrame &frame, QRhi *rhi,
-                                                       QRhiResourceUpdateBatch *rub, int plane,
+static UpdateTextureWithMapResult updateTextureWithMap(const QVideoFrame &frame, QRhi &rhi,
+                                                       QRhiResourceUpdateBatch &rub, int plane,
                                                        std::unique_ptr<QRhiTexture> &tex)
 {
     Q_ASSERT(frame.isMapped());
@@ -584,9 +645,9 @@ static UpdateTextureWithMapResult updateTextureWithMap(const QVideoFrame &frame,
     const TextureDescription &texDesc = descriptions[pixelFormat];
     QSize planeSize(size.width()/texDesc.sizeScale[plane].x, size.height()/texDesc.sizeScale[plane].y);
 
-    bool needsRebuild = !tex || tex->pixelSize() != planeSize || tex->format() != texDesc.textureFormat[plane];
+    bool needsRebuild = !tex || tex->pixelSize() != planeSize || tex->format() != texDesc.rhiTextureFormat(plane, &rhi);
     if (!tex) {
-        tex.reset(rhi->newTexture(texDesc.textureFormat[plane], planeSize, 1, {}));
+        tex.reset(rhi.newTexture(texDesc.rhiTextureFormat(plane, &rhi), planeSize, 1, {}));
         if (!tex) {
             qWarning("Failed to create new texture (size %dx%d)", planeSize.width(), planeSize.height());
             return UpdateTextureWithMapResult::Failed;
@@ -594,7 +655,7 @@ static UpdateTextureWithMapResult updateTextureWithMap(const QVideoFrame &frame,
     }
 
     if (needsRebuild) {
-        tex->setFormat(texDesc.textureFormat[plane]);
+        tex->setFormat(texDesc.rhiTextureFormat(plane, &rhi));
         tex->setPixelSize(planeSize);
         if (!tex->create()) {
             qWarning("Failed to create texture (size %dx%d)", planeSize.width(), planeSize.height());
@@ -637,39 +698,34 @@ static UpdateTextureWithMapResult updateTextureWithMap(const QVideoFrame &frame,
 
     QRhiTextureUploadEntry entry(0, 0, subresDesc);
     QRhiTextureUploadDescription desc({ entry });
-    rub->uploadTexture(tex.get(), desc);
+    rub.uploadTexture(tex.get(), desc);
 
     return result;
 }
 
-static std::unique_ptr<QRhiTexture> createTextureFromHandle(const QVideoFrame &frame, QRhi *rhi, int plane)
+static std::unique_ptr<QRhiTexture>
+createTextureFromHandle(QVideoFrameTexturesHandles &texturesSet, QRhi &rhi,
+                        QVideoFrameFormat::PixelFormat pixelFormat, QSize size, int plane)
 {
-    QHwVideoBuffer *hwBuffer = QVideoFramePrivate::hwBuffer(frame);
-    Q_ASSERT(hwBuffer);
-
-    QVideoFrameFormat fmt = frame.surfaceFormat();
-    QVideoFrameFormat::PixelFormat pixelFormat = fmt.pixelFormat();
-    QSize size = fmt.frameSize();
-
     const TextureDescription &texDesc = descriptions[pixelFormat];
     QSize planeSize(size.width()/texDesc.sizeScale[plane].x, size.height()/texDesc.sizeScale[plane].y);
 
     QRhiTexture::Flags textureFlags = {};
     if (pixelFormat == QVideoFrameFormat::Format_SamplerExternalOES) {
 #ifdef Q_OS_ANDROID
-        if (rhi->backend() == QRhi::OpenGLES2)
+        if (rhi.backend() == QRhi::OpenGLES2)
             textureFlags |= QRhiTexture::ExternalOES;
 #endif
     }
     if (pixelFormat == QVideoFrameFormat::Format_SamplerRect) {
 #ifdef Q_OS_MACOS
-        if (rhi->backend() == QRhi::OpenGLES2)
+        if (rhi.backend() == QRhi::OpenGLES2)
             textureFlags |= QRhiTexture::TextureRectangleGL;
 #endif
     }
 
-    if (quint64 handle = hwBuffer->textureHandle(rhi, plane); handle) {
-        std::unique_ptr<QRhiTexture> tex(rhi->newTexture(texDesc.textureFormat[plane], planeSize, 1, textureFlags));
+    if (quint64 handle = texturesSet.textureHandle(rhi, plane); handle) {
+        std::unique_ptr<QRhiTexture> tex(rhi.newTexture(texDesc.rhiTextureFormat(plane, &rhi), planeSize, 1, textureFlags));
         if (tex->createFrom({handle, 0}))
             return tex;
 
@@ -678,58 +734,48 @@ static std::unique_ptr<QRhiTexture> createTextureFromHandle(const QVideoFrame &f
     return {};
 }
 
-class QVideoFrameTexturesArray : public QVideoFrameTextures
+template <typename TexturesType, typename... Args>
+static QVideoFrameTexturesUPtr
+createTexturesArray(QRhi &rhi, QVideoFrameTexturesHandles &texturesSet,
+                    QVideoFrameFormat::PixelFormat pixelFormat, QSize size, Args &&...args)
 {
-public:
-    using TextureArray = std::array<std::unique_ptr<QRhiTexture>, TextureDescription::maxPlanes>;
-    QVideoFrameTexturesArray(TextureArray &&textures, QVideoFrame mappedFrame = {})
-        : m_textures(std::move(textures)), m_mappedFrame(std::move(mappedFrame))
-    {
-        Q_ASSERT(!m_mappedFrame.isValid() || m_mappedFrame.isReadable());
-    }
-
-    // We keep the source frame mapped during the target texture lifetime.
-    // Alternatively, we may use setting a custom image to QRhiTextureSubresourceUploadDescription,
-    // unsig videoFramePlaneAsImage, however, the OpenGL rendering pipeline in QRhi
-    // may keep QImage, and consequently the mapped QVideoFrame,
-    // even after the target texture is deleted: QTBUG-123174.
-    ~QVideoFrameTexturesArray() { m_mappedFrame.unmap(); }
-
-    QRhiTexture *texture(uint plane) const override
-    {
-        return plane < std::size(m_textures) ? m_textures[plane].get() : nullptr;
-    }
-
-    TextureArray takeTextures() { return std::move(m_textures); }
-
-private:
-    TextureArray m_textures;
-    QVideoFrame m_mappedFrame;
-};
-
-static std::unique_ptr<QVideoFrameTextures> createTexturesFromHandles(const QVideoFrame &frame, QRhi *rhi)
-{
-    const TextureDescription &texDesc = descriptions[frame.surfaceFormat().pixelFormat()];
+    const TextureDescription &texDesc = descriptions[pixelFormat];
     bool ok = true;
-    QVideoFrameTexturesArray::TextureArray textures;
+    RhiTextureArray textures;
     for (quint8 plane = 0; plane < texDesc.nplanes; ++plane) {
-        textures[plane] = QVideoTextureHelper::createTextureFromHandle(frame, rhi, plane);
+        textures[plane] = QVideoTextureHelper::createTextureFromHandle(texturesSet, rhi,
+                                                                       pixelFormat, size, plane);
         ok &= bool(textures[plane]);
     }
     if (ok)
-        return std::make_unique<QVideoFrameTexturesArray>(std::move(textures));
+        return std::make_unique<TexturesType>(std::move(textures), std::forward<Args>(args)...);
     else
         return {};
 }
 
-static std::unique_ptr<QVideoFrameTextures> createTexturesFromMemory(QVideoFrame frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, QVideoFrameTextures *old)
+QVideoFrameTexturesUPtr createTexturesFromHandles(QVideoFrameTexturesHandlesUPtr texturesSet,
+                                                  QRhi &rhi,
+                                                  QVideoFrameFormat::PixelFormat pixelFormat,
+                                                  QSize size)
 {
-    const TextureDescription &texDesc = descriptions[frame.surfaceFormat().pixelFormat()];
-    QVideoFrameTexturesArray::TextureArray textures;
-    auto oldArray = dynamic_cast<QVideoFrameTexturesArray *>(old);
-    if (oldArray)
-        textures = oldArray->takeTextures();
+    if (!texturesSet)
+        return nullptr;
 
+    if (pixelFormat == QVideoFrameFormat::Format_Invalid)
+        return nullptr;
+
+    if (size.isEmpty())
+        return nullptr;
+
+    auto &texturesSetRef = *texturesSet;
+    return createTexturesArray<QVideoFrameTexturesFromHandlesSet>(rhi, texturesSetRef, pixelFormat,
+                                                                  size, std::move(texturesSet));
+}
+
+static QVideoFrameTexturesUPtr createTexturesFromMemory(QVideoFrame frame, QRhi &rhi,
+                                                        QRhiResourceUpdateBatch &rub,
+                                                        QVideoFrameTexturesUPtr &oldTextures)
+{
     if (!frame.map(QVideoFrame::ReadOnly)) {
         qWarning() << "Cannot map a video frame in ReadOnly mode!";
         return {};
@@ -737,9 +783,18 @@ static std::unique_ptr<QVideoFrameTextures> createTexturesFromMemory(QVideoFrame
 
     auto unmapFrameGuard = qScopeGuard([&frame] { frame.unmap(); });
 
+    const TextureDescription &texDesc = descriptions[frame.surfaceFormat().pixelFormat()];
+
+    const bool canReuseTextures(dynamic_cast<QVideoFrameTexturesFromMemory*>(oldTextures.get()));
+
+    std::unique_ptr<QVideoFrameTexturesFromMemory> textures(canReuseTextures ?
+                static_cast<QVideoFrameTexturesFromMemory *>(oldTextures.release()) :
+                new QVideoFrameTexturesFromMemory);
+
+    RhiTextureArray& textureArray = textures->textureArray();
     bool shouldKeepMapping = false;
     for (quint8 plane = 0; plane < texDesc.nplanes; ++plane) {
-        const auto result = updateTextureWithMap(frame, rhi, rub, plane, textures[plane]);
+        const auto result = updateTextureWithMap(frame, rhi, rub, plane, textureArray[plane]);
         if (result == UpdateTextureWithMapResult::Failed)
             return {};
 
@@ -748,24 +803,34 @@ static std::unique_ptr<QVideoFrameTextures> createTexturesFromMemory(QVideoFrame
     }
 
     // as QVideoFrame::unmap does nothing with null frames, we just move the frame to the result
-    return std::make_unique<QVideoFrameTexturesArray>(
-            std::move(textures), shouldKeepMapping ? std::move(frame) : QVideoFrame());
+    textures->setMappedFrame(shouldKeepMapping ? std::move(frame) : QVideoFrame());
+
+    return textures;
 }
 
-std::unique_ptr<QVideoFrameTextures> createTextures(QVideoFrame &frame, QRhi *rhi, QRhiResourceUpdateBatch *rub, std::unique_ptr<QVideoFrameTextures> &&oldTextures)
+QVideoFrameTexturesUPtr createTextures(const QVideoFrame &frame, QRhi &rhi,
+                                       QRhiResourceUpdateBatch &rub,
+                                       QVideoFrameTexturesUPtr oldTextures)
 {
     if (!frame.isValid())
         return {};
 
-    if (QHwVideoBuffer *hwBuffer = QVideoFramePrivate::hwBuffer(frame)) {
-        if (auto textures = hwBuffer->mapTextures(rhi))
-            return textures;
+    auto setSourceFrame = [&frame](QVideoFrameTexturesUPtr result) {
+        result->setSourceFrame(frame);
+        return result;
+    };
 
-        if (auto textures = createTexturesFromHandles(frame, rhi))
-            return textures;
+    if (QHwVideoBuffer *hwBuffer = QVideoFramePrivate::hwBuffer(frame)) {
+        if (auto textures = hwBuffer->mapTextures(rhi, oldTextures))
+            return setSourceFrame(std::move(textures));
+
+        QVideoFrameFormat format = frame.surfaceFormat();
+        if (auto textures = createTexturesArray<QVideoFrameTexturesFromRhiTextureArray>(
+                    rhi, *hwBuffer, format.pixelFormat(), format.frameSize()))
+            return setSourceFrame(std::move(textures));
     }
 
-    return createTexturesFromMemory(frame, rhi, rub, oldTextures.get());
+    return setSourceFrame(createTexturesFromMemory(frame, rhi, rub, oldTextures));
 }
 
 bool SubtitleLayout::update(const QSize &frameSize, QString text)

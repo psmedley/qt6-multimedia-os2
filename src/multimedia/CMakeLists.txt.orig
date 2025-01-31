@@ -1,8 +1,6 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Generated from multimedia.pro.
-
 #####################################################################
 ## Multimedia Module:
 #####################################################################
@@ -18,14 +16,17 @@ qt_internal_find_apple_system_framework(FWAudioToolbox AudioToolbox) # special c
 qt_internal_add_module(Multimedia
     PLUGIN_TYPES multimedia
     SOURCES
-        audio/qaudio.cpp audio/qaudio.h
+        audio/qtaudio.cpp audio/qtaudio.h audio/qaudio.h
         audio/qaudiobuffer.cpp audio/qaudiobuffer.h
-        audio/qaudiodecoder.cpp audio/qaudiodecoder.h
+        audio/qaudiodecoder.cpp audio/qaudiodecoder.h audio/qaudiodecoder_p.h
         audio/qaudiodevice.cpp audio/qaudiodevice.h audio/qaudiodevice_p.h
         audio/qaudioinput.cpp audio/qaudioinput.h
+        audio/qaudiobufferinput.cpp audio/qaudiobufferinput.h
+        audio/qaudiobufferoutput.cpp audio/qaudiobufferoutput.h audio/qaudiobufferoutput_p.h
         audio/qaudiooutput.cpp audio/qaudiooutput.h
         audio/qaudioformat.cpp audio/qaudioformat.h
         audio/qaudiohelpers.cpp audio/qaudiohelpers_p.h
+        audio/qaudioringbuffer_p.h
         audio/qaudiosource.cpp audio/qaudiosource.h
         audio/qaudiosink.cpp audio/qaudiosink.h
         audio/qaudiosystem.cpp audio/qaudiosystem_p.h
@@ -37,40 +38,49 @@ qt_internal_add_module(Multimedia
         camera/qcamera.cpp camera/qcamera.h camera/qcamera_p.h
         camera/qcameradevice.cpp camera/qcameradevice.h camera/qcameradevice_p.h
         camera/qimagecapture.cpp camera/qimagecapture.h
+        compat/removed_api.cpp
+        platform/qgstreamer_platformspecificinterface.cpp platform/qgstreamer_platformspecificinterface_p.h
         platform/qplatformaudiodecoder.cpp platform/qplatformaudiodecoder_p.h
         platform/qplatformaudioinput_p.h
         platform/qplatformaudiooutput_p.h
         platform/qplatformaudioresampler_p.h
         platform/qplatformcamera.cpp platform/qplatformcamera_p.h
-        platform/qplatformvideosource.cpp platform/qplatformvideosource_p.h
-        platform/qplatformsurfacecapture.cpp platform/qplatformsurfacecapture_p.h
+        platform/qplatformcapturablewindows_p.h
         platform/qplatformimagecapture.cpp platform/qplatformimagecapture_p.h
         platform/qplatformmediacapture.cpp platform/qplatformmediacapture_p.h
         platform/qplatformmediadevices.cpp platform/qplatformmediadevices_p.h
-        platform/qplatformmediarecorder.cpp platform/qplatformmediarecorder_p.h
         platform/qplatformmediaformatinfo.cpp  platform/qplatformmediaformatinfo_p.h
         platform/qplatformmediaintegration.cpp platform/qplatformmediaintegration_p.h
         platform/qplatformmediaplayer.cpp platform/qplatformmediaplayer_p.h
         platform/qplatformmediaplugin.cpp platform/qplatformmediaplugin_p.h
+        platform/qplatformmediarecorder.cpp platform/qplatformmediarecorder_p.h
+        platform/qplatformsurfacecapture.cpp platform/qplatformsurfacecapture_p.h
         platform/qplatformvideodevices.cpp platform/qplatformvideodevices_p.h
         platform/qplatformvideosink.cpp platform/qplatformvideosink_p.h
+        platform/qplatformvideosource.cpp platform/qplatformvideosource_p.h
+        platform/qplatformvideoframeinput.cpp platform/qplatformvideoframeinput_p.h
+        platform/qplatformaudiobufferinput.cpp platform/qplatformaudiobufferinput_p.h
         playback/qmediaplayer.cpp playback/qmediaplayer.h playback/qmediaplayer_p.h
-        platform/qplatformcapturablewindows_p.h
         qmediadevices.cpp qmediadevices.h
-        qmediaenumdebug.h
         qmediaformat.cpp  qmediaformat.h
         qmediametadata.cpp qmediametadata.h
         qmediastoragelocation.cpp qmediastoragelocation_p.h
         qmediatimerange.cpp qmediatimerange.h
         qmultimediautils.cpp qmultimediautils_p.h
+        qvideotransformation.cpp qvideotransformation_p.h
+        qmediaframeinput.cpp qmediaframeinput_p.h
+        qmaybe_p.h
         qtmultimediaglobal.h qtmultimediaglobal_p.h
         qerrorinfo_p.h
-        recording/qmediacapturesession.cpp recording/qmediacapturesession.h
+        qmediainputencoderinterface_p.h
+        recording/qmediacapturesession.cpp recording/qmediacapturesession.h recording/qmediacapturesession_p.h
         recording/qmediarecorder.cpp recording/qmediarecorder.h recording/qmediarecorder_p.h
         recording/qscreencapture.cpp recording/qscreencapture.h
         recording/qwindowcapture.cpp recording/qwindowcapture.h
         recording/qcapturablewindow.cpp recording/qcapturablewindow.h recording/qcapturablewindow_p.h
-        video/qabstractvideobuffer.cpp video/qabstractvideobuffer_p.h
+        recording/qvideoframeinput.cpp recording/qvideoframeinput.h
+        video/qabstractvideobuffer.cpp video/qabstractvideobuffer.h
+        video/qhwvideobuffer.cpp video/qhwvideobuffer_p.h
         video/qmemoryvideobuffer.cpp video/qmemoryvideobuffer_p.h
         video/qimagevideobuffer.cpp video/qimagevideobuffer_p.h
         video/qvideoframe.cpp video/qvideoframe.h video/qvideoframe_p.h
@@ -81,7 +91,7 @@ qt_internal_add_module(Multimedia
         video/qvideoframeconverter.cpp video/qvideoframeconverter_p.h
         video/qvideoframeformat.cpp video/qvideoframeformat.h
         video/qvideowindow.cpp video/qvideowindow_p.h
-        video/qtvideo_p.h
+        video/qtvideo.cpp video/qtvideo.h
     INCLUDE_DIRECTORIES
         audio
         camera
@@ -100,9 +110,14 @@ qt_internal_add_module(Multimedia
     PRIVATE_MODULE_INTERFACE
         Qt::CorePrivate
         Qt::GuiPrivate
-    GENERATE_CPP_EXPORTS
+    NO_PCH_SOURCES
+        compat/removed_api.cpp
     OS2_SHORT_NAME Qt6Multm
 )
+
+qt_internal_extend_target(Multimedia
+    CONDITION LINUX OR ANDROID
+    SOURCES qsymbolsresolveutils.cpp qsymbolsresolveutils_p.h)
 
 qt_internal_add_simd_part(Multimedia SIMD sse2
     SOURCES
@@ -164,9 +179,9 @@ qt_internal_extend_target(Multimedia CONDITION ANDROID
         OpenSLES
 )
 
-if (ANDROID)
+if(ANDROID)
     set_property(TARGET Multimedia APPEND PROPERTY QT_ANDROID_BUNDLED_JAR_DEPENDENCIES
-        jar/Qt${QtMultimedia_VERSION_MAJOR}AndroidMultimedia.jar:org.qtproject.qt.android.multimedia.QtAudioDeviceManager
+        jar/Qt${QtMultimedia_VERSION_MAJOR}AndroidMultimedia.jar
     )
 endif()
 
@@ -223,6 +238,7 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_wmf
         windows/qwindowsresampler.cpp windows/qwindowsresampler_p.h
         windows/qwindowsmultimediautils.cpp windows/qwindowsmultimediautils_p.h
         windows/qwindowsmfdefs.cpp windows/qwindowsmfdefs_p.h
+        windows/qcominitializer.cpp windows/qcominitializer_p.h
         windows/qcomptr_p.h
         windows/qcomtaskresource_p.h
     INCLUDE_DIRECTORIES
@@ -352,7 +368,7 @@ qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_gl_macos_linear"
         "shaders/rectsampler_bgra_linear.frag.qsb"
 )
 
-if (DEFINED QT_DEFAULT_MEDIA_BACKEND)
+if(DEFINED QT_DEFAULT_MEDIA_BACKEND)
     target_compile_definitions(Multimedia
         PRIVATE QT_DEFAULT_MEDIA_BACKEND="${QT_DEFAULT_MEDIA_BACKEND}")
 endif()

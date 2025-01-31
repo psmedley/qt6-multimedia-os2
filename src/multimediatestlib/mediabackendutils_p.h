@@ -20,34 +20,38 @@
 #include <QtGui/private/qguiapplication_p.h>
 #include <QtGui/qpa/qplatformintegration.h>
 
+namespace BackendUtilsImpl {
+
+using namespace Qt::Literals;
+
 inline bool isGStreamerPlatform()
 {
-    return QPlatformMediaIntegration::instance()->name() == "gstreamer";
+    return QPlatformMediaIntegration::instance()->name() == "gstreamer"_L1;
 }
 
 inline bool isQNXPlatform()
 {
-    return QPlatformMediaIntegration::instance()->name() == "qnx";
+    return QPlatformMediaIntegration::instance()->name() == "qnx"_L1;
 }
 
 inline bool isDarwinPlatform()
 {
-    return QPlatformMediaIntegration::instance()->name() == "darwin";
+    return QPlatformMediaIntegration::instance()->name() == "darwin"_L1;
 }
 
 inline bool isAndroidPlatform()
 {
-    return QPlatformMediaIntegration::instance()->name() == "android";
+    return QPlatformMediaIntegration::instance()->name() == "android"_L1;
 }
 
 inline bool isFFMPEGPlatform()
 {
-    return QPlatformMediaIntegration::instance()->name() == "ffmpeg";
+    return QPlatformMediaIntegration::instance()->name() == "ffmpeg"_L1;
 }
 
 inline bool isWindowsPlatform()
 {
-    return QPlatformMediaIntegration::instance()->name() == "windows";
+    return QPlatformMediaIntegration::instance()->name() == "windows"_L1;
 }
 
 inline bool isRhiRenderingSupported()
@@ -58,29 +62,27 @@ inline bool isRhiRenderingSupported()
 
 inline bool isCI()
 {
-    return qEnvironmentVariable("QTEST_ENVIRONMENT")
-            .toLower()
-            .split(' ')
-            .contains(QStringLiteral("ci"));
+    return qEnvironmentVariable("QTEST_ENVIRONMENT").toLower().split(u' ').contains(u"ci"_s);
 }
 
-#define QSKIP_GSTREAMER(message) \
-  do {                           \
-    if (isGStreamerPlatform())   \
-      QSKIP(message);            \
-  } while (0)
+} // namespace BackendUtilsImpl
 
-#define QSKIP_IF_NOT_FFMPEG()                             \
-    do {                                                  \
-        if (!isFFMPEGPlatform())                          \
-            QSKIP("Feature is only supported on FFmpeg"); \
+using namespace BackendUtilsImpl;
+
+#define QSKIP_IF(checker, defaultMessage, /*messageOpt*/...)                 \
+    do {                                                                     \
+        if (checker)                                                         \
+            QSKIP(strlen(__VA_ARGS__ "") ? __VA_ARGS__ "" : defaultMessage); \
     } while (0)
 
-#define QSKIP_FFMPEG(message) \
-  do {                        \
-    if (isFFMPEGPlatform())   \
-      QSKIP(message);         \
-  } while (0)
+#define QSKIP_GSTREAMER(/*messageOpt*/...) \
+    QSKIP_IF(isGStreamerPlatform(), "The feature is not supported on GStreamer", __VA_ARGS__)
+
+#define QSKIP_IF_NOT_FFMPEG(/*messageOpt*/...) \
+    QSKIP_IF(!isFFMPEGPlatform(), "The feature is only supported on FFmpeg", __VA_ARGS__)
+
+#define QSKIP_FFMPEG(/*messageOpt*/...) \
+    QSKIP_IF(isFFMPEGPlatform(), "The feature is not supported on FFmpeg", __VA_ARGS__)
 
 #define QEXPECT_FAIL_GSTREAMER(dataIndex, comment, mode) \
   do {                                                   \

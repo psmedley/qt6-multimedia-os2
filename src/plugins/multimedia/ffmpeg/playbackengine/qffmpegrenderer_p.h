@@ -14,11 +14,12 @@
 // We mean it.
 //
 
-#include "playbackengine/qffmpegplaybackengineobject_p.h"
-#include "playbackengine/qffmpegtimecontroller_p.h"
-#include "playbackengine/qffmpegframe_p.h"
+#include "qffmpegplaybackengineobject_p.h"
+#include "qffmpegtimecontroller_p.h"
+#include "qffmpegframe_p.h"
 
 #include <QtCore/qpointer.h>
+#include <QtCore/qqueue.h>
 
 #include <chrono>
 
@@ -69,7 +70,7 @@ protected:
 
     bool canDoNextStep() const override;
 
-    int timerInterval() const override;
+    std::chrono::milliseconds timerInterval() const override;
 
     virtual void onPlaybackRateChanged() { }
 
@@ -91,9 +92,8 @@ protected:
     template<typename Output, typename ChangeHandler>
     void setOutputInternal(QPointer<Output> &actual, Output *desired, ChangeHandler &&changeHandler)
     {
-        const auto connectionType = thread() == QThread::currentThread()
-                ? Qt::AutoConnection
-                : Qt::BlockingQueuedConnection;
+        const auto connectionType =
+                thread()->isCurrentThread() ? Qt::AutoConnection : Qt::BlockingQueuedConnection;
         auto doer = [desired, changeHandler, &actual]() {
             const auto prev = std::exchange(actual, desired);
             if (prev != desired)

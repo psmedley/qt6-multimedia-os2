@@ -630,6 +630,7 @@ public:
     GstClockTime time() const;
 };
 
+class QGstBin;
 class QGstPipeline;
 
 class QGstElement : public QGstObject
@@ -730,7 +731,10 @@ public:
     GstElement *element() const;
 
     QGstElement getParent() const;
+    QGstBin getParentBin() const;
     QGstPipeline getPipeline() const;
+
+    void removeFromParent();
     void dumpPipelineGraph(const char *filename) const;
 
 private:
@@ -769,11 +773,7 @@ void QGstPad::doInIdleProbe(Functor &&work)
         }
     };
 
-    CallbackData cd{
-        .waitDone = QSemaphore{},
-        .onceFlag = {},
-        .work = std::forward<Functor>(work),
-    };
+    CallbackData cd{ QSemaphore{}, {}, std::forward<Functor>(work) };
 
     auto callback = [](GstPad *, GstPadProbeInfo *, gpointer p) {
         auto cd = reinterpret_cast<CallbackData *>(p);
@@ -927,6 +927,7 @@ public:
 
     void addGhostPad(const QGstElement &child, const char *name);
     void addGhostPad(const char *name, const QGstPad &pad);
+    void addUnlinkedGhostPads(GstPadDirection);
 
     bool syncChildrenState();
 

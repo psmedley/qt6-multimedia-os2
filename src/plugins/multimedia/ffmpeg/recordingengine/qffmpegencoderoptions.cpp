@@ -104,7 +104,7 @@ static void apply_libvpx(const QMediaEncoderSettings &settings, AVCodecContext *
             "38", "34", "31", "28", "25",
         };
         av_dict_set(opts, "crf", scales[settings.quality()], 0);
-        av_dict_set(opts, "b", 0, 0);
+        av_dict_set(opts, "b", nullptr, 0);
     }
     av_dict_set(opts, "row-mt", "1", 0); // better multithreading
 }
@@ -239,7 +239,10 @@ static void apply_mf(const QMediaEncoderSettings &settings, AVCodecContext *code
 static void apply_mediacodec(const QMediaEncoderSettings &settings, AVCodecContext *codec,
                              AVDictionary **opts)
 {
-    codec->bit_rate = settings.videoBitRate();
+    if (settings.videoBitRate() != -1)
+        codec->bit_rate = settings.videoBitRate();
+    else
+        codec->bit_rate = bitrateForSettings(settings);
 
     const int quality[] = { 25, 50, 75, 90, 100 };
     codec->global_quality = quality[settings.quality()];
@@ -357,6 +360,6 @@ void applyAudioEncoderOptions(const QMediaEncoderSettings &settings, const QByte
 
 }
 
-}
+} // namespace QFFmpeg
 
 QT_END_NAMESPACE

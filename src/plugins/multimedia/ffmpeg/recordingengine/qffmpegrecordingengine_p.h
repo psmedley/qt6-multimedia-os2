@@ -22,12 +22,13 @@
 
 QT_BEGIN_NAMESPACE
 
+class QAudioBuffer;
+class QAudioFormat;
 class QFFmpegAudioInput;
 class QPlatformAudioBufferInput;
 class QPlatformAudioBufferInputBase;
-class QVideoFrame;
-class QAudioBuffer;
 class QPlatformVideoSource;
+class QVideoFrame;
 
 namespace QFFmpeg
 {
@@ -44,7 +45,7 @@ class RecordingEngine : public QObject
     Q_OBJECT
 public:
     RecordingEngine(const QMediaEncoderSettings &settings, std::unique_ptr<EncodingFormatContext> context);
-    ~RecordingEngine();
+    ~RecordingEngine() override;
 
     void initialize(const std::vector<QPlatformAudioBufferInputBase *> &audioSources,
                     const std::vector<QPlatformVideoSource *> &videoSources);
@@ -141,7 +142,7 @@ private:
     State m_state = State::None;
 };
 
-}
+} // namespace QFFmpeg
 
 QT_END_NAMESPACE
 

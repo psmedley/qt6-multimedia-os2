@@ -7,24 +7,19 @@
 
 find_package(Qt6 COMPONENTS ShaderTools)
 
-qt_internal_find_apple_system_framework(FWCoreAudio CoreAudio) # special case
-qt_internal_find_apple_system_framework(FWCoreVideo CoreVideo) # special case
-qt_internal_find_apple_system_framework(FWAudioUnit AudioUnit) # special case
-qt_internal_find_apple_system_framework(FWCoreMedia CoreMedia) # special case
-qt_internal_find_apple_system_framework(FWAudioToolbox AudioToolbox) # special case
-
 qt_internal_add_module(Multimedia
     PLUGIN_TYPES multimedia
     SOURCES
         audio/qtaudio.cpp audio/qtaudio.h audio/qaudio.h
         audio/qaudiobuffer.cpp audio/qaudiobuffer.h
+        audio/qaudiobuffer_support_p.h
         audio/qaudiodecoder.cpp audio/qaudiodecoder.h audio/qaudiodecoder_p.h
         audio/qaudiodevice.cpp audio/qaudiodevice.h audio/qaudiodevice_p.h
         audio/qaudioinput.cpp audio/qaudioinput.h
         audio/qaudiobufferinput.cpp audio/qaudiobufferinput.h
         audio/qaudiobufferoutput.cpp audio/qaudiobufferoutput.h audio/qaudiobufferoutput_p.h
         audio/qaudiooutput.cpp audio/qaudiooutput.h
-        audio/qaudioformat.cpp audio/qaudioformat.h
+        audio/qaudioformat.cpp audio/qaudioformat.h audio/qaudioformat_p.h
         audio/qaudiohelpers.cpp audio/qaudiohelpers_p.h
         audio/qaudioringbuffer_p.h
         audio/qaudiosource.cpp audio/qaudiosource.h
@@ -48,7 +43,7 @@ qt_internal_add_module(Multimedia
         platform/qplatformcapturablewindows_p.h
         platform/qplatformimagecapture.cpp platform/qplatformimagecapture_p.h
         platform/qplatformmediacapture.cpp platform/qplatformmediacapture_p.h
-        platform/qplatformmediadevices.cpp platform/qplatformmediadevices_p.h
+        platform/qplatformaudiodevices.cpp platform/qplatformaudiodevices_p.h
         platform/qplatformmediaformatinfo.cpp  platform/qplatformmediaformatinfo_p.h
         platform/qplatformmediaintegration.cpp platform/qplatformmediaintegration_p.h
         platform/qplatformmediaplayer.cpp platform/qplatformmediaplayer_p.h
@@ -61,6 +56,7 @@ qt_internal_add_module(Multimedia
         platform/qplatformvideoframeinput.cpp platform/qplatformvideoframeinput_p.h
         platform/qplatformaudiobufferinput.cpp platform/qplatformaudiobufferinput_p.h
         playback/qmediaplayer.cpp playback/qmediaplayer.h playback/qmediaplayer_p.h
+        qmultimedia_enum_to_string_converter_p.h
         qmediadevices.cpp qmediadevices.h
         qmediaformat.cpp  qmediaformat.h
         qmediametadata.cpp qmediametadata.h
@@ -72,13 +68,16 @@ qt_internal_add_module(Multimedia
         qmaybe_p.h
         qtmultimediaglobal.h qtmultimediaglobal_p.h
         qerrorinfo_p.h
+        qcachedvalue_p.h
         qmediainputencoderinterface_p.h
+        qrhivaluemapper.cpp  qrhivaluemapper_p.h
         recording/qmediacapturesession.cpp recording/qmediacapturesession.h recording/qmediacapturesession_p.h
         recording/qmediarecorder.cpp recording/qmediarecorder.h recording/qmediarecorder_p.h
         recording/qscreencapture.cpp recording/qscreencapture.h
         recording/qwindowcapture.cpp recording/qwindowcapture.h
         recording/qcapturablewindow.cpp recording/qcapturablewindow.h recording/qcapturablewindow_p.h
         recording/qvideoframeinput.cpp recording/qvideoframeinput.h
+        qsharedhandle_p.h
         video/qabstractvideobuffer.cpp video/qabstractvideobuffer.h
         video/qhwvideobuffer.cpp video/qhwvideobuffer_p.h
         video/qmemoryvideobuffer.cpp video/qmemoryvideobuffer_p.h
@@ -86,6 +85,8 @@ qt_internal_add_module(Multimedia
         video/qvideoframe.cpp video/qvideoframe.h video/qvideoframe_p.h
         video/qvideosink.cpp video/qvideosink.h
         video/qvideotexturehelper.cpp video/qvideotexturehelper_p.h
+        video/qvideoframetexturefromsource.cpp video/qvideoframetexturefromsource_p.h
+        video/qvideoframetexturepool.cpp video/qvideoframetexturepool_p.h
         video/qvideoframeconversionhelper.cpp video/qvideoframeconversionhelper_p.h
         video/qvideooutputorientationhandler.cpp video/qvideooutputorientationhandler_p.h
         video/qvideoframeconverter.cpp video/qvideoframeconverter_p.h
@@ -106,13 +107,17 @@ qt_internal_add_module(Multimedia
     PUBLIC_LIBRARIES
         Qt::Core
         Qt::Gui
-        Qt::Network
     PRIVATE_MODULE_INTERFACE
         Qt::CorePrivate
         Qt::GuiPrivate
     NO_PCH_SOURCES
         compat/removed_api.cpp
     OS2_SHORT_NAME Qt6Multm
+)
+
+qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_network
+    PUBLIC_LIBRARIES
+        Qt::Network
 )
 
 qt_internal_extend_target(Multimedia
@@ -145,21 +150,47 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_alsa
         alsa/qalsaaudiodevice.cpp alsa/qalsaaudiodevice_p.h
         alsa/qalsaaudiosource.cpp alsa/qalsaaudiosource_p.h
         alsa/qalsaaudiosink.cpp alsa/qalsaaudiosink_p.h
-        alsa/qalsamediadevices.cpp alsa/qalsamediadevices_p.h
+        alsa/qalsaaudiodevices.cpp alsa/qalsaaudiodevices_p.h
     INCLUDE_DIRECTORIES
         alsa
     LIBRARIES
         ALSA::ALSA
 )
 
+if (QT_FEATURE_pipewire)
+    qt_internal_extend_target(Multimedia
+        SYSTEM_INCLUDE_DIRECTORIES
+            "${PipeWire_INCLUDE_DIRS};${Spa_INCLUDE_DIRS}"
+        SOURCES
+            pipewire/qpipewire_screencapture.cpp       pipewire/qpipewire_screencapture_p.h
+            pipewire/qpipewire_screencapturehelper.cpp pipewire/qpipewire_screencapturehelper_p.h
+                                                       pipewire/qpipewire_support_p.h
+            pipewire/qpipewire_symbolloader.cpp        pipewire/qpipewire_symbolloader_p.h
+        LIBRARIES
+            Qt::DBus
+    )
+
+    # pipewire macros emit -Wsign-compare warnings
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag(QT_MM_HAS_WSIGN_COMPARE -Wsign-compare)
+    if (QT_MM_HAS_WSIGN_COMPARE)
+        set_source_files_properties(
+            pipewire/qpipewire_instance.cpp
+            pipewire/qpipewire_screencapture.cpp
+            pipewire/qpipewire_screencapturehelper.cpp
+            PROPERTIES COMPILE_FLAGS -Wno-sign-compare
+        )
+    endif()
+endif()
+
+
 qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_pulseaudio
     SOURCES
-        pulseaudio/qpulseaudiodevice.cpp pulseaudio/qpulseaudiodevice_p.h
         pulseaudio/qaudioengine_pulse.cpp pulseaudio/qaudioengine_pulse_p.h
         pulseaudio/qpulseaudiosource.cpp pulseaudio/qpulseaudiosource_p.h
         pulseaudio/qpulseaudiosink.cpp pulseaudio/qpulseaudiosink_p.h
         pulseaudio/qpulsehelpers.cpp pulseaudio/qpulsehelpers_p.h
-        pulseaudio/qpulseaudiomediadevices.cpp pulseaudio/qpulseaudiomediadevices_p.h
+        pulseaudio/qpulseaudiodevices.cpp pulseaudio/qpulseaudiodevices_p.h
     INCLUDE_DIRECTORIES
         pulseaudio
     LIBRARIES
@@ -172,7 +203,7 @@ qt_internal_extend_target(Multimedia CONDITION ANDROID
         android/qandroidaudiosink.cpp android/qandroidaudiosink_p.h
         android/qandroidaudiodevice.cpp android/qandroidaudiodevice_p.h
         android/qopenslesengine.cpp android/qopenslesengine_p.h
-        android/qandroidmediadevices.cpp android/qandroidmediadevices_p.h
+        android/qandroidaudiodevices.cpp android/qandroidaudiodevices_p.h
     INCLUDE_DIRECTORIES
         android
     LIBRARIES
@@ -187,23 +218,22 @@ endif()
 
 qt_internal_extend_target(Multimedia CONDITION APPLE
     SOURCES
+        darwin/qdarwinaudiounit_p.h
         darwin/qdarwinaudiodevice.mm darwin/qdarwinaudiodevice_p.h
         darwin/qdarwinaudiosource.mm darwin/qdarwinaudiosource_p.h
         darwin/qdarwinaudiosink.mm darwin/qdarwinaudiosink_p.h
-        darwin/qcoreaudioutils.mm darwin/qcoreaudioutils_p.h
-        darwin/qdarwinmediadevices.mm darwin/qdarwinmediadevices_p.h
+        darwin/qcoreaudioutils.cpp darwin/qcoreaudioutils_p.h
+        darwin/qdarwinaudiodevices.mm darwin/qdarwinaudiodevices_p.h
     INCLUDE_DIRECTORIES
         darwin
     LIBRARIES
-        ${FWAudioToolbox}
         ${FWCoreAudio}
-        ${FWCoreMedia}
-        ${FWCoreFoundation}
+        ${FWAudioToolbox}
 )
 
 qt_internal_extend_target(Multimedia CONDITION MACOS
     SOURCES
-        darwin/qmacosaudiodatautils_p.h
+        darwin/qmacosaudiodatautils_p.h darwin/qmacosaudiodatautils.cpp
 )
 
 qt_internal_extend_target(Multimedia CONDITION IOS OR TVOS
@@ -220,7 +250,7 @@ qt_internal_extend_target(Multimedia CONDITION QNX
         qnx/qqnxaudiosink.cpp qnx/qqnxaudiosink_p.h
         qnx/qqnxaudiosource.cpp qnx/qqnxaudiosource_p.h
         qnx/qqnxaudioutils.cpp qnx/qqnxaudioutils_p.h
-        qnx/qqnxmediadevices.cpp qnx/qqnxmediadevices_p.h
+        qnx/qqnxaudiodevices.cpp qnx/qqnxaudiodevices_p.h
     INCLUDE_DIRECTORIES
         qnx
     LIBRARIES
@@ -233,7 +263,7 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_wmf
         windows/qwindowsaudiosource.cpp windows/qwindowsaudiosource_p.h
         windows/qwindowsaudiosink.cpp windows/qwindowsaudiosink_p.h
         windows/qwindowsaudioutils.cpp windows/qwindowsaudioutils_p.h
-        windows/qwindowsmediadevices.cpp windows/qwindowsmediadevices_p.h
+        windows/qwindowsaudiodevices.cpp windows/qwindowsaudiodevices_p.h
         windows/qwindowsmediafoundation.cpp windows/qwindowsmediafoundation_p.h
         windows/qwindowsresampler.cpp windows/qwindowsresampler_p.h
         windows/qwindowsmultimediautils.cpp windows/qwindowsmultimediautils_p.h
@@ -256,7 +286,7 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_wmf AND MINGW
         windows/qwindowsaudiosource.cpp windows/qwindowsaudiosource_p.h
         windows/qwindowsaudiosink.cpp windows/qwindowsaudiosink_p.h
         windows/qwindowsaudioutils.cpp windows/qwindowsaudioutils_p.h
-        windows/qwindowsmediadevices.cpp windows/qwindowsmediadevices_p.h
+        windows/qwindowsaudiodevices.cpp windows/qwindowsaudiodevices_p.h
         windows/qwindowsmediafoundation.cpp windows/qwindowsmediafoundation_p.h
         windows/qwindowsresampler.cpp windows/qwindowsresampler_p.h
         windows/qwindowsmultimediautils.cpp windows/qwindowsmultimediautils_p.h
@@ -305,6 +335,19 @@ set(VIDEO_SHADERS
     "shaders/nv12_bt2020_pq.frag"
     "shaders/nv12_bt2020_hlg.frag"
 )
+
+# Alpha shaders are required to counter missing texture formats on OpenGL ES 2.0, included on developer builds as well
+if (QT_FEATURE_opengles2 OR FEATURE_developer_build OR QT_FEATURE_developer_build)
+    list(APPEND VIDEO_SHADERS
+        "shaders/y_a.frag"
+        "shaders/nv12_a.frag"
+        "shaders/nv21_a.frag"
+        "shaders/imc2_a.frag"
+        "shaders/imc4_a.frag"
+        "shaders/yuv_triplanar_a.frag"
+        "shaders/yvu_triplanar_a.frag"
+    )
+endif()
 
 qt_internal_add_shaders(Multimedia "qtmultimedia_shaders"
     SILENT

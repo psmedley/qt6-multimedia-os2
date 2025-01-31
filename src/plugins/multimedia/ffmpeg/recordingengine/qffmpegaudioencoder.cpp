@@ -18,10 +18,10 @@ namespace QFFmpeg {
 static Q_LOGGING_CATEGORY(qLcFFmpegAudioEncoder, "qt.multimedia.ffmpeg.audioencoder");
 
 namespace {
-void setupStreamParameters(AVStream *stream, const AVCodec *codec,
+void setupStreamParameters(AVStream *stream, const Codec &codec,
                            const AVAudioFormat &requestedAudioFormat)
 {
-    const auto channelLayouts = getCodecChannelLayouts(codec);
+    const auto channelLayouts = codec.channelLayouts();
 #if QT_FFMPEG_HAS_AV_CHANNEL_LAYOUT
     stream->codecpar->ch_layout =
             adjustChannelLayout(channelLayouts, requestedAudioFormat.channelLayout);
@@ -30,12 +30,12 @@ void setupStreamParameters(AVStream *stream, const AVCodec *codec,
             adjustChannelLayout(channelLayouts, requestedAudioFormat.channelLayoutMask);
     stream->codecpar->channels = qPopulationCount(stream->codecpar->channel_layout);
 #endif
-    const auto sampleRates = getCodecSampleRates(codec);
+    const auto sampleRates = codec.sampleRates();
     const auto sampleRate = adjustSampleRate(sampleRates, requestedAudioFormat.sampleRate);
 
     stream->codecpar->sample_rate = sampleRate;
     stream->codecpar->frame_size = 1024;
-    const auto sampleFormats = getCodecSampleFormats(codec);
+    const auto sampleFormats = codec.sampleFormats();
     stream->codecpar->format = adjustSampleFormat(sampleFormats, requestedAudioFormat.sampleFormat);
 
     stream->time_base = AVRational{ 1, sampleRate };
@@ -53,17 +53,17 @@ bool openCodecContext(AVCodecContext *codecContext, AVStream *stream,
     avcodec_parameters_to_context(codecContext, stream->codecpar);
 
     // if avcodec_open2 fails, it may clean codecContext->codec
-    const AVCodec *codec = codecContext->codec;
+    Codec codec{ codecContext->codec };
 
     AVDictionaryHolder opts;
-    applyAudioEncoderOptions(settings, codec->name, codecContext, opts);
+    applyAudioEncoderOptions(settings, QByteArray{ codec.name() }, codecContext, opts);
     applyExperimentalCodecOptions(codec, opts);
 
-    const int res = avcodec_open2(codecContext, codec, opts);
+    const int res = avcodec_open2(codecContext, codec.get(), opts);
 
     if (res != 0) {
-        qCWarning(qLcFFmpegAudioEncoder) << "Cannot open audio codec" << codec->name
-                                         << "; result:" << err2str(res);
+        qCWarning(qLcFFmpegAudioEncoder)
+                << "Cannot open audio codec" << codec.name() << "; result:" << err2str(res);
         return false;
     }
 
@@ -133,32 +133,32 @@ bool AudioEncoder::init()
 
     QFFmpeg::findAndOpenAVEncoder(
             m_stream->codecpar->codec_id,
-            [&](const AVCodec *codec) {
+            [&](const Codec &codec) {
                 AVScore result = DefaultAVScore;
 
                 // Attempt to find no-conversion format
-                if (auto fmts = getCodecSampleFormats(codec))
-                    result += hasAVValue(fmts, requestedAudioFormat.sampleFormat) ? 1 : -1;
+                if (auto fmts = codec.sampleFormats(); !fmts.empty())
+                    result += hasValue(fmts, requestedAudioFormat.sampleFormat) ? 1 : -1;
 
-                if (auto rates = getCodecSampleRates(codec))
-                    result += hasAVValue(rates, requestedAudioFormat.sampleRate) ? 1 : -1;
+                if (auto rates = codec.sampleRates(); !rates.empty())
+                    result += hasValue(rates, requestedAudioFormat.sampleRate) ? 1 : -1;
 
 #if QT_FFMPEG_HAS_AV_CHANNEL_LAYOUT
-                if (auto layouts = getCodecChannelLayouts(codec))
-                    result += hasAVValue(layouts, requestedAudioFormat.channelLayout) ? 1 : -1;
+                if (auto layouts = codec.channelLayouts(); !layouts.empty())
+                    result += hasValue(layouts, requestedAudioFormat.channelLayout) ? 1 : -1;
 #else
-                if (auto layouts = getCodecChannelLayouts(codec))
-                    result += hasAVValue(layouts, requestedAudioFormat.channelLayoutMask) ? 1 : -1;
+                if (auto layouts = codec.channelLayouts(); !layouts.empty())
+                    result += hasValue(layouts, requestedAudioFormat.channelLayoutMask) ? 1 : -1;
 #endif
 
                 return result;
             },
-            [&](const AVCodec *codec) {
-                AVCodecContextUPtr codecContext(avcodec_alloc_context3(codec));
+            [&](const Codec &codec) {
+                AVCodecContextUPtr codecContext(avcodec_alloc_context3(codec.get()));
                 if (!codecContext)
                     return false;
 
-                setupStreamParameters(m_stream, codecContext->codec, requestedAudioFormat);
+                setupStreamParameters(m_stream, Codec{ codecContext->codec }, requestedAudioFormat);
                 if (!openCodecContext(codecContext.get(), m_stream, m_settings))
                     return false;
 
@@ -208,7 +208,7 @@ bool AudioEncoder::hasData() const
 
 void AudioEncoder::retrievePackets()
 {
-    while (1) {
+    while (true) {
         AVPacketUPtr packet(av_packet_alloc());
         int ret = avcodec_receive_packet(m_codecContext.get(), packet.get());
         if (ret < 0) {

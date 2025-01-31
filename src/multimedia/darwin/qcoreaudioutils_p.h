@@ -1,8 +1,8 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#ifndef IOSAUDIOUTILS_H
-#define IOSAUDIOUTILS_H
+#ifndef QCOREAUDIOUTILS_P_H
+#define QCOREAUDIOUTILS_P_H
 
 //
 //  W A R N I N G
@@ -15,31 +15,35 @@
 // We mean it.
 //
 
-#include <CoreAudio/CoreAudioTypes.h>
+#include <CoreAudioTypes/CoreAudioTypes.h>
 
 #include <QtMultimedia/QAudioFormat>
 #include <QtCore/qglobal.h>
 
 QT_BEGIN_NAMESPACE
 
-class CoreAudioUtils
+namespace QCoreAudioUtils
 {
-public:
-    static quint64 currentTime();
-    static double frequency();
-    static Q_MULTIMEDIA_EXPORT QAudioFormat toQAudioFormat(const AudioStreamBasicDescription& streamFormat);
-    static AudioStreamBasicDescription toAudioStreamBasicDescription(QAudioFormat const& audioFormat);
 
-    // ownership is transferred to caller, free with ::free()
-    static Q_MULTIMEDIA_EXPORT std::unique_ptr<AudioChannelLayout> toAudioChannelLayout(const QAudioFormat &format, UInt32 *size);
-    static QAudioFormat::ChannelConfig fromAudioChannelLayout(const AudioChannelLayout *layout);
-
-private:
-    static void initialize();
-    static double sFrequency;
-    static bool sIsInitialized;
+struct QFreeDeleter
+{
+    template <typename T>
+    void operator()(T*t)
+    {
+        ::free(t);
+    }
 };
+
+
+Q_MULTIMEDIA_EXPORT QAudioFormat toQAudioFormat(const AudioStreamBasicDescription& streamFormat);
+AudioStreamBasicDescription toAudioStreamBasicDescription(QAudioFormat const& audioFormat);
+
+Q_MULTIMEDIA_EXPORT std::unique_ptr<AudioChannelLayout, QFreeDeleter>
+toAudioChannelLayout(const QAudioFormat &format, UInt32 *size);
+QAudioFormat::ChannelConfig fromAudioChannelLayout(const AudioChannelLayout *layout);
+
+} // namespace QCoreAudioUtils
 
 QT_END_NAMESPACE
 
-#endif // IOSAUDIOUTILS_H
+#endif // QCOREAUDIOUTILS_P_H

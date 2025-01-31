@@ -27,6 +27,8 @@
 #include <mediacapture/qgstreamermediacapturesession_p.h>
 #include <gst/video/video.h>
 
+#include <map>
+
 QT_BEGIN_NAMESPACE
 
 class QGstreamerImageCapture : public QPlatformImageCapture, private QGstreamerBufferProbe
@@ -35,7 +37,7 @@ class QGstreamerImageCapture : public QPlatformImageCapture, private QGstreamerB
 
 public:
     static QMaybe<QPlatformImageCapture *> create(QImageCapture *parent);
-    virtual ~QGstreamerImageCapture();
+    ~QGstreamerImageCapture() override;
 
     bool isReadyForCapture() const override;
     int capture(const QString &fileName) override;
@@ -60,14 +62,12 @@ private:
     QGstreamerImageCapture(QImageCapture *parent);
 
     void setResolution(const QSize &resolution);
-    int doCapture(const QString &fileName);
-    static gboolean saveImageFilter(GstElement *element, GstBuffer *buffer, GstPad *pad,
-                                    QGstreamerImageCapture *capture);
+    int doCapture(QString fileName);
+    void saveBufferToFile(QGstBufferHandle, QString filename, int id);
+    void convertBufferToImage(const QMutexLocker<QRecursiveMutex> &, QGstBufferHandle, QGstCaps,
+                              QMediaMetaData, int id);
 
-    void saveBufferToImage(GstBuffer *buffer);
-
-    mutable QRecursiveMutex
-            m_mutex; // guard all elements accessed from probeBuffer/saveBufferToImage
+    mutable QRecursiveMutex m_mutex; // guard all elements accessed from gstreamer / worker threads
     QGstreamerMediaCaptureSession *m_session = nullptr;
     int m_lastId = 0;
     QImageEncoderSettings m_settings;
@@ -75,7 +75,6 @@ private:
     struct PendingImage {
         int id;
         QString filename;
-        QMediaMetaData metaData;
     };
 
     QQueue<PendingImage> pendingImages;
@@ -89,19 +88,18 @@ private:
     QGstElement sink;
     QGstPad videoSrcPad;
 
-    bool passImage = false;
+    std::atomic_bool m_captureNextBuffer{};
     bool cameraActive = false;
 
-    QGObjectHandlerScopedConnection m_handoffConnection;
-
-    QMap<int, QFuture<void>> m_pendingFutures;
-    int futureIDAllocator = 0;
+    QMutex m_pendingFuturesMutex;
+    std::map<int, QFuture<void>> m_pendingFutures;
+    std::atomic<int> m_futureIDAllocator{};
 
     template <typename Functor>
-    void invokeDeferred(Functor &&fn)
-    {
-        QMetaObject::invokeMethod(this, std::forward<decltype(fn)>(fn), Qt::QueuedConnection);
-    };
+    void invokeDeferred(Functor &&fn);
+
+    template <typename Functor>
+    void runInThreadPool(Functor);
 };
 
 QT_END_NAMESPACE

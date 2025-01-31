@@ -26,11 +26,11 @@ class QOpenGLVideoBuffer : public QHwVideoBuffer
 {
 public:
     QOpenGLVideoBuffer(std::unique_ptr<QOpenGLFramebufferObject> fbo);
-    ~QOpenGLVideoBuffer();
+    ~QOpenGLVideoBuffer() override;
 
     MapData map(QVideoFrame::MapMode mode) override;
     void unmap() override;
-    quint64 textureHandle(QRhi *, int plane) const override;
+    quint64 textureHandle(QRhi &, int plane) override;
 
     QImageVideoBuffer &ensureImageBuffer();
 

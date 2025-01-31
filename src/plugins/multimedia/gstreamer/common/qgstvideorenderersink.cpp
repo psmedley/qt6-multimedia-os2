@@ -124,7 +124,6 @@ QT_WARNING_DISABLE_GCC("-Wswitch") // case value not in enumerated type ‘QEven
         return;
     }
     case stopEvent: {
-        m_currentState.buffer = {};
         m_currentPipelineFrame = {};
         updateCurrentVideoFrame(m_currentVideoFrame);
         return;
@@ -143,9 +142,7 @@ void QGstVideoRenderer::handleNewBuffer(RenderBufferState state)
                                                          state.format, state.memoryFormat);
     QVideoFrame frame = QVideoFramePrivate::createFrame(std::move(videoBuffer), state.format);
     QGstUtils::setFrameTimeStampsFromBuffer(&frame, state.buffer.get());
-
     m_currentPipelineFrame = std::move(frame);
-    m_currentState = std::move(state);
 
     if (!m_isActive) {
         qCDebug(qLcGstVideoRenderer) << "    showing empty video frame";
@@ -221,9 +218,9 @@ GstFlowReturn QGstVideoRenderer::render(GstBuffer *buffer)
     }
 
     RenderBufferState state{
-        .buffer = QGstBufferHandle{ buffer, QGstBufferHandle::NeedsRef },
-        .format = m_format,
-        .memoryFormat = m_memoryFormat,
+        QGstBufferHandle{ buffer, QGstBufferHandle::NeedsRef },
+        m_format,
+        m_memoryFormat,
     };
 
     qCDebug(qLcGstVideoRenderer) << "    sending video frame";

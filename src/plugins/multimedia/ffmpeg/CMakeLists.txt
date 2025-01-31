@@ -4,13 +4,6 @@
 qt_find_package(EGL)
 qt_find_package(VAAPI COMPONENTS VA DRM PROVIDED_TARGETS VAAPI::VAAPI MODULE_NAME multimedia QMAKE_LIB vaapi)
 
-qt_internal_find_apple_system_framework(FWCoreMedia CoreMedia)
-qt_internal_find_apple_system_framework(FWCoreAudio CoreAudio)
-qt_internal_find_apple_system_framework(FWAudioUnit AudioUnit)
-qt_internal_find_apple_system_framework(FWVideoToolbox VideoToolbox)
-qt_internal_find_apple_system_framework(FWAVFoundation AVFoundation)
-qt_internal_find_apple_system_framework(FWSecurity Security)
-
 qt_internal_add_plugin(QFFmpegMediaPlugin
     OUTPUT_NAME ffmpegmediaplugin
     PLUGIN_TYPE multimedia
@@ -22,8 +15,10 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
         qffmpegavaudioformat.cpp qffmpegavaudioformat_p.h
         qffmpegaudiodecoder.cpp qffmpegaudiodecoder_p.h
         qffmpegaudioinput.cpp qffmpegaudioinput_p.h
+        qffmpegcodec.cpp qffmpegcodec_p.h
         qffmpegconverter.cpp qffmpegconverter_p.h
         qffmpeghwaccel.cpp qffmpeghwaccel_p.h
+        qffmpegtextureconverter.cpp qffmpegtextureconverter_p.h
         qffmpegmediametadata.cpp qffmpegmediametadata_p.h
         qffmpegmediaplayer.cpp qffmpegmediaplayer_p.h
         qffmpegvideosink.cpp qffmpegvideosink_p.h
@@ -50,7 +45,7 @@ qt_internal_add_plugin(QFFmpegMediaPlugin
         playbackengine/qffmpegsubtitlerenderer.cpp playbackengine/qffmpegsubtitlerenderer_p.h
         playbackengine/qffmpegtimecontroller.cpp playbackengine/qffmpegtimecontroller_p.h
         playbackengine/qffmpegmediadataholder.cpp playbackengine/qffmpegmediadataholder_p.h
-        playbackengine/qffmpegcodec.cpp playbackengine/qffmpegcodec_p.h
+        playbackengine/qffmpegcodeccontext.cpp playbackengine/qffmpegcodeccontext_p.h
         playbackengine/qffmpegpacket_p.h
         playbackengine/qffmpegframe_p.h
         playbackengine/qffmpegpositionwithoffset_p.h
@@ -98,23 +93,6 @@ if (LINUX OR ANDROID)
     qt_internal_multimedia_add_ffmpeg_stubs()
 endif()
 
-if (QT_FEATURE_pipewire)
-    qt_internal_extend_target(QFFmpegMediaPlugin
-        SYSTEM_INCLUDE_DIRECTORIES
-            "${PipeWire_INCLUDE_DIRS};${Spa_INCLUDE_DIRS}"
-        SOURCES
-            qpipewirecapture.cpp qpipewirecapture_p.h
-            qpipewirecapturehelper.cpp qpipewirecapturehelper_p.h
-            symbolstubs/qffmpegsymbols-pipewire.cpp
-
-        NO_UNITY_BUILD_SOURCES
-            # conflict with qffmpegsymbols-va.cpp: class SymbolsResolverImpl
-            symbolstubs/qffmpegsymbols-pipewire.cpp
-        LIBRARIES
-            Qt::DBus
-    )
-endif()
-
 if (QT_FEATURE_vaapi)
     qt_internal_extend_target(QFFmpegMediaPlugin
         SOURCES
@@ -152,8 +130,6 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION APPLE
         ../darwin/camera
     LIBRARIES
         ${FWAudioToolbox}
-        ${FWCoreAudio}
-        ${FWCoreFoundation}
         ${FWCoreMedia}
         ${FWCoreVideo}
         ${FWVideoToolbox}
@@ -166,6 +142,8 @@ qt_internal_extend_target(QFFmpegMediaPlugin CONDITION MACOS
         qavfscreencapture.mm qavfscreencapture_p.h
         qcgwindowcapture.mm qcgwindowcapture_p.h
         qcgcapturablewindows.mm qcgcapturablewindows_p.h
+    LIBRARIES
+        ${FWAppKit}
 )
 
 qt_internal_extend_target(QFFmpegMediaPlugin CONDITION WIN32
@@ -231,15 +209,17 @@ if (ANDROID)
             qffmpeghwaccel_mediacodec.cpp qffmpeghwaccel_mediacodec_p.h
             qandroidcamera_p.h qandroidcamera.cpp
             qandroidvideodevices.cpp qandroidvideodevices_p.h
-            qandroidcameraframe_p.h  qandroidcameraframe.cpp
+            qandroidvideoframebuffer_p.h  qandroidvideoframebuffer.cpp
+            qandroidvideoframefactory_p.h qandroidvideoframefactory.cpp
             qandroidimagecapture_p.h qandroidimagecapture.cpp
+            qandroidscreencapture_p.h qandroidscreencapture.cpp
             ../android/wrappers/jni/androidsurfacetexture_p.h
             ../android/wrappers/jni/androidsurfacetexture.cpp
         NO_UNITY_BUILD_SOURCES
             # Duplicate declration of JNI Classes using `Q_DECLARE_JNI_CLASS`
             qandroidcamera.cpp
             qandroidvideodevices.cpp
-            qandroidcameraframe.cpp
+            qandroidvideoframebuffer.cpp
         INCLUDE_DIRECTORIES
             ${FFMPEG_DIR}/include
             ../android/wrappers/jni/

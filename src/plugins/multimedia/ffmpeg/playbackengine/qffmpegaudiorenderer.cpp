@@ -61,13 +61,13 @@ qreal sampleRateFactor() {
 QAudioFormat audioFormatFromFrame(const Frame &frame)
 {
     return QFFmpegMediaFormatInfo::audioFormatFromCodecParameters(
-            frame.codec()->stream()->codecpar);
+            *frame.codecContext()->stream()->codecpar);
 }
 
 std::unique_ptr<QFFmpegResampler> createResampler(const Frame &frame,
                                                   const QAudioFormat &outputFormat)
 {
-    return std::make_unique<QFFmpegResampler>(frame.codec(), outputFormat, frame.pts());
+    return std::make_unique<QFFmpegResampler>(frame.codecContext(), outputFormat, frame.pts());
 }
 
 } // namespace
@@ -184,9 +184,9 @@ void AudioRenderer::pushFrameToBufferOutput(const Frame &frame)
     if (!m_bufferOutput)
         return;
 
-    Q_ASSERT(m_bufferOutputResampler);
-
     if (frame.isValid()) {
+        Q_ASSERT(m_bufferOutputResampler);
+
         // TODO: get buffer from m_bufferedData if resample formats are equal
         QAudioBuffer buffer = m_bufferOutputResampler->resample(frame.avFrame());
         emit m_bufferOutput->audioBufferReceived(buffer);
@@ -200,9 +200,9 @@ void AudioRenderer::onPlaybackRateChanged()
     m_resampler.reset();
 }
 
-int AudioRenderer::timerInterval() const
+std::chrono::milliseconds AudioRenderer::timerInterval() const
 {
-    constexpr auto MaxFixableInterval = 50; // ms
+    constexpr auto MaxFixableInterval = 50ms;
 
     const auto interval = Renderer::timerInterval();
 
@@ -210,7 +210,7 @@ int AudioRenderer::timerInterval() const
         || interval > MaxFixableInterval)
         return interval;
 
-    return 0;
+    return 0ms;
 }
 
 void AudioRenderer::onPauseChanged()
@@ -219,7 +219,7 @@ void AudioRenderer::onPauseChanged()
     Renderer::onPauseChanged();
 }
 
-void AudioRenderer::initResempler(const Frame &frame)
+void AudioRenderer::initResampler(const Frame &frame)
 {
     // We recreate resampler whenever format is changed
 
@@ -298,7 +298,7 @@ void AudioRenderer::updateOutputs(const Frame &frame)
     }
 
     if (!m_resampler)
-        initResempler(frame);
+        initResampler(frame);
 }
 
 void AudioRenderer::updateSynchronization(const SynchronizationStamp &stamp, const Frame &frame)

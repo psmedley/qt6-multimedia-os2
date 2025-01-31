@@ -127,6 +127,8 @@ void QMediaPlayerPrivate::setError(QMediaPlayer::Error error, const QString &err
 
 void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
 {
+    setError(QMediaPlayer::NoError, {});
+
     if (!control)
         return;
 
@@ -507,9 +509,6 @@ void QMediaPlayer::play()
 
     if (!d->control)
         return;
-
-    // Reset error conditions
-    d->setError(NoError, QString());
 
     d->control->play();
 }

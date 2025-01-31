@@ -15,7 +15,7 @@
 #include <private/qplatformvideodevices_p.h>
 #include <private/qplatformmediaformatinfo_p.h>
 
-#include "qmockmediadevices.h"
+#include "qmockaudiodevices.h"
 
 QT_BEGIN_NAMESPACE
 
@@ -88,7 +88,7 @@ public:
         emit videoInputsChanged();
     }
 
-    QList<QCameraDevice> videoDevices() const override
+    QList<QCameraDevice> videoInputs() const override
     {
         return m_cameraDevices;
     }
@@ -112,9 +112,9 @@ QPlatformVideoDevices *QMockIntegration::createVideoDevices()
     return new QMockVideoDevices(this);
 }
 
-std::unique_ptr<QPlatformMediaDevices> QMockIntegration::createMediaDevices()
+std::unique_ptr<QPlatformAudioDevices> QMockIntegration::createAudioDevices()
 {
-    return std::make_unique<QMockMediaDevices>();
+    return std::make_unique<QMockAudioDevices>();
 }
 
 QMaybe<QPlatformAudioDecoder *> QMockIntegration::createAudioDecoder(QAudioDecoder *decoder)

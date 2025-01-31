@@ -19,6 +19,8 @@
 #include "playbackengine/qffmpegpositionwithoffset_p.h"
 #include "private/qplatformmediaplayer_p.h"
 
+#include <QtCore/qqueue.h>
+
 #include <optional>
 
 QT_BEGIN_NAMESPACE
@@ -29,9 +31,9 @@ class StreamDecoder : public PlaybackEngineObject
 {
     Q_OBJECT
 public:
-    StreamDecoder(const Codec &codec, qint64 absSeekPos);
+    StreamDecoder(const CodecContext &codecContext, qint64 absSeekPos);
 
-    ~StreamDecoder();
+    ~StreamDecoder() override;
 
     QPlatformMediaPlayer::TrackType trackType() const;
 
@@ -69,7 +71,7 @@ private:
     void receiveAVFrames(bool flushPacket = false);
 
 private:
-    Codec m_codec;
+    CodecContext m_codecContext;
     qint64 m_absSeekPos = 0;
     const QPlatformMediaPlayer::TrackType m_trackType;
 

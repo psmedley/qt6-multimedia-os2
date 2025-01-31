@@ -17,9 +17,7 @@
 #define QWINDOWSAUDIODEVICEINFO_H
 
 #include <QtCore/qbytearray.h>
-#include <QtCore/qstringlist.h>
-#include <QtCore/qlist.h>
-#include <QtCore/qdebug.h>
+#include <QtCore/qstring.h>
 
 #include <QtMultimedia/qaudiodevice.h>
 #include <private/qaudiosystem_p.h>
@@ -30,29 +28,21 @@ struct IMMDevice;
 
 QT_BEGIN_NAMESPACE
 
-const unsigned int MAX_SAMPLE_RATES = 5;
-const unsigned int SAMPLE_RATES[] = { 8000, 11025, 22050, 44100, 48000 };
-
 class QWindowsAudioDeviceInfo : public QAudioDevicePrivate
 {
 public:
-    QWindowsAudioDeviceInfo(QByteArray dev, ComPtr<IMMDevice> immdev, int waveID, const QString &description, QAudioDevice::Mode mode);
+    QWindowsAudioDeviceInfo(QByteArray dev, ComPtr<IMMDevice> immdev, const QString &description,
+                            QAudioDevice::Mode mode);
     ~QWindowsAudioDeviceInfo();
 
     bool open();
     void close();
 
-    bool testSettings(const QAudioFormat& format) const;
-
-    int waveId() const { return m_devId; }
     ComPtr<IMMDevice> immDev() const { return m_immDev; }
 
 private:
-    quint32 m_devId;
     ComPtr<IMMDevice> m_immDev;
 };
-
-
 
 QT_END_NAMESPACE
 

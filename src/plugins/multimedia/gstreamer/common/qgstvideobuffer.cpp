@@ -230,12 +230,12 @@ public:
         for (uint i = 0; i < textures.count; ++i) {
             QSize planeSize(desc->widthForPlane(size.width(), int(i)),
                             desc->heightForPlane(size.height(), int(i)));
-            m_textures[i].reset(rhi->newTexture(desc->textureFormat[i], planeSize, 1, {}));
+            m_textures[i].reset(rhi->newTexture(desc->rhiTextureFormat(i, m_rhi), planeSize, 1, {}));
             m_textures[i]->createFrom({textures.names[i], 0});
         }
     }
 
-    ~QGstQVideoFrameTextures()
+    ~QGstQVideoFrameTextures() override
     {
         m_rhi->makeThreadLocalNativeContextCurrent();
         auto ctx = QOpenGLContext::currentContext();
@@ -369,11 +369,8 @@ static GlTextures mapFromDmaBuffer(QRhi *rhi, const QGstBufferHandle &bufferHand
 #endif
 #endif
 
-std::unique_ptr<QVideoFrameTextures> QGstVideoBuffer::mapTextures(QRhi *rhi)
+QVideoFrameTexturesUPtr QGstVideoBuffer::mapTextures(QRhi &rhi, QVideoFrameTexturesUPtr& /*oldTextures*/)
 {
-    if (!rhi)
-        return {};
-
 #if QT_CONFIG(gstreamer_gl)
     GlTextures textures = {};
     if (memoryFormat == QGstCaps::GLTexture)
@@ -386,7 +383,7 @@ std::unique_ptr<QVideoFrameTextures> QGstVideoBuffer::mapTextures(QRhi *rhi)
 
 #  endif
     if (textures.count > 0)
-        return std::make_unique<QGstQVideoFrameTextures>(rhi, QSize{m_videoInfo.width, m_videoInfo.height},
+        return std::make_unique<QGstQVideoFrameTextures>(&rhi, QSize{m_videoInfo.width, m_videoInfo.height},
                                                          m_frameFormat.pixelFormat(), textures);
 #endif
     return {};

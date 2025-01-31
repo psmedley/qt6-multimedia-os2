@@ -25,7 +25,7 @@ class QAudioSource;
 class QAudioBuffer;
 namespace QFFmpeg {
 class AudioSourceIO;
-}
+} // namespace QFFmpeg
 
 constexpr int DefaultAudioInputBufferSize = 4096;
 
@@ -35,7 +35,7 @@ class QFFmpegAudioInput : public QPlatformAudioBufferInputBase, public QPlatform
     Q_OBJECT
 public:
     QFFmpegAudioInput(QAudioInput *qq);
-    ~QFFmpegAudioInput();
+    ~QFFmpegAudioInput() override;
 
     void setAudioDevice(const QAudioDevice &/*device*/) override;
     void setMuted(bool /*muted*/) override;
