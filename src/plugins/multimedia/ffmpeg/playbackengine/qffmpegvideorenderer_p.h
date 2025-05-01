@@ -14,8 +14,9 @@
 // We mean it.
 //
 
-#include "playbackengine/qffmpegrenderer_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpegrenderer_p.h>
 
+#include <QtMultimedia/private/qvideotransformation_p.h>
 #include <QtCore/qpointer.h>
 
 QT_BEGIN_NAMESPACE

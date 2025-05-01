@@ -14,11 +14,11 @@
 
 
 #include "qwindowsaudiosource_p.h"
-#include "qwindowsmultimediautils_p.h"
 #include "qcomtaskresource_p.h"
 
 #include <QtCore/QDataStream>
 #include <QtCore/qtimer.h>
+#include <QtCore/private/qsystemerror_p.h>
 
 #include <private/qaudiohelpers_p.h>
 
@@ -31,7 +31,6 @@ QT_BEGIN_NAMESPACE
 
 static Q_LOGGING_CATEGORY(qLcAudioSource, "qt.multimedia.audiosource")
 
-using namespace QWindowsMultimediaUtils;
 using namespace QWindowsAudioUtils;
 
 class OurSink : public QIODevice
@@ -47,11 +46,12 @@ private:
     QWindowsAudioSource &m_audioSource;
 };
 
-QWindowsAudioSource::QWindowsAudioSource(ComPtr<IMMDevice> device, QObject *parent)
+QWindowsAudioSource::QWindowsAudioSource(ComPtr<IMMDevice> device, const QAudioFormat &fmt, QObject *parent)
     : QPlatformAudioSource(parent),
       m_timer(new QTimer(this)),
       m_device(std::move(device)),
-      m_ourSink(new OurSink(*this))
+      m_ourSink(new OurSink(*this)),
+      m_format(fmt)
 {
     m_ourSink->open(QIODevice::ReadOnly|QIODevice::Unbuffered);
     m_timer->setTimerType(Qt::PreciseTimer);
@@ -82,18 +82,6 @@ QAudio::Error QWindowsAudioSource::error() const
 QAudio::State QWindowsAudioSource::state() const
 {
     return m_deviceState;
-}
-
-void QWindowsAudioSource::setFormat(const QAudioFormat& fmt)
-{
-    if (m_deviceState == QAudio::StoppedState) {
-        m_format = fmt;
-    } else {
-        if (m_format != fmt) {
-            qWarning() << "Cannot set a new audio format, in the current state ("
-                       << m_deviceState << ")";
-        }
-    }
 }
 
 QAudioFormat QWindowsAudioSource::format() const
@@ -137,7 +125,7 @@ QByteArray QWindowsAudioSource::readCaptureClientBuffer()
     DWORD flags = 0;
     HRESULT hr = m_captureClient->GetBuffer(&data, &actualFrames, &flags, nullptr, nullptr);
     if (FAILED(hr)) {
-        qWarning() << "IAudioCaptureClient::GetBuffer failed" << errorString(hr);
+        qWarning() << "IAudioCaptureClient::GetBuffer failed" << QSystemError::windowsComString(hr);
         deviceStateChange(QAudio::IdleState, QAudio::IOError);
         return {};
     }
@@ -158,7 +146,7 @@ QByteArray QWindowsAudioSource::readCaptureClientBuffer()
 
     hr = m_captureClient->ReleaseBuffer(actualFrames);
     if (FAILED(hr)) {
-        qWarning() << "IAudioCaptureClient::ReleaseBuffer failed" << errorString(hr);
+        qWarning() << "IAudioCaptureClient::ReleaseBuffer failed" << QSystemError::windowsComString(hr);
         deviceStateChange(QAudio::IdleState, QAudio::IOError);
         return {};
     }
@@ -258,14 +246,14 @@ bool QWindowsAudioSource::open()
     HRESULT hr = m_device->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER,
                                     nullptr, (void**)m_audioClient.GetAddressOf());
     if (FAILED(hr)) {
-        qCWarning(qLcAudioSource) << "Failed to activate audio device" << errorString(hr);
+        qCWarning(qLcAudioSource) << "Failed to activate audio device" << QSystemError::windowsComString(hr);
         return false;
     }
 
     QComTaskResource<WAVEFORMATEX> pwfx;
     hr = m_audioClient->GetMixFormat(pwfx.address());
     if (FAILED(hr)) {
-        qCWarning(qLcAudioSource) << "Format unsupported" << errorString(hr);
+        qCWarning(qLcAudioSource) << "Format unsupported" << QSystemError::windowsComString(hr);
         return false;
     }
 
@@ -283,7 +271,7 @@ bool QWindowsAudioSource::open()
                                    nullptr);
 
     if (FAILED(hr)) {
-        qCWarning(qLcAudioSource) << "Failed to initialize audio client" << errorString(hr);
+        qCWarning(qLcAudioSource) << "Failed to initialize audio client" << QSystemError::windowsComString(hr);
         return false;
     }
 
@@ -298,7 +286,7 @@ bool QWindowsAudioSource::open()
 
     hr = m_audioClient->GetService(IID_PPV_ARGS(m_captureClient.GetAddressOf()));
     if (FAILED(hr)) {
-        qCWarning(qLcAudioSource) << "Failed to obtain audio client rendering service" << errorString(hr);
+        qCWarning(qLcAudioSource) << "Failed to obtain audio client rendering service" << QSystemError::windowsComString(hr);
         return false;
     }
 

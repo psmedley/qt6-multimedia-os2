@@ -30,18 +30,25 @@ class QSGVideoMaterial;
 class QQuickVideoOutput;
 class QSGInternalTextNode;
 
+class QVideoFrameTexturePool;
+using QVideoFrameTexturePoolPtr = std::shared_ptr<QVideoFrameTexturePool>;
+
 class QSGVideoNode : public QSGGeometryNode
 {
 public:
-    QSGVideoNode(QQuickVideoOutput *parent, const QVideoFrameFormat &videoFormat);
-    ~QSGVideoNode();
+    QSGVideoNode(QQuickVideoOutput *parent, const QVideoFrameFormat &videoFormat,
+                 QRhi *rhi);
+    ~QSGVideoNode() override;
 
     QVideoFrameFormat::PixelFormat pixelFormat() const { return m_videoFormat.pixelFormat(); }
     void setCurrentFrame(const QVideoFrame &frame);
     void setSurfaceFormat(const QRhiSwapChain::Format surfaceFormat);
     void setHdrInfo(const QRhiSwapChainHdrInfo &hdrInfo);
 
-    void setTexturedRectGeometry(const QRectF &boundingRect, const QRectF &textureRect, int orientation);
+    void setTexturedRectGeometry(const QRectF &boundingRect, const QRectF &textureRect,
+                                 VideoTransformation videoOutputTransformation);
+
+    const QVideoFrameTexturePoolPtr &texturePool() const;
 
 private:
     void updateSubtitle(const QVideoFrame &frame);
@@ -50,7 +57,7 @@ private:
     QQuickVideoOutput *m_parent = nullptr;
     QRectF m_rect;
     QRectF m_textureRect;
-    int m_orientation = -1;
+    VideoTransformation m_videoOutputTransformation;
     VideoTransformation m_frameTransformation;
 
     QVideoFrameFormat m_videoFormat;

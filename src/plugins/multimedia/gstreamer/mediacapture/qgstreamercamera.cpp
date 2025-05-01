@@ -118,7 +118,9 @@ void QGstreamerCamera::setCamera(const QCameraDevice &camera)
     auto gstNewDecode = QGstElement::createFromFactory(
             f.pixelFormat() == QVideoFrameFormat::Format_Jpeg ? "jpegdec" : "identity");
 
-    gstVideoConvert.sink().modifyPipelineInIdleProbe([&] {
+    m_currentCameraFormat = f;
+
+    updateCamera([&] {
         qUnlinkGstElements(gstCamera, gstCapsFilter, gstDecode, gstVideoConvert);
         gstCameraBin.stopAndRemoveElements(gstCamera, gstDecode);
 
@@ -145,12 +147,17 @@ bool QGstreamerCamera::setCameraFormat(const QCameraFormat &format)
     if (f.isNull())
         f = findBestCameraFormat(m_cameraDevice);
 
+    if (f == m_currentCameraFormat)
+        return true;
+
+    m_currentCameraFormat = f;
+
     auto caps = QGstCaps::fromCameraFormat(f);
 
     auto newGstDecode = QGstElement::createFromFactory(
             f.pixelFormat() == QVideoFrameFormat::Format_Jpeg ? "jpegdec" : "identity");
 
-    gstVideoConvert.sink().modifyPipelineInIdleProbe([&] {
+    updateCamera([&] {
         qUnlinkGstElements(gstCamera, gstCapsFilter, gstDecode, gstVideoConvert);
         gstCameraBin.stopAndRemoveElements(gstDecode);
 
@@ -187,7 +194,7 @@ void QGstreamerCamera::updateCameraProperties()
 #if QT_CONFIG(gstreamer_photography)
 GstPhotography *QGstreamerCamera::photography() const
 {
-    if (!gstCamera.isNull() && GST_IS_PHOTOGRAPHY(gstCamera.element()))
+    if (gstCamera && GST_IS_PHOTOGRAPHY(gstCamera.element()))
         return GST_PHOTOGRAPHY(gstCamera.element());
     return nullptr;
 }

@@ -150,20 +150,22 @@ static const quint32 *fourccFromPixelFormat(const QVideoFrameFormat::PixelFormat
     return nullptr;
 }
 
-class VAAPITextureSet : public TextureSet
+namespace {
+class VAAPITextureHandles : public QVideoFrameTexturesHandles
 {
 public:
-    ~VAAPITextureSet();
-    qint64 textureHandle(QRhi *, int plane) override {
+    ~VAAPITextureHandles() override;
+    quint64 textureHandle(QRhi &, int plane) override {
         return textures[plane];
     }
 
+    TextureConverterBackendPtr parentConverterBackend; // ensures the backend is deleted after the texture
     QRhi *rhi = nullptr;
     QOpenGLContext *glContext = nullptr;
     int nPlanes = 0;
     GLuint textures[4] = {};
 };
-
+} // namespace
 
 VAAPITextureConverter::VAAPITextureConverter(QRhi *rhi)
     : TextureConverterBackend(nullptr)
@@ -201,14 +203,14 @@ VAAPITextureConverter::VAAPITextureConverter(QRhi *rhi)
     this->rhi = rhi;
 }
 
-VAAPITextureConverter::~VAAPITextureConverter()
-{
-}
+VAAPITextureConverter::~VAAPITextureConverter() = default;
 
 //#define VA_EXPORT_USE_LAYERS
-TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
+QVideoFrameTexturesHandlesUPtr
+VAAPITextureConverter::createTextureHandles(AVFrame *frame,
+                                            QVideoFrameTexturesHandlesUPtr /*oldHandles*/)
 {
-//        qCDebug(qLHWAccelVAAPI) << "VAAPIAccel::getTextures";
+    //        qCDebug(qLHWAccelVAAPI) << "VAAPIAccel::createTextureHandles";
     if (frame->format != AV_PIX_FMT_VAAPI || !eglDisplay) {
         qCDebug(qLHWAccelVAAPI) << "format/egl error" << frame->format << eglDisplay;
         return nullptr;
@@ -296,10 +298,11 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
 #define PLANE i
 #endif
 
+        QSize planeSize = desc->rhiPlaneSize(QSize(frame->width, frame->height), i, rhi);
         EGLAttrib img_attr[] = {
             EGL_LINUX_DRM_FOURCC_EXT,      (EGLint)drm_formats[i],
-            EGL_WIDTH,                     desc->widthForPlane(frame->width, i),
-            EGL_HEIGHT,                    desc->heightForPlane(frame->height, i),
+            EGL_WIDTH,                     planeSize.width(),
+            EGL_HEIGHT,                    planeSize.height(),
             EGL_DMA_BUF_PLANE0_FD_EXT,     prime.objects[prime.layers[LAYER].object_index[PLANE]].fd,
             EGL_DMA_BUF_PLANE0_OFFSET_EXT, (EGLint)prime.layers[LAYER].offset[PLANE],
             EGL_DMA_BUF_PLANE0_PITCH_EXT,  (EGLint)prime.layers[LAYER].pitch[PLANE],
@@ -337,19 +340,20 @@ TextureSet *VAAPITextureConverter::getTextures(AVFrame *frame)
         eglDestroyImage(eglDisplay, images[i]);
     }
 
-    VAAPITextureSet *textureSet = new VAAPITextureSet;
-    textureSet->nPlanes = nPlanes;
-    textureSet->rhi = rhi;
-    textureSet->glContext = glContext;
+    auto textureHandles = std::make_unique<VAAPITextureHandles>();
+    textureHandles->parentConverterBackend = shared_from_this();
+    textureHandles->nPlanes = nPlanes;
+    textureHandles->rhi = rhi;
+    textureHandles->glContext = glContext;
 
     for (int i = 0; i < 4; ++i)
-        textureSet->textures[i] = glTextures[i];
+        textureHandles->textures[i] = glTextures[i];
 //        qCDebug(qLHWAccelVAAPI) << "VAAPIAccel: got textures" << textures[0] << textures[1] << textures[2] << textures[3];
 
-    return textureSet;
+    return textureHandles;
 }
 
-VAAPITextureSet::~VAAPITextureSet()
+VAAPITextureHandles::~VAAPITextureHandles()
 {
     if (rhi) {
         rhi->makeThreadLocalNativeContextCurrent();
@@ -358,6 +362,6 @@ VAAPITextureSet::~VAAPITextureSet()
     }
 }
 
-}
+} // namespace QFFmpeg
 
 QT_END_NAMESPACE

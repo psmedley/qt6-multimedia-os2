@@ -16,7 +16,7 @@
 #include <QtCore/qapplicationstatic.h>
 
 #include "qplatformcapturablewindows_p.h"
-#include "qplatformmediadevices_p.h"
+#include "qplatformaudiodevices_p.h"
 #include <QtCore/private/qfactoryloader_p.h>
 #include <QtCore/private/qcoreapplication_p.h>
 #include <private/qplatformmediaformatinfo_p.h>
@@ -67,6 +67,11 @@ struct InstanceHolder
 {
     InstanceHolder()
     {
+        init();
+    }
+
+    void init()
+    {
         if (!QCoreApplication::instance())
             qCCritical(qLcMediaPlugin()) << "Qt Multimedia requires a QCoreApplication instance";
 
@@ -105,10 +110,9 @@ QPlatformMediaIntegration *QPlatformMediaIntegration::instance()
     return s_instanceHolder->instance.get();
 }
 
-QList<QCameraDevice> QPlatformMediaIntegration::videoInputs()
+void QPlatformMediaIntegration::resetInstance()
 {
-    auto devices = videoDevices();
-    return devices ? devices->videoDevices() : QList<QCameraDevice>{};
+    s_instanceHolder->init(); // tests only
 }
 
 QMaybe<std::unique_ptr<QPlatformAudioResampler>>
@@ -153,9 +157,9 @@ QPlatformMediaFormatInfo *QPlatformMediaIntegration::createFormatInfo()
     return new QPlatformMediaFormatInfo;
 }
 
-std::unique_ptr<QPlatformMediaDevices> QPlatformMediaIntegration::createMediaDevices()
+std::unique_ptr<QPlatformAudioDevices> QPlatformMediaIntegration::createAudioDevices()
 {
-    return QPlatformMediaDevices::create();
+    return QPlatformAudioDevices::create();
 }
 
 // clang-format off
@@ -177,12 +181,12 @@ QPlatformCapturableWindows *QPlatformMediaIntegration::capturableWindows()
     return m_capturableWindows.get();
 }
 
-QPlatformMediaDevices *QPlatformMediaIntegration::mediaDevices()
+QPlatformAudioDevices *QPlatformMediaIntegration::audioDevices()
 {
-    std::call_once(m_mediaDevicesOnceFlag, [this] {
-        m_mediaDevices = createMediaDevices();
+    std::call_once(m_audioDevicesOnceFlag, [this] {
+        m_audioDevices = createAudioDevices();
     });
-    return m_mediaDevices.get();
+    return m_audioDevices.get();
 }
 
 // clang-format on
@@ -211,6 +215,11 @@ QVideoFrame QPlatformMediaIntegration::convertVideoFrame(QVideoFrame &,
                                                          const QVideoFrameFormat &)
 {
     return {};
+}
+
+QLatin1String QPlatformMediaIntegration::audioBackendName()
+{
+    return QPlatformMediaIntegration::instance()->audioDevices()->backendName();
 }
 
 QPlatformMediaIntegration::QPlatformMediaIntegration(QLatin1String name) : m_backendName(name) { }

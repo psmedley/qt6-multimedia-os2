@@ -15,13 +15,13 @@
 #ifndef QFFMPEGMEDIAPLAYER_H
 #define QFFMPEGMEDIAPLAYER_H
 
-#include <private/qplatformmediaplayer_p.h>
+#include <QtMultimedia/private/qplatformmediaplayer_p.h>
 #include <qmediametadata.h>
 #include <qtimer.h>
 #include <qpointer.h>
 #include <qfuture.h>
-#include "qffmpeg_p.h"
-#include "playbackengine/qffmpegmediadataholder_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegmediadataholder_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -29,7 +29,7 @@ namespace QFFmpeg {
 class CancelToken;
 
 class PlaybackEngine;
-}
+} // namespace QFFmpeg
 
 class QPlatformAudioOutput;
 
@@ -38,7 +38,7 @@ class QFFmpegMediaPlayer : public QObject, public QPlatformMediaPlayer
     Q_OBJECT
 public:
     QFFmpegMediaPlayer(QMediaPlayer *player);
-    ~QFFmpegMediaPlayer();
+    ~QFFmpegMediaPlayer() override;
 
     qint64 duration() const override;
 

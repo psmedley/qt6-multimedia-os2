@@ -48,17 +48,17 @@ enum CodecStorageType {
     CodecStorageTypeCount
 };
 
-using CodecsStorage = std::vector<const AVCodec *>;
+using CodecsStorage = std::vector<Codec>;
 
 struct CodecsComparator
 {
-    bool operator()(const AVCodec *a, const AVCodec *b) const
+    bool operator()(const Codec &a, const Codec &b) const
     {
-        return a->id < b->id
-                || (a->id == b->id && isAVCodecExperimental(a) < isAVCodecExperimental(b));
+        return a.id() < b.id() || (a.id() == b.id() && a.isExperimental() < b.isExperimental());
     }
 
-    bool operator()(const AVCodec *codec, AVCodecID id) const { return codec->id < id; }
+    bool operator()(const Codec &codec, AVCodecID id) const { return codec.id() < id; }
+    bool operator()(AVCodecID id, const Codec &codec) const { return id < codec.id(); }
 };
 
 template <typename FlagNames>
@@ -70,28 +70,28 @@ QString flagsToString(int flags, const FlagNames &flagNames)
         if ((flags & flagAndName.first) != 0) {
             leftover &= ~flagAndName.first;
             if (!result.isEmpty())
-                result += ", ";
-            result += flagAndName.second;
+                result += u", ";
+            result += QLatin1StringView(flagAndName.second);
         }
 
     if (leftover) {
         if (!result.isEmpty())
-            result += ", ";
+            result += u", ";
         result += QString::number(leftover, 16);
     }
     return result;
 }
 
-void dumpCodecInfo(const AVCodec *codec)
+void dumpCodecInfo(const Codec &codec)
 {
     using FlagNames = std::initializer_list<std::pair<int, const char *>>;
-    const auto mediaType = codec->type == AVMEDIA_TYPE_VIDEO ? "video"
-            : codec->type == AVMEDIA_TYPE_AUDIO              ? "audio"
-            : codec->type == AVMEDIA_TYPE_SUBTITLE           ? "subtitle"
+    const auto mediaType = codec.type() == AVMEDIA_TYPE_VIDEO ? "video"
+            : codec.type() == AVMEDIA_TYPE_AUDIO              ? "audio"
+            : codec.type() == AVMEDIA_TYPE_SUBTITLE           ? "subtitle"
                                                              : "other_type";
 
-    const auto type = av_codec_is_encoder(codec)
-            ? av_codec_is_decoder(codec) ? "encoder/decoder:" : "encoder:"
+    const auto type = codec.isEncoder()
+            ? codec.isDecoder() ? "encoder/decoder:" : "encoder:"
             : "decoder:";
 
     static const FlagNames capabilitiesNames = {
@@ -118,49 +118,52 @@ void dumpCodecInfo(const AVCodec *codec)
 #endif
     };
 
-    qCDebug(qLcCodecStorage) << mediaType << type << codec->name << "id:" << codec->id
+    qCDebug(qLcCodecStorage) << mediaType << type << codec.name() << "id:" << codec.id()
                              << "capabilities:"
-                             << flagsToString(codec->capabilities, capabilitiesNames);
+                             << flagsToString(codec.capabilities(), capabilitiesNames);
 
-    const auto pixelFormats = getCodecPixelFormats(codec);
-    if (pixelFormats) {
-        static const FlagNames flagNames = {
-            { AV_PIX_FMT_FLAG_BE, "BE" },
-            { AV_PIX_FMT_FLAG_PAL, "PAL" },
-            { AV_PIX_FMT_FLAG_BITSTREAM, "BITSTREAM" },
-            { AV_PIX_FMT_FLAG_HWACCEL, "HWACCEL" },
-            { AV_PIX_FMT_FLAG_PLANAR, "PLANAR" },
-            { AV_PIX_FMT_FLAG_RGB, "RGB" },
-            { AV_PIX_FMT_FLAG_ALPHA, "ALPHA" },
-            { AV_PIX_FMT_FLAG_BAYER, "BAYER" },
-            { AV_PIX_FMT_FLAG_FLOAT, "FLOAT" },
-        };
+    if (codec.type() == AVMEDIA_TYPE_VIDEO) {
+        const auto pixelFormats = codec.pixelFormats();
+        if (!pixelFormats.empty()) {
+            static const FlagNames flagNames = {
+                { AV_PIX_FMT_FLAG_BE, "BE" },
+                { AV_PIX_FMT_FLAG_PAL, "PAL" },
+                { AV_PIX_FMT_FLAG_BITSTREAM, "BITSTREAM" },
+                { AV_PIX_FMT_FLAG_HWACCEL, "HWACCEL" },
+                { AV_PIX_FMT_FLAG_PLANAR, "PLANAR" },
+                { AV_PIX_FMT_FLAG_RGB, "RGB" },
+                { AV_PIX_FMT_FLAG_ALPHA, "ALPHA" },
+                { AV_PIX_FMT_FLAG_BAYER, "BAYER" },
+                { AV_PIX_FMT_FLAG_FLOAT, "FLOAT" },
+            };
 
-        qCDebug(qLcCodecStorage) << "  pixelFormats:";
-        for (auto f = pixelFormats; *f != AV_PIX_FMT_NONE; ++f) {
-            auto desc = av_pix_fmt_desc_get(*f);
-            qCDebug(qLcCodecStorage)
-                    << "    id:" << *f << desc->name << "depth:" << desc->comp[0].depth
-                    << "flags:" << flagsToString(desc->flags, flagNames);
+            qCDebug(qLcCodecStorage) << "  pixelFormats:";
+            for (AVPixelFormat f : pixelFormats) {
+                auto desc = av_pix_fmt_desc_get(f);
+                qCDebug(qLcCodecStorage)
+                        << "    id:" << f << desc->name << "depth:" << desc->comp[0].depth
+                        << "flags:" << flagsToString(desc->flags, flagNames);
+            }
+        } else {
+            qCDebug(qLcCodecStorage) << "  pixelFormats: null";
         }
-    } else if (codec->type == AVMEDIA_TYPE_VIDEO) {
-        qCDebug(qLcCodecStorage) << "  pixelFormats: null";
+    } else if (codec.type() == AVMEDIA_TYPE_AUDIO) {
+        const auto sampleFormats = codec.sampleFormats();
+        if (!sampleFormats.empty()) {
+            qCDebug(qLcCodecStorage) << "  sampleFormats:";
+            for (auto f : sampleFormats) {
+                const auto name = av_get_sample_fmt_name(f);
+                qCDebug(qLcCodecStorage) << "    id:" << f << (name ? name : "unknown")
+                                         << "bytes_per_sample:" << av_get_bytes_per_sample(f)
+                                         << "is_planar:" << av_sample_fmt_is_planar(f);
+            }
+        } else {
+            qCDebug(qLcCodecStorage) << "  sampleFormats: null";
+        }
     }
 
-    const auto sampleFormats = getCodecSampleFormats(codec);
-    if (sampleFormats) {
-        qCDebug(qLcCodecStorage) << "  sampleFormats:";
-        for (auto f = sampleFormats; *f != AV_SAMPLE_FMT_NONE; ++f) {
-            const auto name = av_get_sample_fmt_name(*f);
-            qCDebug(qLcCodecStorage) << "    id:" << *f << (name ? name : "unknown")
-                                     << "bytes_per_sample:" << av_get_bytes_per_sample(*f)
-                                     << "is_planar:" << av_sample_fmt_is_planar(*f);
-        }
-    } else if (codec->type == AVMEDIA_TYPE_AUDIO) {
-        qCDebug(qLcCodecStorage) << "  sampleFormats: null";
-    }
-
-    if (avcodec_get_hw_config(codec, 0)) {
+    const std::vector<const AVCodecHWConfig*> hwConfigs = codec.hwConfigs();
+    if (!hwConfigs.empty()) {
         static const FlagNames hwConfigMethodNames = {
             { AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX, "HW_DEVICE_CTX" },
             { AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX, "HW_FRAMES_CTX" },
@@ -169,7 +172,7 @@ void dumpCodecInfo(const AVCodec *codec)
         };
 
         qCDebug(qLcCodecStorage) << "  hw config:";
-        for (int index = 0; auto config = avcodec_get_hw_config(codec, index); ++index) {
+        for (const AVCodecHWConfig* config : hwConfigs) {
             const auto pixFmtForDevice = pixelFormatForHwDevice(config->device_type);
             auto pixFmtDesc = av_pix_fmt_desc_get(config->pix_fmt);
             auto pixFmtForDeviceDesc = av_pix_fmt_desc_get(pixFmtForDevice);
@@ -183,43 +186,43 @@ void dumpCodecInfo(const AVCodec *codec)
     }
 }
 
-bool isCodecValid(const AVCodec *codec, const std::vector<AVHWDeviceType> &availableHwDeviceTypes,
+bool isCodecValid(const Codec &codec, const std::vector<AVHWDeviceType> &availableHwDeviceTypes,
                   const std::optional<std::unordered_set<AVCodecID>> &codecAvailableOnDevice)
 {
-    if (codec->type != AVMEDIA_TYPE_VIDEO)
+    if (codec.type() != AVMEDIA_TYPE_VIDEO)
         return true;
 
-    const auto pixelFormats = getCodecPixelFormats(codec);
-    if (!pixelFormats) {
+    const auto pixelFormats = codec.pixelFormats();
+    if (pixelFormats.empty()) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_ANDROID)
-        // Disable V4L2 M2M codecs for encoding for now,
-        // TODO: Investigate on how to get them working
-        if (std::strstr(codec->name, "_v4l2m2m") && av_codec_is_encoder(codec))
+        //  Disable V4L2 M2M codecs for encoding for now,
+        //  TODO: Investigate on how to get them working
+        if (codec.name().contains(QLatin1StringView{ "_v4l2m2m" }) && codec.isEncoder())
             return false;
 
         // MediaCodec in Android is used for hardware-accelerated media processing. That is why
         // before marking it as valid, we need to make sure if it is available on current device.
-        if (std::strstr(codec->name, "_mediacodec") && (codec->capabilities & AV_CODEC_CAP_HARDWARE)
-            && codecAvailableOnDevice && codecAvailableOnDevice->count(codec->id) == 0)
+        if (codec.name().contains(QLatin1StringView{ "_mediacodec" })
+            && (codec.capabilities() & AV_CODEC_CAP_HARDWARE)
+            && codecAvailableOnDevice && codecAvailableOnDevice->count(codec.id()) == 0)
             return false;
 #endif
 
-        return true; // To be investigated. This happens for RAW_VIDEO, that is supposed to be OK,
-        // and with v4l2m2m codecs, that is suspicious.
+        return true; // When the codec reports no pixel formats, format support is unknown.
     }
 
-    if (findAVPixelFormat(codec, &isHwPixelFormat) == AV_PIX_FMT_NONE)
-        return true;
+    if (!findAVPixelFormat(codec, &isHwPixelFormat))
+        return true; // Codec does not support any hw pixel formats, so no further checks are needed
 
-    if ((codec->capabilities & AV_CODEC_CAP_HARDWARE) == 0)
-        return true;
+    if ((codec.capabilities() & AV_CODEC_CAP_HARDWARE) == 0)
+        return true; // Codec does not support hardware processing, so no further checks are needed
+
+    if (codecAvailableOnDevice && codecAvailableOnDevice->count(codec.id()) == 0)
+        return false; // Codec is not in platform's allow-list
 
     auto checkDeviceType = [codec](AVHWDeviceType type) {
         return isAVFormatSupported(codec, pixelFormatForHwDevice(type));
     };
-
-    if (codecAvailableOnDevice && codecAvailableOnDevice->count(codec->id) == 0)
-        return false;
 
     return std::any_of(availableHwDeviceTypes.begin(), availableHwDeviceTypes.end(),
                        checkDeviceType);
@@ -264,11 +267,10 @@ const CodecsStorage &codecsStorage(CodecStorageType codecsType)
 {
     static const auto &storages = []() {
         std::array<CodecsStorage, CodecStorageTypeCount> result;
-        void *opaque = nullptr;
         const auto platformHwEncoders = availableHWCodecs(Encoders);
         const auto platformHwDecoders = availableHWCodecs(Decoders);
 
-        while (auto codec = av_codec_iterate(&opaque)) {
+        for (const Codec codec : CodecEnumerator()) {
             // TODO: to be investigated
             // FFmpeg functions avcodec_find_decoder/avcodec_find_encoder
             // find experimental codecs in the last order,
@@ -279,26 +281,26 @@ const CodecsStorage &codecsStorage(CodecStorageType codecsType)
             static const auto experimentalCodecsEnabled =
                     qEnvironmentVariableIntValue("QT_ENABLE_EXPERIMENTAL_CODECS");
 
-            if (!experimentalCodecsEnabled && isAVCodecExperimental(codec)) {
-                qCDebug(qLcCodecStorage) << "Skip experimental codec" << codec->name;
+            if (!experimentalCodecsEnabled && codec.isExperimental()) {
+                qCDebug(qLcCodecStorage) << "Skip experimental codec" << codec.name();
                 continue;
             }
 
-            if (av_codec_is_decoder(codec)) {
+            if (codec.isDecoder()) {
                 if (isCodecValid(codec, HWAccel::decodingDeviceTypes(), platformHwDecoders))
                     result[Decoders].emplace_back(codec);
                 else
                     qCDebug(qLcCodecStorage)
-                            << "Skip decoder" << codec->name
+                            << "Skip decoder" << codec.name()
                             << "due to disabled matching hw acceleration, or dysfunctional codec";
             }
 
-            if (av_codec_is_encoder(codec)) {
+            if (codec.isEncoder()) {
                 if (isCodecValid(codec, HWAccel::encodingDeviceTypes(), platformHwEncoders))
                     result[Encoders].emplace_back(codec);
                 else
                     qCDebug(qLcCodecStorage)
-                            << "Skip encoder" << codec->name
+                            << "Skip encoder" << codec.name()
                             << "due to disabled matching hw acceleration, or dysfunctional codec";
             }
         }
@@ -336,10 +338,10 @@ bool findAndOpenCodec(CodecStorageType codecsType, AVCodecID codecId,
     const auto &storage = codecsStorage(codecsType);
     auto it = std::lower_bound(storage.begin(), storage.end(), codecId, CodecsComparator{});
 
-    using CodecToScore = std::pair<const AVCodec *, AVScore>;
+    using CodecToScore = std::pair<Codec, AVScore>;
     std::vector<CodecToScore> codecsToScores;
 
-    for (; it != storage.end() && (*it)->id == codecId; ++it) {
+    for (; it != storage.end() && it->id()  == codecId; ++it) {
         const AVScore score = scoreGetter ? scoreGetter(*it) : DefaultAVScore;
         if (score != NotSuitableAVScore)
             codecsToScores.emplace_back(*it, score);
@@ -356,69 +358,50 @@ bool findAndOpenCodec(CodecStorageType codecsType, AVCodecID codecId,
     return std::any_of(codecsToScores.begin(), codecsToScores.end(), open);
 }
 
-template <typename CodecScoreGetter>
-const AVCodec *findAVCodec(CodecStorageType codecsType, AVCodecID codecId,
-                           const CodecScoreGetter &scoreGetter)
+std::optional<Codec> findAVCodec(CodecStorageType codecsType, AVCodecID codecId,
+                                 const std::optional<PixelOrSampleFormat> &format)
 {
-    const auto &storage = codecsStorage(codecsType);
-    auto it = std::lower_bound(storage.begin(), storage.end(), codecId, CodecsComparator{});
+    const CodecsStorage& storage = codecsStorage(codecsType);
 
-    const AVCodec *result = nullptr;
-    AVScore resultScore = NotSuitableAVScore;
+    // Storage is sorted, so we can quickly narrow down the search to codecs with the specific id.
+    auto begin = std::lower_bound(storage.begin(), storage.end(), codecId, CodecsComparator{});
+    auto end = std::upper_bound(begin, storage.end(), codecId, CodecsComparator{});
 
-    for (; it != storage.end() && (*it)->id == codecId && resultScore != BestAVScore; ++it) {
-        const auto score = scoreGetter(*it);
-
-        if (score > resultScore) {
-            resultScore = score;
-            result = *it;
-        }
-    }
-
-    return result;
-}
-
-const AVCodec *findAVCodec(CodecStorageType codecsType, AVCodecID codecId,
-                           const std::optional<PixelOrSampleFormat> &format)
-{
-    // TODO: remove deviceType and use only isAVFormatSupported to check the format
-
-    return findAVCodec(codecsType, codecId, [&](const AVCodec *codec) {
-        if (format && !isAVFormatSupported(codec, *format))
-            return NotSuitableAVScore;
-
-        return BestAVScore;
+    // Within the narrowed down range, look for a codec that supports the format.
+    // If no format is specified, return the first one.
+    auto codecIt = std::find_if(begin, end, [&format](const Codec &codec) {
+        return !format || isAVFormatSupported(codec, *format);
     });
+
+    if (codecIt != end)
+        return *codecIt;
+
+    return {};
 }
 
 } // namespace
 
-const AVCodec *findAVDecoder(AVCodecID codecId, const std::optional<PixelOrSampleFormat> &format)
+std::optional<Codec> findAVDecoder(AVCodecID codecId,
+                                   const std::optional<PixelOrSampleFormat> &format)
 {
     return findAVCodec(Decoders, codecId, format);
 }
 
-const AVCodec *findAVEncoder(AVCodecID codecId, const std::optional<PixelOrSampleFormat> &format)
+std::optional<Codec> findAVEncoder(AVCodecID codecId, const std::optional<PixelOrSampleFormat> &format)
 {
     return findAVCodec(Encoders, codecId, format);
 }
 
-const AVCodec *findAVEncoder(AVCodecID codecId,
-                             const std::function<AVScore(const AVCodec *)> &scoresGetter)
-{
-    return findAVCodec(Encoders, codecId, scoresGetter);
-}
-
 bool findAndOpenAVDecoder(AVCodecID codecId,
-                          const std::function<AVScore(const AVCodec *)> &scoresGetter,
-                          const std::function<bool(const AVCodec *)> &codecOpener)
+                          const std::function<AVScore(const Codec &)> &scoresGetter,
+                          const std::function<bool(const Codec &)> &codecOpener)
 {
     return findAndOpenCodec(Decoders, codecId, scoresGetter, codecOpener);
 }
 
 bool findAndOpenAVEncoder(AVCodecID codecId,
-                          const std::function<AVScore(const AVCodec *)> &scoresGetter,
-                          const std::function<bool(const AVCodec *)> &codecOpener)
+                          const std::function<AVScore(const Codec &)> &scoresGetter,
+                          const std::function<bool(const Codec &)> &codecOpener)
 {
     return findAndOpenCodec(Encoders, codecId, scoresGetter, codecOpener);
 }

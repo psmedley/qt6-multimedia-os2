@@ -35,20 +35,21 @@ auto wait_for(Async const& async, Windows::Foundation::TimeSpan const& timeout);
 #include <qloggingcategory.h>
 #include <qguiapplication.h>
 #include <private/qmultimediautils_p.h>
-#include <private/qwindowsmultimediautils_p.h>
 #include <private/qcapturablewindow_p.h>
 #include <qpa/qplatformscreen_p.h>
+#include <QtCore/private/qsystemerror_p.h>
 
 #include <memory>
 #include <system_error>
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
+
 using namespace winrt::Windows::Graphics::Capture;
 using namespace winrt::Windows::Graphics::DirectX;
 using namespace winrt::Windows::Graphics::DirectX::Direct3D11;
 using namespace Windows::Graphics::DirectX::Direct3D11;
-using namespace QWindowsMultimediaUtils;
 
 using winrt::check_hresult;
 using winrt::com_ptr;
@@ -109,7 +110,8 @@ public:
 
                 return md;
             } else {
-                qCDebug(qLcWindowCaptureUwp) << "Failed to map DXGI surface" << errorString(hr);
+                qCDebug(qLcWindowCaptureUwp)
+                        << "Failed to map DXGI surface" << QSystemError::windowsComString(hr);
                 return {};
             }
         }
@@ -124,7 +126,8 @@ public:
 
         const HRESULT hr = m_surface->Unmap();
         if (FAILED(hr))
-            qCDebug(qLcWindowCaptureUwp) << "Failed to unmap surface" << errorString(hr);
+            qCDebug(qLcWindowCaptureUwp)
+                    << "Failed to unmap surface" << QSystemError::windowsComString(hr);
 
         m_mapMode = QVideoFrame::NotMapped;
     }
@@ -433,34 +436,34 @@ QFFmpegWindowCaptureUwp::~QFFmpegWindowCaptureUwp() = default;
 static QString isCapturableWindow(HWND hwnd)
 {
     if (!IsWindow(hwnd))
-        return "Invalid window handle";
+        return u"Invalid window handle"_s;
 
     if (hwnd == GetShellWindow())
-        return "Cannot capture the shell window";
+        return u"Cannot capture the shell window"_s;
 
     wchar_t className[MAX_PATH] = {};
     GetClassName(hwnd, className, MAX_PATH);
     if (QString::fromWCharArray(className).length() == 0)
-        return "Cannot capture windows without a class name";
+        return u"Cannot capture windows without a class name"_s;
 
     if (!IsWindowVisible(hwnd))
-        return "Cannot capture invisible windows";
+        return u"Cannot capture invisible windows"_s;
 
     if (GetAncestor(hwnd, GA_ROOT) != hwnd)
-        return "Can only capture root windows";
+        return u"Can only capture root windows"_s;
 
     const LONG_PTR style = GetWindowLongPtr(hwnd, GWL_STYLE);
     if (style & WS_DISABLED)
-        return "Cannot capture disabled windows";
+        return u"Cannot capture disabled windows"_s;
 
     const LONG_PTR exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
     if (exStyle & WS_EX_TOOLWINDOW)
-        return "No tooltips";
+        return u"No tooltips"_s;
 
     DWORD cloaked = FALSE;
     const HRESULT hr = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
     if (SUCCEEDED(hr) && cloaked == DWM_CLOAKED_SHELL)
-        return "Cannot capture cloaked windows";
+        return u"Cannot capture cloaked windows"_s;
 
     return {};
 }

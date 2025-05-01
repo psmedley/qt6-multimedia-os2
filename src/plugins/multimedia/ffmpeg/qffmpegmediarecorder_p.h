@@ -15,7 +15,7 @@
 // We mean it.
 //
 
-#include <private/qplatformmediarecorder_p.h>
+#include <QtMultimedia/private/qplatformmediarecorder_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -27,14 +27,14 @@ class QFFmpegMediaCaptureSession;
 
 namespace QFFmpeg {
 class RecordingEngine;
-}
+} // namespace QFFmpeg
 
 class QFFmpegMediaRecorder : public QObject, public QPlatformMediaRecorder
 {
     Q_OBJECT
 public:
     QFFmpegMediaRecorder(QMediaRecorder *parent);
-    virtual ~QFFmpegMediaRecorder();
+    ~QFFmpegMediaRecorder() override;
 
     bool isLocationWritable(const QUrl &sink) const override;
 

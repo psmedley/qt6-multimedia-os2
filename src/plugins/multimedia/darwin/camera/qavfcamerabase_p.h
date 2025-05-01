@@ -20,6 +20,8 @@
 #include <private/qplatformcamera_p.h>
 #include <private/qplatformvideodevices_p.h>
 
+#include <functional>
+
 Q_FORWARD_DECLARE_OBJC_CLASS(AVCaptureDeviceFormat);
 Q_FORWARD_DECLARE_OBJC_CLASS(AVCaptureConnection);
 Q_FORWARD_DECLARE_OBJC_CLASS(AVCaptureDevice);
@@ -30,16 +32,25 @@ class QPlatformMediaIntegration;
 class QAVFVideoDevices : public QPlatformVideoDevices
 {
 public:
-    QAVFVideoDevices(QPlatformMediaIntegration *integration);
+    // Takes a delegate to check whether a given CvPixelFormat is supported for a capture session.
+    // If given a nullptr, it assumes all formats are supported.
+    QAVFVideoDevices(
+        QPlatformMediaIntegration *integration,
+        std::function<bool(uint32_t)> &&isCvPixelFormatSupportedDelegate = nullptr);
     ~QAVFVideoDevices();
 
-    QList<QCameraDevice> videoDevices() const override;
+    // Returns true if the given CvPixelFormat is supported for camera capture session.
+    [[nodiscard]] bool isCvPixelFormatSupported(uint32_t cvPixelFormat) const;
+
+protected:
+    QList<QCameraDevice> findVideoInputs() const override;
 
 private:
     void updateCameraDevices();
 
     NSObject *m_deviceConnectedObserver;
     NSObject *m_deviceDisconnectedObserver;
+    std::function<bool(uint32_t)> m_isCvPixelFormatSupportedDelegate;
 
     QList<QCameraDevice> m_cameraDevices;
 };
@@ -57,7 +68,7 @@ public:
     void setActive(bool active) override final;
 
     void setCamera(const QCameraDevice &camera) override final;
-    bool setCameraFormat(const QCameraFormat &format) override;
+    bool setCameraFormat(const QCameraFormat &format) override final;
 
     void setFocusMode(QCamera::FocusMode mode) override;
 
@@ -106,6 +117,10 @@ protected:
     virtual void onActiveChanged(bool active) = 0;
     // Called by setCamera() when the camera is successfully changed.
     virtual void onCameraDeviceChanged(const QCameraDevice &device) = 0;
+    // Should be implemented by the backend to apply the camera-format
+    // to the physical camera if possible.
+    // Returns true if the format was successfully applied.
+    [[nodiscard]] virtual bool tryApplyCameraFormat(const QCameraFormat&) = 0;
 
     bool checkCameraPermission();
 

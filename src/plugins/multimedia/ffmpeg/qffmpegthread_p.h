@@ -14,7 +14,7 @@
 // We mean it.
 //
 
-#include <private/qtmultimediaglobal_p.h>
+#include <QtMultimedia/private/qtmultimediaglobal_p.h>
 
 #include <qmutex.h>
 #include <qwaitcondition.h>
@@ -95,7 +95,7 @@ private:
 
 template <typename T>
 using ConsumerThreadUPtr = std::unique_ptr<T, ConsumerThread::Deleter>;
-}
+} // namespace QFFmpeg
 
 QT_END_NAMESPACE
 

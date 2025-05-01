@@ -14,20 +14,21 @@
 // We mean it.
 //
 
-#include "qffmpegthread_p.h"
-#include "qffmpegencodingformatcontext_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpegthread_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegencodingformatcontext_p.h>
 
-#include <private/qplatformmediarecorder_p.h>
+#include <QtMultimedia/private/qplatformmediarecorder_p.h>
 #include <qmediarecorder.h>
 
 QT_BEGIN_NAMESPACE
 
+class QAudioBuffer;
+class QAudioFormat;
 class QFFmpegAudioInput;
 class QPlatformAudioBufferInput;
-class QPlatformAudioBufferInputBase;
-class QVideoFrame;
-class QAudioBuffer;
+class QAudioBufferSource;
 class QPlatformVideoSource;
+class QVideoFrame;
 
 namespace QFFmpeg
 {
@@ -44,9 +45,15 @@ class RecordingEngine : public QObject
     Q_OBJECT
 public:
     RecordingEngine(const QMediaEncoderSettings &settings, std::unique_ptr<EncodingFormatContext> context);
-    ~RecordingEngine();
+    ~RecordingEngine() override;
 
-    void initialize(const std::vector<QPlatformAudioBufferInputBase *> &audioSources,
+    /** Initializes the recording engine immediately or
+     *  postpones it if no source formats provided.
+     *  Returns true if no session errors have occurred during the immediate run or
+     *  the engine is to be initialized postponly.
+     *  If any session error has occurred, it emits the signal sessionError and returns false.
+     */
+    bool initialize(const std::vector<QAudioBufferSource *> &audioSources,
                     const std::vector<QPlatformVideoSource *> &videoSources);
     void finalize();
 
@@ -75,19 +82,19 @@ Q_SIGNALS:
 private:
     // Normal states transition, Stop is called upon Encoding,
     // header, content, and trailer are written:
-    // None -> FormatsInitialization -> EncodersInitialization -> Encoding -> Finalization
+    // None -> FormatsInitializing -> EncodersInitializing -> Encoding -> Finalizing
     //
-    // Stop is called upon FormatsInitialization, nothing is written to the output:
-    // None -> FormatsInitialization -> Finalization
+    // Stop is called upon FormatsInitializing, nothing is written to the output:
+    // None -> FormatsInitializing -> Finalizing
     //
-    // Stop is called upon EncodersInitialization, nothing is written to the output:
-    // None -> FormatsInitialization -> EncodersInitialization -> Finalization
+    // Stop is called upon EncodersInitializing, nothing is written to the output:
+    // None -> FormatsInitializing -> EncodersInitializing -> Finalizing
     enum class State {
         None,
-        FormatsInitialization,
-        EncodersInitialization,
+        FormatsInitializing,
+        EncodersInitializing,
         Encoding, // header written
-        Finalization
+        Finalizing
     };
 
     class EncodingFinalizer : public QThread
@@ -111,7 +118,7 @@ private:
     void handleSourceEndOfStream();
     void handleEncoderInitialization();
 
-    void handleFormatsInitialization();
+    bool startEncoders();
 
     size_t encodersCount() const { return m_audioEncoders.size() + m_videoEncoders.size(); }
 
@@ -141,7 +148,7 @@ private:
     State m_state = State::None;
 };
 
-}
+} // namespace QFFmpeg
 
 QT_END_NAMESPACE
 

@@ -128,7 +128,7 @@ private slots:
     void pause_doesNotAdvancePosition();
     void pause_playback_resumesFromPausedPosition();
 
-    void play_resetsErrorState_whenCalledWithInvalidFile();
+    void play_doesNotResetErrorState_whenCalledWithInvalidFile();
     void play_resumesPlaying_whenValidMediaIsProvidedAfterInvalidMedia();
     void play_doesNothing_whenMediaIsNotLoaded();
     void play_setsPlaybackStateAndMediaStatus_whenValidFileIsLoaded();
@@ -950,8 +950,7 @@ void tst_QMediaPlayerBackend::setSource_emitsError_whenSdpFileIsLoaded()
     // by default. For when the user wants to override these defaults, see
     // play_playsRtpStream_whenSdpFileIsLoaded
 
-    if (!isFFMPEGPlatform())
-        QSKIP("This test is only for FFmpeg backend");
+    QSKIP_IF_NOT_FFMPEG("This test is only for FFmpeg backend");
 
     // Create stream
     if (!canCreateRtpStream())
@@ -1260,7 +1259,7 @@ void tst_QMediaPlayerBackend::pause_playback_resumesFromPausedPosition()
     QCOMPARE_LT(player.position(), pausePos + 500);
 }
 
-void tst_QMediaPlayerBackend::play_resetsErrorState_whenCalledWithInvalidFile()
+void tst_QMediaPlayerBackend::play_doesNotResetErrorState_whenCalledWithInvalidFile()
 {
     m_fixture->player.setSource({ "Some not existing media" });
     QTRY_COMPARE_EQ(m_fixture->player.error(), QMediaPlayer::ResourceError);
@@ -1269,7 +1268,6 @@ void tst_QMediaPlayerBackend::play_resetsErrorState_whenCalledWithInvalidFile()
 
     m_fixture->player.play();
 
-    expectedState.error = QMediaPlayer::NoError;
     COMPARE_MEDIA_PLAYER_STATE_EQ(MediaPlayerState{ m_fixture->player }, expectedState);
 
     QTest::qWait(150); // wait a bit and check position is not changed
@@ -1602,8 +1600,7 @@ void tst_QMediaPlayerBackend::play_playsRtpStream_whenSdpFileIsLoaded()
 #if !QT_CONFIG(process)
     QSKIP("This test requires QProcess support");
 #else
-    if (!isFFMPEGPlatform())
-        QSKIP("This test is only for FFmpeg backend");
+    QSKIP_IF_NOT_FFMPEG("This test is only for FFmpeg backend");
 
     // Create stream
     if (!canCreateRtpStream())
@@ -3089,7 +3086,6 @@ void tst_QMediaPlayerBackend::playFromSequentialStream()
     player.play();
     QTRY_COMPARE_GE(player.position(), 1000);
 
-    QSKIP_FFMPEG("QTBUG-128802: media is not seekable, but isSeekable return `true`");
     QCOMPARE(player.isSeekable(), false);
 
     player.setPosition(0);
@@ -3866,7 +3862,7 @@ void tst_QMediaPlayerBackend::setMedia_setsVideoSinkSize_beforePlaying()
 std::unique_ptr<QProcess> tst_QMediaPlayerBackend::createRtpStreamProcess(QString fileName,
                                                                           QString sdpUrl)
 {
-    Q_ASSERT(!m_vlcCommand.isEmpty());
+    QTEST_ASSERT(!m_vlcCommand.isEmpty());
 
     auto process = std::make_unique<QProcess>();
 #if defined(Q_OS_WINDOWS)

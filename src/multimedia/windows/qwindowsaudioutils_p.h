@@ -17,7 +17,7 @@
 
 #include <qaudioformat.h>
 #include <QtCore/qt_windows.h>
-#include <private/qcomptr_p.h>
+#include <QtCore/private/qcomptr_p.h>
 #include <mmreg.h>
 
 #include <optional>
@@ -32,6 +32,8 @@ class QWindowsMediaFoundation;
 namespace QWindowsAudioUtils
 {
     bool formatToWaveFormatExtensible(const QAudioFormat &format, WAVEFORMATEXTENSIBLE &wfx);
+    std::optional<WAVEFORMATEXTENSIBLE> toWaveFormatExtensible(const QAudioFormat &format);
+
     QAudioFormat waveFormatExToFormat(const WAVEFORMATEX &in);
     Q_MULTIMEDIA_EXPORT QAudioFormat mediaTypeToFormat(IMFMediaType *mediaType);
     ComPtr<IMFMediaType> formatToMediaType(QWindowsMediaFoundation &, const QAudioFormat &format);

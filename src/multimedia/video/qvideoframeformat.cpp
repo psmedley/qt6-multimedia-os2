@@ -739,7 +739,7 @@ QString QVideoFrameFormat::vertexShaderFileName() const
 */
 QString QVideoFrameFormat::fragmentShaderFileName() const
 {
-    return QVideoTextureHelper::fragmentShaderFileName(*this);
+    return QVideoTextureHelper::fragmentShaderFileName(*this, nullptr);
 }
 
 /*!
@@ -747,7 +747,7 @@ QString QVideoFrameFormat::fragmentShaderFileName() const
 */
 void QVideoFrameFormat::updateUniformData(QByteArray *dst, const QVideoFrame &frame, const QMatrix4x4 &transform, float opacity) const
 {
-    QVideoTextureHelper::updateUniformData(dst, *this, frame, transform, opacity);
+    QVideoTextureHelper::updateUniformData(dst, nullptr, *this, frame, transform, opacity);
 }
 
 /*!

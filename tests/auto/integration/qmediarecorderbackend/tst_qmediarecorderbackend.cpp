@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 #include <QtTest/QtTest>
-#include <QtMultimedia/qmediarecorder.h>
-#include <QtMultimedia/qmediacapturesession.h>
+#include <QtMultimedia/qaudiodevice.h>
 #include <QtMultimedia/qaudiobufferinput.h>
+#include <QtMultimedia/qmediacapturesession.h>
+#include <QtMultimedia/qmediadevices.h>
 #include <QtMultimedia/qmediaformat.h>
+#include <QtMultimedia/qmediarecorder.h>
+#include <QtMultimedia/qwavedecoder.h>
 #include <private/audiogenerationutils_p.h>
 #include <private/mediabackendutils_p.h>
 #include <private/capturesessionfixture_p.h>
@@ -13,6 +16,8 @@
 #include <private/qcolorutil_p.h>
 #include <private/qfileutil_p.h>
 #include <private/mediabackendutils_p.h>
+#include <private/formatutils_p.h>
+#include <private/osdetection_p.h>
 
 #include <QtCore/qtemporarydir.h>
 #include <chrono>
@@ -22,6 +27,7 @@ using namespace std::chrono_literals;
 QT_USE_NAMESPACE
 
 namespace {
+
 bool isSupportedPixelFormat(QVideoFrameFormat::PixelFormat pixelFormat)
 {
     // TODO: Enable more pixel formats once support is added
@@ -46,11 +52,33 @@ bool isSupportedPixelFormat(QVideoFrameFormat::PixelFormat pixelFormat)
         return true;
     }
 }
+
+std::set<QMediaFormat::VideoCodec> unsupportedVideoCodecs(QMediaFormat::FileFormat fileFormat)
+{
+    using VideoCodec = QMediaFormat::VideoCodec;
+
+    std::set<QMediaFormat::VideoCodec> unsupportedCodecs;
+    if constexpr (isMacOS) {
+        if constexpr (isArm) {
+            if (fileFormat == QMediaFormat::FileFormat::WMV)
+                unsupportedCodecs.insert(VideoCodec::H264);
+            else if (fileFormat == QMediaFormat::FileFormat::AVI)
+                unsupportedCodecs.insert(VideoCodec::H264);
+            else if (fileFormat == QMediaFormat::MPEG4)
+                unsupportedCodecs.insert(VideoCodec::H264);
+            else if (fileFormat == QMediaFormat::QuickTime)
+                unsupportedCodecs.insert(VideoCodec::H264);
+        }
+    }
+
+    return unsupportedCodecs;
+}
+
 } // namespace
 
 using namespace Qt::StringLiterals;
 
-class tst_QMediaFrameInputsBackend : public QObject
+class tst_QMediaRecorderBackend : public QObject
 {
     Q_OBJECT
 
@@ -81,11 +109,23 @@ private slots:
 
     void record_writesToOutputLocation_whenNotWritableOutputDeviceAndLocationAreSet();
 
+    void record_writesVideo_withAllSupportedVideoFormats_data();
+    void record_writesVideo_withAllSupportedVideoFormats();
+
+    void record_writesAudio_withAllSupportedAudioFormats_data();
+    void record_writesAudio_withAllSupportedAudioFormats();
+
+    void record_emits_mediaformatChanged_whenFormatChanged();
+
+    void stop_stopsRecording_whenInvokedUponRecordingStart();
+
+    void record_reflectsAudioEncoderSetting();
+
 private:
     QTemporaryDir m_tempDir;
 };
 
-void tst_QMediaFrameInputsBackend::cleanupTestCase()
+void tst_QMediaRecorderBackend::cleanupTestCase()
 {
     // Copy any stored files in the temporary directory over to COIN result directory
     // to allow inspecting image differences.
@@ -97,7 +137,7 @@ void tst_QMediaFrameInputsBackend::cleanupTestCase()
     }
 }
 
-void tst_QMediaFrameInputsBackend::record_createsFileWithExpectedExtension_whenRecordingAudio_data()
+void tst_QMediaRecorderBackend::record_createsFileWithExpectedExtension_whenRecordingAudio_data()
 {
     QTest::addColumn<QMediaFormat::FileFormat>("fileFormat");
     QTest::addColumn<QString>("inputFileName");
@@ -135,10 +175,9 @@ void tst_QMediaFrameInputsBackend::record_createsFileWithExpectedExtension_whenR
     }
 }
 
-void tst_QMediaFrameInputsBackend::record_createsFileWithExpectedExtension_whenRecordingAudio()
+void tst_QMediaRecorderBackend::record_createsFileWithExpectedExtension_whenRecordingAudio()
 {
-    if (!isFFMPEGPlatform())
-        QSKIP("This test requires APIs that are only implemented with FFmpeg media backend");
+    QSKIP_IF_NOT_FFMPEG("This test requires APIs that are only implemented with FFmpeg media backend");
 
     QFETCH(const QMediaFormat::FileFormat, fileFormat);
     QFETCH(const QString, inputFileName);
@@ -158,7 +197,7 @@ void tst_QMediaFrameInputsBackend::record_createsFileWithExpectedExtension_whenR
     format.setChannelConfig(QAudioFormat::ChannelConfigMono);
     format.setChannelCount(1);
     format.setSampleFormat(QAudioFormat::Float);
-    format.setSampleRate(44000);
+    format.setSampleRate(44100);
 
     QAudioBufferInput input{ format };
     session.setAudioBufferInput(&input);
@@ -197,20 +236,21 @@ void tst_QMediaFrameInputsBackend::record_createsFileWithExpectedExtension_whenR
     QVERIFY(pass);
 }
 
-void tst_QMediaFrameInputsBackend::record_writesVideo_whenInputFrameShrinksOverTime()
+void tst_QMediaRecorderBackend::record_writesVideo_whenInputFrameShrinksOverTime()
 {
+    QSKIP_IF_NOT_FFMPEG();
+
     CaptureSessionFixture f{ StreamType::Video };
     f.start(RunMode::Push, AutoStop::EmitEmpty);
     f.readyToSendVideoFrame.wait();
 
     constexpr int startSize = 38;
     int frameCount = 0;
-    for (int i = 0; i < startSize;
-         i += 2) { // TODO crash in sws_scale if subsequent frames are odd-sized QTBUG-126259
+    for (int i = 0; i < startSize; ++i) {
         ++frameCount;
         const QSize size{ startSize - i, startSize - i };
         f.m_videoGenerator.setSize(size);
-        f.m_videoInput.sendVideoFrame(f.m_videoGenerator.createFrame());
+        QVERIFY(f.m_videoInput.sendVideoFrame(f.m_videoGenerator.createFrame()));
         f.readyToSendVideoFrame.wait();
     }
 
@@ -228,8 +268,10 @@ void tst_QMediaFrameInputsBackend::record_writesVideo_whenInputFrameShrinksOverT
     QCOMPARE_EQ(info->m_size, QSize(startSize, startSize));
 }
 
-void tst_QMediaFrameInputsBackend::record_writesVideo_whenInputFrameGrowsOverTime()
+void tst_QMediaRecorderBackend::record_writesVideo_whenInputFrameGrowsOverTime()
 {
+    QSKIP_IF_NOT_FFMPEG();
+
     CaptureSessionFixture f{ StreamType::Video };
     f.start(RunMode::Push, AutoStop::EmitEmpty);
     f.readyToSendVideoFrame.wait();
@@ -238,13 +280,12 @@ void tst_QMediaFrameInputsBackend::record_writesVideo_whenInputFrameGrowsOverTim
     constexpr int maxSize = 256;
     int frameCount = 0;
 
-    for (int i = 0; i < maxSize - startSize;
-         i += 2) { // TODO crash in sws_scale if subsequent frames are odd-sized QTBUG-126259
+    for (int i = 0; i < maxSize - startSize; ++i) {
         ++frameCount;
         const QSize size{ startSize + i, startSize + i };
         f.m_videoGenerator.setPattern(ImagePattern::ColoredSquares);
         f.m_videoGenerator.setSize(size);
-        f.m_videoInput.sendVideoFrame(f.m_videoGenerator.createFrame());
+        QVERIFY(f.m_videoInput.sendVideoFrame(f.m_videoGenerator.createFrame()));
         f.readyToSendVideoFrame.wait();
     }
 
@@ -262,7 +303,7 @@ void tst_QMediaFrameInputsBackend::record_writesVideo_whenInputFrameGrowsOverTim
     QCOMPARE_EQ(info->m_size, QSize(startSize, startSize));
 }
 
-void tst_QMediaFrameInputsBackend::record_stopsRecording_whenInputsReportedEndOfStream_data()
+void tst_QMediaRecorderBackend::record_stopsRecording_whenInputsReportedEndOfStream_data()
 {
     QTest::addColumn<bool>("audioStopsFirst");
 
@@ -270,8 +311,10 @@ void tst_QMediaFrameInputsBackend::record_stopsRecording_whenInputsReportedEndOf
     QTest::addRow("video stops first") << true;
 }
 
-void tst_QMediaFrameInputsBackend::record_stopsRecording_whenInputsReportedEndOfStream()
+void tst_QMediaRecorderBackend::record_stopsRecording_whenInputsReportedEndOfStream()
 {
+    QSKIP_IF_NOT_FFMPEG();
+
     QFETCH(const bool, audioStopsFirst);
 
     CaptureSessionFixture f{ StreamType::AudioAndVideo };
@@ -315,7 +358,7 @@ void tst_QMediaFrameInputsBackend::record_stopsRecording_whenInputsReportedEndOf
     QVERIFY(mediaInfo->m_hasAudio);
 }
 
-void tst_QMediaFrameInputsBackend::record_writesVideo_withoutTransforms_whenPresentationTransformsPresent_data()
+void tst_QMediaRecorderBackend::record_writesVideo_withoutTransforms_whenPresentationTransformsPresent_data()
 {
     QTest::addColumn<QtVideo::Rotation>("presentationRotation");
     QTest::addColumn<bool>("presentationMirrored");
@@ -330,8 +373,10 @@ void tst_QMediaFrameInputsBackend::record_writesVideo_withoutTransforms_whenPres
     QTest::addRow("270 degrees, mirrored") << QtVideo::Rotation::Clockwise270 << true;
 }
 
-void tst_QMediaFrameInputsBackend::record_writesVideo_withoutTransforms_whenPresentationTransformsPresent()
+void tst_QMediaRecorderBackend::record_writesVideo_withoutTransforms_whenPresentationTransformsPresent()
 {
+    QSKIP_IF_NOT_FFMPEG();
+
     QFETCH(const QtVideo::Rotation, presentationRotation);
     QFETCH(const bool, presentationMirrored);
 
@@ -357,7 +402,7 @@ void tst_QMediaFrameInputsBackend::record_writesVideo_withoutTransforms_whenPres
     QVERIFY(fuzzyCompare(colors[3], Qt::yellow));
 }
 
-void tst_QMediaFrameInputsBackend::record_writesVideo_withCorrectColors_data()
+void tst_QMediaRecorderBackend::record_writesVideo_withCorrectColors_data()
 {
     QTest::addColumn<QVideoFrameFormat::PixelFormat>("pixelFormat");
 
@@ -370,8 +415,10 @@ void tst_QMediaFrameInputsBackend::record_writesVideo_withCorrectColors_data()
     }
 }
 
-void tst_QMediaFrameInputsBackend::record_writesVideo_withCorrectColors()
+void tst_QMediaRecorderBackend::record_writesVideo_withCorrectColors()
 {
+    QSKIP_IF_NOT_FFMPEG();
+
     QFETCH(const QVideoFrameFormat::PixelFormat, pixelFormat);
 
     // Arrange
@@ -418,8 +465,10 @@ void tst_QMediaFrameInputsBackend::record_writesVideo_withCorrectColors()
     QVERIFY(fuzzyCompare(expectedColors[3], actualColors[3]));
 }
 
-void tst_QMediaFrameInputsBackend::actualLocation_returnsNonEmptyLocation_whenRecorderEntersRecordingState()
+void tst_QMediaRecorderBackend::actualLocation_returnsNonEmptyLocation_whenRecorderEntersRecordingState()
 {
+    QSKIP_IF_NOT_FFMPEG();
+
     const QUrl url = QUrl::fromLocalFile(m_tempDir.filePath("any_file_name"));
     CaptureSessionFixture f{ StreamType::AudioAndVideo };
     f.m_recorder.setOutputLocation(url);
@@ -439,7 +488,7 @@ void tst_QMediaFrameInputsBackend::actualLocation_returnsNonEmptyLocation_whenRe
     f.m_recorder.stop();
 }
 
-void tst_QMediaFrameInputsBackend::record_writesToOutputDevice_whenWritableOutputDeviceAndLocationAreSet()
+void tst_QMediaRecorderBackend::record_writesToOutputDevice_whenWritableOutputDeviceAndLocationAreSet()
 {
     QSKIP_IF_NOT_FFMPEG();
 
@@ -449,7 +498,7 @@ void tst_QMediaFrameInputsBackend::record_writesToOutputDevice_whenWritableOutpu
     f.m_recorder.setOutputLocation(url);
 
     QTemporaryFile tempFile;
-    tempFile.open();
+    QTEST_ASSERT(tempFile.open());
 
     f.m_recorder.setOutputDevice(&tempFile);
 
@@ -465,7 +514,7 @@ void tst_QMediaFrameInputsBackend::record_writesToOutputDevice_whenWritableOutpu
     QCOMPARE_GT(tempFile.size(), 0);
 }
 
-void tst_QMediaFrameInputsBackend::record_writesToOutputLocation_whenNotWritableOutputDeviceAndLocationAreSet()
+void tst_QMediaRecorderBackend::record_writesToOutputLocation_whenNotWritableOutputDeviceAndLocationAreSet()
 {
     QSKIP_IF_NOT_FFMPEG();
 
@@ -492,6 +541,216 @@ void tst_QMediaFrameInputsBackend::record_writesToOutputLocation_whenNotWritable
     QCOMPARE(tempFile.size(), 0);
 }
 
-QTEST_MAIN(tst_QMediaFrameInputsBackend)
+void tst_QMediaRecorderBackend::record_writesVideo_withAllSupportedVideoFormats_data()
+{
+    QTest::addColumn<QMediaFormat>("format");
+
+    for (QMediaFormat f : allFileFormats(/*with unspecified*/ true)) {
+        for (const QMediaFormat::VideoCodec &c : allVideoCodecs(/*with unspecified*/ true)) {
+            f.setVideoCodec(c);
+
+            if (!f.isSupported(QMediaFormat::Encode))
+                continue;
+
+            const auto formatName = QMediaFormat::fileFormatName(f.fileFormat()).toLatin1();
+            const auto videoCodecName = QMediaFormat::videoCodecName(f.videoCodec()).toLatin1();
+
+            QTest::addRow("%s,%s", formatName.data(), videoCodecName.data()) << f;
+        }
+    }
+}
+
+void tst_QMediaRecorderBackend::record_writesVideo_withAllSupportedVideoFormats()
+{
+    if (!isFFMPEGPlatform())
+        QSKIP("Tested only with FFmpeg backend because other backends don't have the same "
+              "format support");
+
+    QFETCH(const QMediaFormat, format);
+
+    CaptureSessionFixture f{ StreamType::Video };
+
+    f.m_recorder.setMediaFormat(format);
+    f.m_videoGenerator.setPattern(ImagePattern::ColoredSquares);
+    f.m_videoGenerator.setFrameCount(3);
+    f.m_videoGenerator.setFrameRate(24);
+    f.m_videoGenerator.setSize({ 128, 64 });
+
+    f.start(RunMode::Pull, AutoStop::EmitEmpty);
+
+    const auto actualFormat = f.m_recorder.mediaFormat();
+
+    qDebug() << "Actual format used: " << QMediaFormat::fileFormatName(actualFormat.fileFormat())
+             << "/" << QMediaFormat::videoCodecName(actualFormat.videoCodec());
+
+    QVERIFY(f.waitForRecorderStopped(60s));
+
+    if (unsupportedVideoCodecs(actualFormat.fileFormat()).count(actualFormat.videoCodec()))
+        QEXPECT_FAIL("", "QTBUG-126276", Abort);
+
+    QVERIFY2(f.m_recorder.error() == QMediaRecorder::NoError,
+             f.m_recorder.errorString().toLatin1().data());
+
+    const std::optional<MediaInfo> info = MediaInfo::create(f.m_recorder.actualLocation());
+    QVERIFY(info);
+
+    QCOMPARE_GE(info->m_colors.size(),
+                2u); // TODO: We loose one frame with some combinations
+    QCOMPARE_LE(info->m_colors.size(), 3u);
+
+    std::array<QColor, 4> colors = info->m_colors.front();
+    QVERIFY(fuzzyCompare(colors[0], Qt::red));
+    QVERIFY(fuzzyCompare(colors[1], Qt::green));
+    QVERIFY(fuzzyCompare(colors[2], Qt::blue));
+    QVERIFY(fuzzyCompare(colors[3], Qt::yellow));
+}
+
+void tst_QMediaRecorderBackend::record_writesAudio_withAllSupportedAudioFormats_data()
+{
+    QTest::addColumn<QMediaFormat>("format");
+
+    for (QMediaFormat f : allFileFormats(/*with unspecified*/ true)) {
+        for (const QMediaFormat::AudioCodec &c : allAudioCodecs(/*with unspecified*/ true)) {
+            f.setAudioCodec(c);
+
+            if (!f.isSupported(QMediaFormat::Encode))
+                continue;
+
+            const auto formatName = QMediaFormat::fileFormatName(f.fileFormat()).toLatin1();
+            const auto audioCodecName = QMediaFormat::audioCodecName(f.audioCodec()).toLatin1();
+
+            QTest::addRow("%s,%s", formatName.data(), audioCodecName.data()) << f;
+        }
+    }
+}
+
+void tst_QMediaRecorderBackend::record_writesAudio_withAllSupportedAudioFormats()
+{
+    if (!isFFMPEGPlatform())
+        QSKIP("Tested only with FFmpeg backend because other backends don't have the same "
+              "format support");
+
+    QFETCH(const QMediaFormat, format);
+
+    CaptureSessionFixture f{ StreamType::Audio };
+    f.m_recorder.setMediaFormat(format);
+
+    QAudioFormat audioFormat;
+    audioFormat.setSampleRate(44100); // TODO: Change to 8000 fails some tests
+    audioFormat.setSampleFormat(QAudioFormat::Float);
+    audioFormat.setChannelConfig(
+            QAudioFormat::ChannelConfigStereo); // TODO: Change to Mono fails some tests
+    f.m_audioGenerator.setFormat(audioFormat);
+
+    constexpr seconds expectedDuration = 1s;
+
+    f.m_audioGenerator.setDuration(expectedDuration);
+    f.m_audioGenerator.setFrequency(800);
+
+    f.start(RunMode::Pull, AutoStop::EmitEmpty);
+
+    const auto actualFormat = f.m_recorder.mediaFormat();
+
+    qDebug() << "Actual format: " << QMediaFormat::fileFormatName(actualFormat.fileFormat()) << ","
+             << QMediaFormat::audioCodecName(actualFormat.audioCodec());
+
+    QVERIFY(f.waitForRecorderStopped(60s));
+
+    QVERIFY2(f.m_recorder.error() == QMediaRecorder::NoError,
+             f.m_recorder.errorString().toLatin1().data());
+
+    const std::optional<MediaInfo> info = MediaInfo::create(f.m_recorder.actualLocation());
+    QVERIFY(info);
+
+    QCOMPARE_GE(info->m_audioBuffer.duration(),
+                std::chrono::microseconds(expectedDuration / 5).count()); // TODO: Fix cut audio
+
+    QCOMPARE_GE(info->m_audioBuffer.byteCount(), 1u); // TODO: Verify with QSineWaveValidator
+}
+
+// TODO: Add test that verifies format support with both audio and video in the same recording
+
+void tst_QMediaRecorderBackend::record_emits_mediaformatChanged_whenFormatChanged()
+{
+    QSKIP_IF_NOT_FFMPEG();
+
+    // Arrange
+    CaptureSessionFixture f{ StreamType::Video };
+    f.m_videoGenerator.setFrameCount(1);
+    f.m_videoGenerator.setSize({ 128, 64 }); // Small frames to speed up test
+
+    QMediaFormat unspecifiedFormat;
+    f.m_recorder.setMediaFormat(unspecifiedFormat);
+
+    f.start(RunMode::Pull, AutoStop::EmitEmpty);
+
+    QVERIFY(f.waitForRecorderStopped(60s));
+    QVERIFY2(f.m_recorder.error() == QMediaRecorder::NoError,
+             f.m_recorder.errorString().toLatin1().data());
+
+    QCOMPARE_EQ(f.mediaFormatChanged.size(), 1);
+
+    const QMediaFormat actualFormat = f.m_recorder.mediaFormat();
+    QCOMPARE_NE(actualFormat.fileFormat(), QMediaFormat::UnspecifiedFormat);
+    QCOMPARE_NE(actualFormat.videoCodec(), QMediaFormat::VideoCodec::Unspecified);
+    QCOMPARE_NE(actualFormat.audioCodec(), QMediaFormat::AudioCodec::Unspecified);
+}
+
+void tst_QMediaRecorderBackend::stop_stopsRecording_whenInvokedUponRecordingStart()
+{
+    QSKIP_IF_NOT_FFMPEG();
+
+    // Arrange
+    const QUrl url = QUrl::fromLocalFile(m_tempDir.filePath("any_file_name"));
+    CaptureSessionFixture f{ StreamType::AudioAndVideo };
+    f.m_recorder.setOutputLocation(url);
+
+    auto onStateChanged = [&f](QMediaRecorder::RecorderState state) {
+        if (state == QMediaRecorder::RecordingState)
+            f.m_recorder.stop();
+    };
+
+    connect(&f.m_recorder, &QMediaRecorder::recorderStateChanged, this, onStateChanged);
+
+    // Act
+    f.start(RunMode::Pull, AutoStop::No);
+
+    // Assert
+    QTRY_COMPARE(f.m_recorder.recorderState(), QMediaRecorder::StoppedState);
+    QList< QList<QVariant> > expectedRecorderStateChangedSignals( { { QMediaRecorder::RecordingState }, { QMediaRecorder::StoppedState } });
+    QCOMPARE(f.recorderStateChanged, expectedRecorderStateChangedSignals);
+}
+
+void tst_QMediaRecorderBackend::record_reflectsAudioEncoderSetting()
+{
+    QSKIP_IF_NOT_FFMPEG();
+
+    // Arrange
+    CaptureSessionFixture f{ StreamType::Audio };
+
+    QAudioFormat audioFormat;
+    audioFormat.setSampleFormat(QAudioFormat::Float);
+    audioFormat.setChannelCount(2);
+    audioFormat.setSampleRate(44100);
+    f.m_audioGenerator.setFormat(audioFormat);
+
+    QMediaFormat fmt{ QMediaFormat::Wave };
+    fmt.setAudioCodec(QMediaFormat::AudioCodec::Wave);
+    f.m_recorder.setMediaFormat(fmt);
+    f.m_recorder.setAudioSampleRate(24000); // nonstandard sampling rate
+    f.m_recorder.setAudioChannelCount(1); // mono
+
+    // act
+    f.start(RunMode::Pull, AutoStop::EmitEmpty);
+    QVERIFY(f.waitForRecorderStopped(60s));
+
+    // Assert
+    auto info = MediaInfo::create(f.m_recorder.actualLocation());
+    QVERIFY(info);
+    QCOMPARE_EQ(info->m_audioBuffer.format().sampleRate(), 24000);
+    QCOMPARE_EQ(info->m_audioBuffer.format().channelCount(), 1);
+}
+
+QTEST_MAIN(tst_QMediaRecorderBackend)
 
 #include "tst_qmediarecorderbackend.moc"

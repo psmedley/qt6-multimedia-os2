@@ -14,7 +14,7 @@
 // We mean it.
 //
 
-#include "playbackengine/qffmpegrenderer_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpegrenderer_p.h>
 
 #include "qaudiobuffer.h"
 
@@ -82,7 +82,7 @@ protected:
 
     void onPlaybackRateChanged() override;
 
-    int timerInterval() const override;
+    std::chrono::milliseconds timerInterval() const override;
 
     void onPauseChanged() override;
 
@@ -90,7 +90,7 @@ protected:
 
     void updateOutputs(const Frame &frame);
 
-    void initResempler(const Frame &frame);
+    void initResampler(const Frame &frame);
 
     void onDeviceChanged();
 

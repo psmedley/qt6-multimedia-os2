@@ -11,6 +11,8 @@
 #include <private/qvideoframe_p.h>
 #include <private/qcomobject_p.h>
 
+#include <QtCore/private/qsystemerror_p.h>
+
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mferror.h>
@@ -97,7 +99,7 @@ static int calculateVideoFrameStride(IMFMediaType *videoType, int width)
             return int(qAbs(stride));
     }
 
-    qWarning() << "Failed to calculate video stride" << errorString(hr);
+    qWarning() << "Failed to calculate video stride" << QSystemError::windowsComString(hr);
     return 0;
 }
 
@@ -109,7 +111,7 @@ static bool setCameraReaderFormat(IMFSourceReader *sourceReader, IMFMediaType *v
     HRESULT hr = sourceReader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr,
                                                    videoType);
     if (FAILED(hr))
-        qWarning() << "Failed to set video format" << errorString(hr);
+        qWarning() << "Failed to set video format" << QSystemError::windowsComString(hr);
 
     return SUCCEEDED(hr);
 }
@@ -149,7 +151,7 @@ public:
     static std::unique_ptr<ActiveCamera> create(QWindowsCamera &wc, const QCameraDevice &device, const QCameraFormat &format)
     {
         auto ac = std::unique_ptr<ActiveCamera>(new ActiveCamera(wc));
-        ac->m_source = createCameraSource(device.id());
+        ac->m_source = createCameraSource(QString::fromUtf8(device.id()));
         if (!ac->m_source)
             return {};
 

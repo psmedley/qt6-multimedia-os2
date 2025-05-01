@@ -1228,6 +1228,14 @@ QGstElement QGstElement::getParent() const
     };
 }
 
+QGstBin QGstElement::getParentBin() const
+{
+    return QGstBin{
+        qGstCheckedCast<GstBin>(gst_element_get_parent(object())),
+        QGstElement::HasRef,
+    };
+}
+
 QGstPipeline QGstElement::getPipeline() const
 {
     QGstElement ancestor = *this;
@@ -1243,6 +1251,12 @@ QGstPipeline QGstElement::getPipeline() const
             QGstPipeline::NeedsRef,
         };
     }
+}
+
+void QGstElement::removeFromParent()
+{
+    if (QGstBin parent = getParentBin())
+        parent.remove(*this);
 }
 
 void QGstElement::dumpPipelineGraph(const char *filename) const
@@ -1336,6 +1350,23 @@ void QGstBin::addGhostPad(const char *name, const QGstPad &pad)
     gst_element_add_pad(element(), gst_ghost_pad_new(name, pad.pad()));
 }
 
+void QGstBin::addUnlinkedGhostPads(GstPadDirection direction)
+{
+    Q_ASSERT(direction != GstPadDirection::GST_PAD_UNKNOWN);
+
+    for (;;) {
+        QGstPad unlinkedPad{
+            gst_bin_find_unlinked_pad(bin(), direction),
+            QGstPad::HasRef,
+        };
+
+        if (!unlinkedPad)
+            return;
+
+        addGhostPad(unlinkedPad.name().constData(), unlinkedPad);
+    }
+}
+
 bool QGstBin::syncChildrenState()
 {
     return gst_bin_sync_children_states(bin());
@@ -1343,7 +1374,7 @@ bool QGstBin::syncChildrenState()
 
 void QGstBin::dumpGraph(const char *fileNamePrefix) const
 {
-    if (isNull())
+    if (!get())
         return;
 
     GST_DEBUG_BIN_TO_DOT_FILE(bin(), GST_DEBUG_GRAPH_SHOW_VERBOSE, fileNamePrefix);

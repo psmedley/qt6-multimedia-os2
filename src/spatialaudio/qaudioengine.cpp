@@ -35,7 +35,7 @@ public:
     {
         open(QIODevice::ReadOnly);
     }
-    ~QAudioOutputStream();
+    ~QAudioOutputStream() override;
 
     qint64 readData(char *data, qint64 len) override;
 
@@ -178,6 +178,7 @@ qint64 QAudioOutputStream::readData(char *data, qint64 len)
 
 QAudioEnginePrivate::QAudioEnginePrivate()
 {
+    audioThread.setObjectName(u"QAudioThread");
     device = QMediaDevices::defaultAudioOutput();
 }
 
@@ -246,7 +247,7 @@ void QAudioEnginePrivate::updateRooms()
     listenerPositionDirty = false;
 
     bool roomDirty = false;
-    for (const auto &room : rooms) {
+    for (const auto &room : std::as_const(rooms)) {
         auto *rd = QAudioRoomPrivate::get(room);
         if (rd->dirty) {
             roomDirty = true;

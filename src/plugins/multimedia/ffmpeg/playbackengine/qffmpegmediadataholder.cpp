@@ -23,25 +23,22 @@ static Q_LOGGING_CATEGORY(qLcMediaDataHolder, "qt.multimedia.ffmpeg.mediadatahol
 
 namespace QFFmpeg {
 
-static std::optional<qint64> streamDuration(const AVStream &stream)
+static std::optional<TrackDuration> streamDuration(const AVStream &stream)
 {
-    const auto &factor = stream.time_base;
-
-    if (stream.duration > 0 && factor.num > 0 && factor.den > 0) {
-        return qint64(1000000) * stream.duration * factor.num / factor.den;
-    }
+    if (stream.duration > 0)
+        return toTrackDuration(AVStreamDuration(stream.duration), &stream);
 
     // In some cases ffmpeg reports negative duration that is definitely invalid.
     // However, the correct duration may be read from the metadata.
 
-    if (stream.duration < 0) {
+    if (stream.duration < 0 && stream.duration != AV_NOPTS_VALUE) {
         qCWarning(qLcMediaDataHolder) << "AVStream duration" << stream.duration
                                       << "is invalid. Taking it from the metadata";
     }
 
     if (const auto duration = av_dict_get(stream.metadata, "DURATION", nullptr, 0)) {
         const auto time = QTime::fromString(QString::fromUtf8(duration->value));
-        return qint64(1000) * time.msecsSinceStartOfDay();
+        return TrackDuration(qint64(1000) * time.msecsSinceStartOfDay());
     }
 
     return {};
@@ -198,13 +195,20 @@ loadMedia(const QUrl &mediaUrl, QIODevice *stream, const std::shared_ptr<ICancel
                     QMediaPlayer::ResourceError, QLatin1String("Could not open source device.")
                 };
         }
-        if (!stream->isSequential())
+
+        auto seek = &seekQIODevice;
+
+        if (!stream->isSequential()) {
             stream->seek(0);
+        } else {
+            context->ctx_flags |= AVFMTCTX_UNSEEKABLE;
+            seek = nullptr;
+        }
 
         constexpr int bufferSize = 32768;
         unsigned char *buffer = (unsigned char *)av_malloc(bufferSize);
         context->pb = avio_alloc_context(buffer, bufferSize, false, stream, &readQIODevice, nullptr,
-                                         &seekQIODevice);
+                                         seek);
     }
 
     AVDictionaryHolder dict;
@@ -237,6 +241,9 @@ loadMedia(const QUrl &mediaUrl, QIODevice *stream, const std::shared_ptr<ICancel
         else if (ret == AVERROR(EINVAL) || ret == AVERROR_INVALIDDATA)
             code = QMediaPlayer::FormatError;
 
+        qCWarning(qLcMediaDataHolder)
+                << "Could not open media. FFmpeg error description:" << err2str(ret);
+
         return MediaDataHolder::ContextError{ code, QMediaPlayer::tr("Could not open file") };
     }
 
@@ -248,9 +255,10 @@ loadMedia(const QUrl &mediaUrl, QIODevice *stream, const std::shared_ptr<ICancel
         };
     }
 
-#ifndef QT_NO_DEBUG
-    av_dump_format(context.get(), 0, url.constData(), 0);
-#endif
+    if (qLcMediaDataHolder().isInfoEnabled())
+        av_dump_format(context.get(), 0, url.constData(), 0);
+
+
     return context;
 }
 
@@ -287,6 +295,13 @@ MediaDataHolder::MediaDataHolder(AVFormatContextUPtr context,
         if (stream->disposition & AV_DISPOSITION_ATTACHED_PIC)
             continue; // Ignore attached picture streams because we treat them as metadata
 
+        if (stream->time_base.num <= 0 || stream->time_base.den <= 0) {
+            // An invalid stream timebase is not expected to be given by FFmpeg
+            qCWarning(qLcMediaDataHolder) << "A stream for the track type" << trackType
+                                          << "has an invalid timebase:" << stream->time_base;
+            continue;
+        }
+
         auto metaData = QFFmpegMetaData::fromAVMetaData(stream->metadata);
         const bool isDefault = stream->disposition & AV_DISPOSITION_DEFAULT;
 
@@ -299,7 +314,7 @@ MediaDataHolder::MediaDataHolder(AVFormatContextUPtr context,
 
         if (auto duration = streamDuration(*stream)) {
             m_duration = qMax(m_duration, *duration);
-            metaData.insert(QMediaMetaData::Duration, *duration / qint64(1000));
+            metaData.insert(QMediaMetaData::Duration, toUserDuration(*duration).get());
         }
 
         m_streamMap[trackType].append({ (int)i, isDefault, metaData });
@@ -307,8 +322,8 @@ MediaDataHolder::MediaDataHolder(AVFormatContextUPtr context,
 
     // With some media files, streams may be lacking duration info. Let's
     // get it from ffmpeg's duration estimation instead.
-    if (m_duration == 0 && m_context->duration > 0ll) {
-        m_duration = m_context->duration;
+    if (m_duration == TrackDuration(0) && m_context->duration > 0ll) {
+        m_duration = toTrackDuration(AVContextDuration(m_context->duration));
     }
 
     for (auto trackType :
@@ -359,7 +374,7 @@ QImage getAttachedPicture(const AVFormatContext *context)
     return {};
 }
 
-}
+} // namespace
 
 void MediaDataHolder::updateMetaData()
 {
@@ -371,8 +386,8 @@ void MediaDataHolder::updateMetaData()
     m_metaData = QFFmpegMetaData::fromAVMetaData(m_context->metadata);
     m_metaData.insert(QMediaMetaData::FileFormat,
                       QVariant::fromValue(QFFmpegMediaFormatInfo::fileFormatForAVInputFormat(
-                              m_context->iformat)));
-    m_metaData.insert(QMediaMetaData::Duration, m_duration / qint64(1000));
+                              *m_context->iformat)));
+    m_metaData.insert(QMediaMetaData::Duration, toUserDuration(m_duration).get());
 
     if (!m_cachedThumbnail.has_value())
         m_cachedThumbnail = getAttachedPicture(m_context.get());

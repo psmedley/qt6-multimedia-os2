@@ -29,7 +29,9 @@ public:
     QWindowsVideoDevices(QPlatformMediaIntegration *integration);
     ~QWindowsVideoDevices();
 
-    QList<QCameraDevice> videoDevices() const override;
+    using QPlatformVideoDevices::onVideoInputsChanged;
+protected:
+    QList<QCameraDevice> findVideoInputs() const override;
 
 private:
     QComInitializer m_comInitializer;

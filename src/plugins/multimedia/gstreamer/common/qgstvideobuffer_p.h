@@ -31,12 +31,12 @@ class QGstVideoBuffer final : public QHwVideoBuffer
 public:
     QGstVideoBuffer(QGstBufferHandle buffer, const GstVideoInfo &info, QGstreamerVideoSink *sink,
                     const QVideoFrameFormat &frameFormat, QGstCaps::MemoryFormat format);
-    ~QGstVideoBuffer();
+    ~QGstVideoBuffer() override;
 
     MapData map(QVideoFrame::MapMode mode) override;
     void unmap() override;
 
-    std::unique_ptr<QVideoFrameTextures> mapTextures(QRhi *) override;
+    QVideoFrameTexturesUPtr mapTextures(QRhi &, QVideoFrameTexturesUPtr& /*oldTextures*/) override;
 
 private:
     const QGstCaps::MemoryFormat memoryFormat = QGstCaps::CpuMemory;

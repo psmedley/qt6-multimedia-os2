@@ -15,7 +15,6 @@
 #include <QtCore/qdebug.h>
 #include <QtCore/qeventloop.h>
 #include <QtCore/qstandardpaths.h>
-#include <QtCore/qmimetype.h>
 #include <QtCore/qloggingcategory.h>
 
 #include <gst/gsttagsetter.h>
@@ -130,7 +129,7 @@ static GstEncodingProfile *createVideoProfile(const QMediaEncoderSettings &setti
     auto *formatInfo = QGstreamerIntegration::instance()->gstFormatsInfo();
 
     QGstCaps caps = formatInfo->videoCaps(settings.mediaFormat());
-    if (caps.isNull())
+    if (!caps)
         return nullptr;
 
     QSize videoResolution = settings.videoResolution();
@@ -153,7 +152,7 @@ static GstEncodingProfile *createAudioProfile(const QMediaEncoderSettings &setti
     auto *formatInfo = QGstreamerIntegration::instance()->gstFormatsInfo();
 
     auto caps = formatInfo->audioCaps(settings.mediaFormat());
-    if (caps.isNull())
+    if (!caps)
         return nullptr;
 
     GstEncodingProfile *profile =
@@ -266,7 +265,7 @@ void QGstreamerMediaRecorder::record(QMediaEncoderSettings &settings)
     const auto audioOnly = settings.videoCodec() == QMediaFormat::VideoCodec::Unspecified;
 
     auto primaryLocation = audioOnly ? QStandardPaths::MusicLocation : QStandardPaths::MoviesLocation;
-    auto container = settings.mimeType().preferredSuffix();
+    auto container = settings.preferredSuffix();
     auto location = QMediaStorageLocation::generateFileName(outputLocation().toLocalFile(), primaryLocation, container);
 
     QUrl actualSink = QUrl::fromLocalFile(QDir::currentPath()).resolved(location);
@@ -292,7 +291,7 @@ void QGstreamerMediaRecorder::record(QMediaEncoderSettings &settings)
 
     if (hasAudio) {
         audioSink = gstEncodebin.getRequestPad("audio_%u");
-        if (audioSink.isNull())
+        if (!audioSink)
             qWarning() << "Unsupported audio codec";
         else
             audioPauseControl.installOn(audioSink);
@@ -300,17 +299,17 @@ void QGstreamerMediaRecorder::record(QMediaEncoderSettings &settings)
 
     if (hasVideo) {
         videoSink = gstEncodebin.getRequestPad("video_%u");
-        if (videoSink.isNull())
+        if (!videoSink)
             qWarning() << "Unsupported video codec";
         else
             videoPauseControl.installOn(videoSink);
     }
 
     QGstreamerMediaCaptureSession::RecorderElements recorder{
-        .encodeBin = std::move(gstEncodebin),
-        .fileSink = std::move(gstFileSink),
-        .audioSink = std::move(audioSink),
-        .videoSink = std::move(videoSink),
+        std::move(gstEncodebin),
+        std::move(gstFileSink),
+        std::move(audioSink),
+        std::move(videoSink),
     };
 
     m_session->linkAndStartEncoder(std::move(recorder), m_metaData);
