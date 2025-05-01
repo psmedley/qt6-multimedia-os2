@@ -14,8 +14,8 @@
 // We mean it.
 //
 
-#include "qffmpegdefs_p.h"
-#include "qffmpeghwaccel_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpegdefs_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpeghwaccel_p.h>
 
 #include <QtCore/qspan.h>
 

@@ -7,20 +7,19 @@
 
 #include "qpulseaudiosource_p.h"
 #include "qpulseaudiosink_p.h"
-#include "qaudioengine_pulse_p.h"
+#include "qpulseaudio_contextmanager_p.h"
 
 QT_BEGIN_NAMESPACE
 
 QPulseAudioDevices::QPulseAudioDevices()
-    : QPlatformAudioDevices()
 {
-    pulseEngine = new QPulseAudioEngine();
+    pulseEngine = new QPulseAudioContextManager();
 
     // TODO: it might make sense to connect device changing signals
     // to each added QMediaDevices
-    QObject::connect(pulseEngine, &QPulseAudioEngine::audioInputsChanged, this,
+    QObject::connect(pulseEngine, &QPulseAudioContextManager::audioInputsChanged, this,
                      &QPulseAudioDevices::onAudioInputsChanged, Qt::DirectConnection);
-    QObject::connect(pulseEngine, &QPulseAudioEngine::audioOutputsChanged, this,
+    QObject::connect(pulseEngine, &QPulseAudioContextManager::audioOutputsChanged, this,
                      &QPulseAudioDevices::onAudioOutputsChanged, Qt::DirectConnection);
 }
 
@@ -40,15 +39,21 @@ QList<QAudioDevice> QPulseAudioDevices::findAudioOutputs() const
 }
 
 QPlatformAudioSource *QPulseAudioDevices::createAudioSource(const QAudioDevice &deviceInfo,
-                                                                 QObject *parent)
+                                                            const QAudioFormat &fmt,
+                                                            QObject *parent)
 {
-    return new QPulseAudioSource(deviceInfo.id(), parent);
+    auto ret = new QPulseAudioSource(deviceInfo.id(), parent);
+    ret->setFormat(fmt);
+    return ret;
 }
 
 QPlatformAudioSink *QPulseAudioDevices::createAudioSink(const QAudioDevice &deviceInfo,
-                                                             QObject *parent)
+                                                        const QAudioFormat &fmt,
+                                                        QObject *parent)
 {
-    return new QPulseAudioSink(deviceInfo.id(), parent);
+    auto ret = new QPulseAudioSink(deviceInfo.id(), parent);
+    ret->setFormat(fmt);
+    return ret;
 }
 
 QT_END_NAMESPACE

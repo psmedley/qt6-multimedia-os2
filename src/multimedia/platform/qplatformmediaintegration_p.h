@@ -109,6 +109,8 @@ public:
 
     virtual QAbstractPlatformSpecificInterface *platformSpecificInterface() { return nullptr; }
 
+    static QLatin1String audioBackendName();
+
 protected:
     virtual QPlatformMediaFormatInfo *createFormatInfo();
 
@@ -117,6 +119,10 @@ protected:
     virtual QPlatformCapturableWindows *createCapturableWindows() { return nullptr; }
 
     virtual std::unique_ptr<QPlatformAudioDevices> createAudioDevices();
+
+private:
+    friend class QMockIntegration;
+    void resetInstance(); // tests only
 
 private:
     std::unique_ptr<QPlatformVideoDevices> m_videoDevices;

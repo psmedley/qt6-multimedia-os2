@@ -11,13 +11,13 @@ static Q_LOGGING_CATEGORY(qLcStreamDecoder, "qt.multimedia.ffmpeg.streamdecoder"
 
 namespace QFFmpeg {
 
-StreamDecoder::StreamDecoder(const CodecContext &codecContext, qint64 absSeekPos)
+StreamDecoder::StreamDecoder(const CodecContext &codecContext, TrackPosition absSeekPos)
     : m_codecContext(codecContext),
       m_absSeekPos(absSeekPos),
       m_trackType(MediaDataHolder::trackTypeFromMediaType(codecContext.context()->codec_type))
 {
     qCDebug(qLcStreamDecoder) << "Create stream decoder, trackType" << m_trackType
-                              << "absSeekPos:" << absSeekPos;
+                              << "absSeekPos:" << absSeekPos.get();
     Q_ASSERT(m_trackType != QPlatformMediaPlayer::NTrackTypes);
 }
 
@@ -29,11 +29,6 @@ StreamDecoder::~StreamDecoder()
 void StreamDecoder::onFinalPacketReceived()
 {
     decode({});
-}
-
-void StreamDecoder::setInitialPosition(TimePoint, qint64 trackPos)
-{
-    m_absSeekPos = trackPos;
 }
 
 void StreamDecoder::decode(Packet packet)
@@ -54,10 +49,11 @@ void StreamDecoder::doNextStep()
             decodeMedia(packet);
     };
 
-    if (packet.isValid() && packet.loopOffset().index != m_offset.index) {
+    if (packet.isValid() && packet.loopOffset().loopIndex != m_offset.loopIndex) {
         decodePacket({});
 
-        qCDebug(qLcStreamDecoder) << "flush buffers due to new loop:" << packet.loopOffset().index;
+        qCDebug(qLcStreamDecoder) << "flush buffers due to new loop:"
+                                  << packet.loopOffset().loopIndex;
 
         avcodec_flush_buffers(m_codecContext.context());
         m_offset = packet.loopOffset();
@@ -182,7 +178,7 @@ void StreamDecoder::receiveAVFrames(bool flushPacket)
         if (m_trackType == QPlatformMediaPlayer::VideoStream)
             avFrame = copyFromHwPool(std::move(avFrame));
 
-        onFrameFound({ m_offset, std::move(avFrame), m_codecContext, 0, id() });
+        onFrameFound({ m_offset, std::move(avFrame), m_codecContext, id() });
     }
 }
 
@@ -205,14 +201,14 @@ void StreamDecoder::decodeSubtitle(Packet packet)
 
     // apparently the timestamps in the AVSubtitle structure are not always filled in
     // if they are missing, use the packets pts and duration values instead
-    qint64 start, end;
+    TrackPosition start = 0, end = 0;
     if (subtitle.pts == AV_NOPTS_VALUE) {
-        start = m_codecContext.toUs(packet.avPacket()->pts);
-        end = start + m_codecContext.toUs(packet.avPacket()->duration);
+        start = m_codecContext.toTrackPosition(AVStreamPosition(packet.avPacket()->pts));
+        end = start + m_codecContext.toTrackDuration(AVStreamDuration(packet.avPacket()->duration));
     } else {
         auto pts = timeStampUs(subtitle.pts, AVRational{ 1, AV_TIME_BASE });
-        start = *pts + qint64(subtitle.start_display_time) * 1000;
-        end = *pts + qint64(subtitle.end_display_time) * 1000;
+        start = TrackPosition(*pts + qint64(subtitle.start_display_time) * 1000);
+        end = TrackPosition(*pts + qint64(subtitle.end_display_time) * 1000);
     }
 
     if (end <= start) {
@@ -250,7 +246,7 @@ void StreamDecoder::decodeSubtitle(Packet packet)
     onFrameFound({ m_offset, text, start, end - start, id() });
 
     // TODO: maybe optimize
-    onFrameFound({ m_offset, QString(), end, 0, id() });
+    onFrameFound({ m_offset, QString(), end, TrackDuration(0), id() });
 }
 } // namespace QFFmpeg
 

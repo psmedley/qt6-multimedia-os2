@@ -16,7 +16,7 @@
 //
 
 #include <private/qplatformaudiodevices_p.h>
-#include <private/qcomptr_p.h>
+#include <QtCore/private/qcomptr_p.h>
 #include <private/qcominitializer_p.h>
 #include <private/qwindowsmediafoundation_p.h>
 
@@ -36,15 +36,17 @@ public:
     QWindowsAudioDevices();
     virtual ~QWindowsAudioDevices();
 
-    QPlatformAudioSource *createAudioSource(const QAudioDevice &deviceInfo,
+    QPlatformAudioSource *createAudioSource(const QAudioDevice &, const QAudioFormat &,
                                             QObject *parent) override;
-    QPlatformAudioSink *createAudioSink(const QAudioDevice &deviceInfo,
+    QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
                                         QObject *parent) override;
 
     void prepareAudio() override;
 
     using QPlatformAudioDevices::onAudioInputsChanged;
     using QPlatformAudioDevices::onAudioOutputsChanged;
+
+    QLatin1String backendName() const override { return QLatin1String{ "WASAPI" }; }
 
 protected:
     QList<QAudioDevice> findAudioInputs() const override;

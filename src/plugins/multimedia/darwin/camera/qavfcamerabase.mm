@@ -143,7 +143,7 @@ QAVFVideoDevices::~QAVFVideoDevices()
     [notificationCenter removeObserver:(id)m_deviceDisconnectedObserver];
 }
 
-QList<QCameraDevice> QAVFVideoDevices::videoInputs() const
+QList<QCameraDevice> QAVFVideoDevices::findVideoInputs() const
 {
     return m_cameraDevices;
 }
@@ -299,7 +299,7 @@ void QAVFVideoDevices::updateCameraDevices()
 
     if (cameras != m_cameraDevices) {
         m_cameraDevices = cameras;
-        emit videoInputsChanged();
+        onVideoInputsChanged();
     }
 }
 
@@ -350,13 +350,22 @@ void QAVFCameraBase::setCamera(const QCameraDevice &camera)
     updateCameraConfiguration();
 }
 
-// Currently not used by any backend.
-bool QAVFCameraBase::setCameraFormat(const QCameraFormat &format)
+bool QAVFCameraBase::setCameraFormat(const QCameraFormat &newFormat)
 {
-    if (!format.isNull() && !m_cameraDevice.videoFormats().contains(format))
+    if (!newFormat.isNull() && !m_cameraDevice.videoFormats().contains(newFormat))
         return false;
 
-    m_cameraFormat = format.isNull() ? findBestCameraFormat(m_cameraDevice) : format;
+    const QCameraFormat resolvedFormat = newFormat.isNull() ? findBestCameraFormat(m_cameraDevice) : newFormat;
+    // If we still couldn't find a suitable default format (such as when none are available)
+    // we don't accept the value.
+    if (resolvedFormat.isNull())
+        return false;
+
+    const bool applySuccess = tryApplyCameraFormat(resolvedFormat);
+    if (!applySuccess)
+        return false;
+
+    m_cameraFormat = resolvedFormat;
 
     return true;
 }
@@ -396,10 +405,11 @@ void QAVFCameraBase::setFocusMode(QCamera::FocusMode mode)
 void QAVFCameraBase::forceSetFocusMode(QCamera::FocusMode mode)
 {
     if (!isFocusModeSupported(mode)) {
-        qCDebug(qLcCamera) <<
-            Q_FUNC_INFO <<
-            QString("attempted to set focus-mode '%1' on camera where it is unsupported.")
-                .arg(QMetaEnum::fromType<QCamera::FocusMode>().valueToKey(mode));
+        qCDebug(qLcCamera)
+                << Q_FUNC_INFO
+                << QString(u"attempted to set focus-mode '%1' on camera where it is unsupported.")
+                           .arg(QString::fromLatin1(
+                                   QMetaEnum::fromType<QCamera::FocusMode>().valueToKey(mode)));
         return;
     }
 
@@ -436,7 +446,7 @@ void QAVFCameraBase::forceSetFocusMode(QCamera::FocusMode mode)
         captureDevice.focusMode = AVCaptureFocusModeContinuousAutoFocus;
     }
 
-    Q_EMIT focusModeChanged(mode);
+    focusModeChanged(mode);
 }
 
 bool QAVFCameraBase::isFocusModeSupported(QCamera::FocusMode mode) const

@@ -32,9 +32,10 @@ QT_BEGIN_NAMESPACE
 
 class QDBusArgument;
 class QDBusInterface;
+
 namespace QtPipeWire {
 
-class Pipewire;
+class QPipeWireInstance;
 
 class QPipeWireCaptureHelper : public QObject
 {
@@ -50,9 +51,6 @@ public:
     QVideoFrameFormat frameFormat() const;
 
     bool setActiveInternal(bool active);
-
-    void initPipeWire();
-    void deinitPipeWire();
 
 protected:
     void updateError(QPlatformSurfaceCapture::Error error, const QString &description = {});
@@ -89,8 +87,8 @@ private Q_SLOTS:
     void gotRequestResponse(uint result, const QVariantMap &map);
 
 private:
+    std::shared_ptr<QPipeWireInstance> m_instance;
     QPipeWireCapture &m_capture;
-    std::shared_ptr<QtPipeWire::Pipewire> m_pipewire;
 
     QVideoFrame m_currentFrame;
     QVideoFrameFormat m_videoFrameFormat;

@@ -56,7 +56,7 @@ public:
     qint64 processedUSecs() const override;
     QAudio::Error error() const override;
     QAudio::State state() const override;
-    void setFormat(const QAudioFormat &format) override;
+    void setFormat(const QAudioFormat &format);
     QAudioFormat format() const override;
 
     void setVolume(qreal volume) override;
@@ -75,7 +75,7 @@ private slots:
     void onPulseContextFailed();
 
 private:
-    void applyVolume(const void *src, void *dest, int len);
+    void applyVolume(const void *src, void *dest, int len) const;
 
     bool open();
     void close();
@@ -107,6 +107,7 @@ public:
     PulseInputPrivate(QPulseAudioSource *audio);
     ~PulseInputPrivate() override = default;
 
+    qint64 bytesAvailable() const override;
     qint64 readData(char *data, qint64 len) override;
     qint64 writeData(const char *data, qint64 len) override;
 

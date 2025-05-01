@@ -15,15 +15,15 @@
 // We mean it.
 //
 
-#include <private/qtmultimediaglobal_p.h>
-#include <private/qcachedvalue_p.h>
-#include <qlist.h>
-#include <qobject.h>
+#include <QtCore/qlist.h>
+#include <QtCore/qobject.h>
+#include <QtMultimedia/private/qaudiodevice_p.h>
+#include <QtMultimedia/private/qcachedvalue_p.h>
+#include <QtMultimedia/private/qtmultimediaglobal_p.h>
 #include <memory>
 
 QT_BEGIN_NAMESPACE
 
-class QAudioDevice;
 class QPlatformAudioSource;
 class QPlatformAudioSink;
 class QAudioFormat;
@@ -43,8 +43,10 @@ public:
     QList<QAudioDevice> audioInputs() const;
     QList<QAudioDevice> audioOutputs() const;
 
-    virtual QPlatformAudioSource *createAudioSource(const QAudioDevice &, QObject *parent);
-    virtual QPlatformAudioSink *createAudioSink(const QAudioDevice &, QObject *parent);
+    virtual QPlatformAudioSource *createAudioSource(const QAudioDevice &, const QAudioFormat &,
+                                                    QObject *parent);
+    virtual QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
+                                                QObject *parent);
 
     QPlatformAudioSource *audioInputDevice(const QAudioFormat &format,
                                            const QAudioDevice &deviceInfo, QObject *parent);
@@ -54,6 +56,7 @@ public:
     virtual void prepareAudio();
 
     void initVideoDevicesConnection();
+    virtual QLatin1String backendName() const { return QLatin1String{ "null" }; }
 
 protected:
     virtual QList<QAudioDevice> findAudioInputs() const { return {}; }

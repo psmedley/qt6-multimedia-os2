@@ -15,8 +15,9 @@
 // We mean it.
 //
 
-#include "qffmpeg_p.h"
-#include "qffmpeghwaccel_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpeghwaccel_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegtime_p.h>
 
 #include <QtMultimedia/private/qmaybe_p.h>
 #include <QtCore/qshareddata.h>
@@ -33,6 +34,7 @@ class CodecContext
              std::unique_ptr<QFFmpeg::HWAccel> hwAccel);
         AVCodecContextUPtr context;
         AVStream *stream = nullptr;
+        AVFormatContext *formatContext = nullptr;
         AVRational pixelAspectRatio = { 0, 1 };
         std::unique_ptr<QFFmpeg::HWAccel> hwAccel;
     };
@@ -46,8 +48,15 @@ public:
     AVStream *stream() const { return d->stream; }
     uint streamIndex() const { return d->stream->index; }
     HWAccel *hwAccel() const { return d->hwAccel.get(); }
-    qint64 toMs(qint64 ts) const { return timeStampMs(ts, d->stream->time_base).value_or(0); }
-    qint64 toUs(qint64 ts) const { return timeStampUs(ts, d->stream->time_base).value_or(0); }
+    TrackDuration toTrackDuration(AVStreamDuration duration) const
+    {
+        return QFFmpeg::toTrackDuration(duration, d->stream);
+    }
+
+    TrackPosition toTrackPosition(AVStreamPosition streamPosition) const
+    {
+        return QFFmpeg::toTrackPosition(streamPosition, d->stream, d->formatContext);
+    }
 
 private:
     enum VideoCodecCreationPolicy {

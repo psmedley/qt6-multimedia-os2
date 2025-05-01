@@ -198,7 +198,7 @@ void VideoFrameEncoder::initTargetSize()
 
 #ifdef Q_OS_WINDOWS
     // TODO: investigate, there might be more encoders not supporting odd resolution
-    if (m_codec.name() == "h264_mf") {
+    if (m_codec.name() == u"h264_mf") {
         auto makeEven = [](int size) { return size & ~1; };
         const QSize fixedSize(makeEven(m_targetSize.width()), makeEven(m_targetSize.height()));
         if (fixedSize != m_targetSize) {
@@ -310,6 +310,8 @@ bool VideoFrameEncoder::initCodecContext()
         if (auto framesContext = m_accel->hwFramesContextAsBuffer())
             m_codecContext->hw_frames_ctx = av_buffer_ref(framesContext);
     }
+
+    avcodec_parameters_from_context(m_stream->codecpar, m_codecContext.get());
 
     return true;
 }

@@ -66,6 +66,39 @@ struct Q_MULTIMEDIA_EXPORT TextureDescription
         return (height + sizeScale[plane].y - 1)/sizeScale[plane].y;
     }
 
+    /**
+     * \returns Plane scaling factors taking into account possible workarounds due to QRhi backend
+     * capabilities.
+     */
+    SizeScale rhiSizeScale(int plane, QRhi *rhi) const
+    {
+        if (!rhi)
+            return sizeScale[plane];
+
+        // NOTE: We need to handle sizing difference when packing two-component textures to RGBA8,
+        // where width gets cut in half.
+        // Another option would be to compare QRhiImplementation::TextureFormatInfo to expected
+        // based on TextureDescription::Format.
+        if (textureFormat[plane] == TextureDescription::RG_8
+            && rhiTextureFormat(plane, rhi) == QRhiTexture::RGBA8)
+            return { sizeScale[plane].x * 2, sizeScale[plane].y };
+
+        return sizeScale[plane];
+    }
+
+    QSize rhiPlaneSize(QSize frameSize, int plane, QRhi *rhi) const
+    {
+        SizeScale scale = rhiSizeScale(plane, rhi);
+        return QSize(frameSize.width() / scale.x, frameSize.height() / scale.y);
+    }
+
+    bool hasTextureFormat(TextureFormat format) const
+    {
+        return std::any_of(textureFormat, textureFormat + nplanes, [format](TextureFormat f) {
+            return f == format;
+        });
+    }
+
     int nplanes;
     int strideFactor;
     BytesRequired bytesRequired;
@@ -79,8 +112,10 @@ Q_MULTIMEDIA_EXPORT QString vertexShaderFileName(const QVideoFrameFormat &format
 Q_MULTIMEDIA_EXPORT QString
 fragmentShaderFileName(const QVideoFrameFormat &format, QRhi *rhi,
                        QRhiSwapChain::Format surfaceFormat = QRhiSwapChain::SDR);
-Q_MULTIMEDIA_EXPORT void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const QVideoFrame &frame,
-                                           const QMatrix4x4 &transform, float opacity, float maxNits = 100);
+Q_MULTIMEDIA_EXPORT void updateUniformData(QByteArray *dst, QRhi *rhi,
+                                           const QVideoFrameFormat &format,
+                                           const QVideoFrame &frame, const QMatrix4x4 &transform,
+                                           float opacity, float maxNits = 100);
 
 /**
  * @brief Creates plane textures from texture handles set by the specified rhi.
@@ -102,6 +137,9 @@ Q_MULTIMEDIA_EXPORT QVideoFrameTexturesUPtr createTextures(const QVideoFrame &fr
                                                            QRhiResourceUpdateBatch &rub,
                                                            QVideoFrameTexturesUPtr oldTextures);
 
+Q_MULTIMEDIA_EXPORT void
+setExcludedRhiTextureFormats(QList<QRhiTexture::Format> formats); // for tests only
+
 struct UniformData {
     float transformMatrix[4][4];
     float colorMatrix[4][4];
@@ -109,6 +147,8 @@ struct UniformData {
     float width;
     float masteringWhite;
     float maxLum;
+    int redOrAlphaIndex;
+    int planeFormats[TextureDescription::maxPlanes];
 };
 
 struct Q_MULTIMEDIA_EXPORT SubtitleLayout

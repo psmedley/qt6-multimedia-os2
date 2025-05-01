@@ -28,7 +28,7 @@
 #include <QtMultimedia/qaudio.h>
 #include <QtMultimedia/qaudiodevice.h>
 #include <private/qaudiosystem_p.h>
-#include <qcomptr_p.h>
+#include <QtCore/private/qcomptr_p.h>
 #include <qwindowsresampler_p.h>
 
 #include <audioclient.h>
@@ -69,10 +69,9 @@ class QWindowsAudioSink : public QPlatformAudioSink
 {
     Q_OBJECT
 public:
-    QWindowsAudioSink(ComPtr<IMMDevice> device, QObject *parent);
+    QWindowsAudioSink(ComPtr<IMMDevice> device, const QAudioFormat &fmt, QObject *parent);
     ~QWindowsAudioSink();
 
-    void setFormat(const QAudioFormat& fmt) override;
     QAudioFormat format() const override;
     QIODevice* start() override;
     void start(QIODevice* device) override;
@@ -99,7 +98,7 @@ private:
 
     void pullSource();
 
-    QAudioFormat m_format;
+    const QAudioFormat m_format;
     QAudio::Error errorState = QAudio::NoError;
     QAudio::State deviceState = QAudio::StoppedState;
     QAudio::State suspendedInState = QAudio::SuspendedState;

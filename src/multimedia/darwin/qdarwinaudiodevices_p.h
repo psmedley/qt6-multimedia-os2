@@ -29,13 +29,15 @@ public:
     QDarwinAudioDevices();
     ~QDarwinAudioDevices() override;
 
-    QPlatformAudioSource *createAudioSource(const QAudioDevice &info,
+    QPlatformAudioSource *createAudioSource(const QAudioDevice &, const QAudioFormat &,
                                             QObject *parent) override;
-    QPlatformAudioSink *createAudioSink(const QAudioDevice &info,
+    QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
                                         QObject *parent) override;
 
     using QPlatformAudioDevices::updateAudioInputsCache;
     using QPlatformAudioDevices::updateAudioOutputsCache;
+
+    QLatin1String backendName() const override { return QLatin1String{ "CoreAudio" }; }
 
 protected:
     QList<QAudioDevice> findAudioInputs() const override;

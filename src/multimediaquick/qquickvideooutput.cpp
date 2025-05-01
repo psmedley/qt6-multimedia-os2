@@ -35,6 +35,7 @@ inline bool qIsDefaultAspect(QtVideo::Rotation rotation)
 /*!
     \qmltype VideoOutput
     //! \nativetype QQuickVideoOutput
+    \inherits Item
     \brief Render video or camera viewfinder.
 
     \ingroup multimedia_qml
@@ -362,7 +363,7 @@ void QQuickVideoOutput::_q_invalidateSceneGraph()
 
     if (auto texturePool = m_texturePool.lock())
         texturePool->clearTextures();
-    initRhiForSink();
+    m_sink->setRhi(nullptr);
 }
 
 void QQuickVideoOutput::_q_sceneGraphInitialized()

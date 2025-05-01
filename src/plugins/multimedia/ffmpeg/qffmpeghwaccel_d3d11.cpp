@@ -8,7 +8,7 @@
 #include "qffmpegvideobuffer_p.h"
 
 #include <private/qvideotexturehelper_p.h>
-#include <private/qcomptr_p.h>
+#include <QtCore/private/qcomptr_p.h>
 #include <private/quniquehandle_p.h>
 
 #include <rhi/qrhi.h>
@@ -145,7 +145,7 @@ ComPtr<ID3D11Texture2D> TextureBridge::copyFromSharedTex(const ComPtr<ID3D11Devi
 
 bool TextureBridge::ensureDestTex(const ComPtr<ID3D11Device1> &dev)
 {
-    if (m_destDevice != dev) {
+    if (m_destDevice.Get() != dev.Get()) {
         // Destination device changed. Recreate texture.
         m_destTex = nullptr;
         m_destDevice = dev;

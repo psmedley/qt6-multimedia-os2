@@ -22,7 +22,7 @@
 #include <QtMultimedia/qaudiodevice.h>
 #include <private/qaudiosystem_p.h>
 #include <private/qaudiodevice_p.h>
-#include <qcomptr_p.h>
+#include <QtCore/private/qcomptr_p.h>
 
 struct IMMDevice;
 
@@ -31,7 +31,9 @@ QT_BEGIN_NAMESPACE
 class QWindowsAudioDeviceInfo : public QAudioDevicePrivate
 {
 public:
-    QWindowsAudioDeviceInfo(QByteArray dev, ComPtr<IMMDevice> immdev, const QString &description,
+    QWindowsAudioDeviceInfo(QByteArray dev,
+                            ComPtr<IMMDevice> immdev,
+                            QString description,
                             QAudioDevice::Mode mode);
     ~QWindowsAudioDeviceInfo();
 

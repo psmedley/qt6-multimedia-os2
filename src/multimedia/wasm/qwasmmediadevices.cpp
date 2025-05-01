@@ -23,7 +23,7 @@ QWasmCameraDevices::QWasmCameraDevices(QPlatformMediaIntegration *integration)
 {
 }
 
-QList<QCameraDevice> QWasmCameraDevices::videoInputs() const
+QList<QCameraDevice> QWasmCameraDevices::findVideoInputs() const
 {
     return m_mediaDevices ? m_mediaDevices->videoInputs() : QList<QCameraDevice>();
 }
@@ -59,15 +59,21 @@ QList<QCameraDevice> QWasmMediaDevices::videoInputs() const
 }
 
 QPlatformAudioSource *QWasmMediaDevices::createAudioSource(const QAudioDevice &deviceInfo,
+                                                           const QAudioFormat &fmt,
                                                            QObject *parent)
 {
-    return new QWasmAudioSource(deviceInfo.id(), parent);
+    auto ret = new QWasmAudioSource(deviceInfo.id(), parent);
+    ret->setFormat(fmt);
+    return ret;
 }
 
 QPlatformAudioSink *QWasmMediaDevices::createAudioSink(const QAudioDevice &deviceInfo,
+                                                       const QAudioFormat &fmt,
                                                        QObject *parent)
 {
-    return new QWasmAudioSink(deviceInfo.id(), parent);
+    auto ret = new QWasmAudioSink(deviceInfo.id(), parent);
+    ret->setFormat(fmt);
+    return ret;
 }
 
 void QWasmMediaDevices::parseDevices(emscripten::val devices)
@@ -170,8 +176,10 @@ void QWasmMediaDevices::parseDevices(emscripten::val devices)
     }
     m_audioOutputsRemoved = !audioOutputsToRemove.isEmpty();
 
-    if (m_videoInputsAdded || m_videoInputsRemoved)
-        emit QPlatformMediaIntegration::instance()->videoDevices()->videoInputsChanged();
+    if (m_videoInputsAdded || m_videoInputsRemoved) {
+        auto videoDevices = static_cast<QWasmCameraDevices*>(QPlatformMediaIntegration::instance()->videoDevices());
+        videoDevices->onVideoInputsChanged();
+    }
     if (m_audioInputsAdded || m_audioInputsRemoved)
         onAudioInputsChanged();
     if (m_audioOutputsAdded || m_audioOutputsRemoved)

@@ -16,10 +16,10 @@
 //
 
 #include "qavfcamerabase_p.h"
-#include <private/qplatformmediaintegration_p.h>
-#include <private/qvideooutputorientationhandler_p.h>
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+#include <QtMultimedia/private/qvideooutputorientationhandler_p.h>
 #define AVMediaType XAVMediaType
-#include "qffmpeghwaccel_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpeghwaccel_p.h>
 #undef AVMediaType
 
 #include <qfilesystemwatcher.h>
@@ -50,8 +50,6 @@ public:
 
     void setCaptureSession(QPlatformMediaCaptureSession *) override;
 
-    bool setCameraFormat(const QCameraFormat &format) override;
-
     std::optional<int> ffmpegHWPixelFormat() const override;
 
     int cameraPixelFormatScore(QVideoFrameFormat::PixelFormat pixelFmt,
@@ -62,13 +60,14 @@ public:
 protected:
     void onActiveChanged(bool active) override;
     void onCameraDeviceChanged(const QCameraDevice &device) override;
+    bool tryApplyCameraFormat(const QCameraFormat&) override;
 
 private:
-    void updateCameraFormat();
+    void updateCameraFormat(const QCameraFormat&);
     void updateVideoInput();
     void attachVideoInputDevice();
     void setPixelFormat(QVideoFrameFormat::PixelFormat pixelFormat, uint32_t inputCvPixFormat);
-    QSize adjustedResolution() const;
+    [[nodiscard]] QSize adjustedResolution(const QCameraFormat& format) const;
     VideoTransformation surfaceTransform() const;
 
     void updateRotationTracking();
@@ -85,6 +84,9 @@ private:
     QAVFSampleBufferDelegate *m_sampleBufferDelegate = nullptr;
     dispatch_queue_t m_delegateQueue;
     AVPixelFormat m_hwPixelFormat = AV_PIX_FMT_NONE;
+    // The current CVPixelFormat used by the AVCaptureVideoDataOutput.
+    // This can in some cases be different from the AVCaptureDeviceFormat
+    // used by the camera.
     uint32_t m_cvPixelFormat = 0;
 
     // If running iOS 17+, we use AVCaptureDeviceRotationCoordinator

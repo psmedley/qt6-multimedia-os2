@@ -61,7 +61,7 @@ extern "C" {
 #include "qx11capturablewindows_p.h"
 #endif
 
-#if QT_CONFIG(pipewire)
+#if QT_CONFIG(pipewire_screencapture)
 #  include <QtMultimedia/private/qpipewire_screencapture_p.h>
 #endif
 
@@ -74,20 +74,6 @@ extern "C" {
 QT_BEGIN_NAMESPACE
 
 static Q_LOGGING_CATEGORY(qLcFFmpeg, "qt.multimedia.ffmpeg");
-
-class QFFmpegMediaPlugin : public QPlatformMediaPlugin
-{
-    Q_OBJECT
-    Q_PLUGIN_METADATA(IID QPlatformMediaPlugin_iid FILE "ffmpeg.json")
-
-public:
-    QPlatformMediaIntegration *create(const QString &name) override
-    {
-        if (name == u"ffmpeg")
-            return new QFFmpegMediaIntegration;
-        return nullptr;
-    }
-};
 
 bool thread_local FFmpegLogsEnabledInThread = true;
 static bool UseCustomFFmpegLogger = false;
@@ -105,7 +91,7 @@ static void qffmpegLogCallback(void *ptr, int level, const char *fmt, va_list vl
         return;
 
     QString message = QStringLiteral("FFmpeg log: %1").arg(QString::vasprintf(fmt, vl));
-    if (message.endsWith("\n"))
+    if (message.endsWith(u"\n"))
         message.removeLast();
 
     if (level == AV_LOG_DEBUG || level == AV_LOG_TRACE)
@@ -181,13 +167,13 @@ QFFmpegMediaIntegration::QFFmpegMediaIntegration()
     qCInfo(qLcFFmpeg) << "Using Qt multimedia with FFmpeg version" << av_version_info()
                       << avutil_license();
 
-    qCInfo(qLcFFmpeg) << "Available HW decoding frameworks:";
+    qCDebug(qLcFFmpeg) << "Available HW decoding frameworks:";
     for (auto type : QFFmpeg::HWAccel::decodingDeviceTypes())
-        qCInfo(qLcFFmpeg) << "    " << av_hwdevice_get_type_name(type);
+        qCDebug(qLcFFmpeg) << "    " << av_hwdevice_get_type_name(type);
 
-    qCInfo(qLcFFmpeg) << "Available HW encoding frameworks:";
+    qCDebug(qLcFFmpeg) << "Available HW encoding frameworks:";
     for (auto type : QFFmpeg::HWAccel::encodingDeviceTypes())
-        qCInfo(qLcFFmpeg) << "    " << av_hwdevice_get_type_name(type);
+        qCDebug(qLcFFmpeg) << "    " << av_hwdevice_get_type_name(type);
 }
 
 QMaybe<QPlatformAudioDecoder *> QFFmpegMediaIntegration::createAudioDecoder(QAudioDecoder *decoder)
@@ -230,7 +216,8 @@ QMaybe<QPlatformCamera *> QFFmpegMediaIntegration::createCamera(QCamera *camera)
 
 QPlatformSurfaceCapture *QFFmpegMediaIntegration::createScreenCapture(QScreenCapture *)
 {
-    static const QString screenCaptureBackend = qgetenv("QT_SCREEN_CAPTURE_BACKEND").toLower();
+    static const QString screenCaptureBackend =
+            QString::fromLocal8Bit(qgetenv("QT_SCREEN_CAPTURE_BACKEND")).toLower();
 
     if (!screenCaptureBackend.isEmpty()) {
         if (auto screenCapture = createScreenCaptureByBackend(screenCaptureBackend))
@@ -244,7 +231,7 @@ QPlatformSurfaceCapture *QFFmpegMediaIntegration::createScreenCapture(QScreenCap
         return new QX11SurfaceCapture(QPlatformSurfaceCapture::ScreenSource{});
 #endif
 
-#if QT_CONFIG(pipewire)
+#if QT_CONFIG(pipewire_screencapture)
     if (QtPipeWire::QPipeWireCapture::isSupported())
         return new QtPipeWire::QPipeWireCapture(QPlatformSurfaceCapture::ScreenSource{});
 #endif
@@ -267,7 +254,8 @@ QPlatformSurfaceCapture *QFFmpegMediaIntegration::createScreenCapture(QScreenCap
 
 QPlatformSurfaceCapture *QFFmpegMediaIntegration::createWindowCapture(QWindowCapture *)
 {
-    static const QString windowCaptureBackend = qgetenv("QT_WINDOW_CAPTURE_BACKEND").toLower();
+    static const QString windowCaptureBackend =
+            QString::fromLocal8Bit(qgetenv("QT_WINDOW_CAPTURE_BACKEND")).toLower();
 
     if (!windowCaptureBackend.isEmpty()) {
         if (auto windowCapture = createWindowCaptureByBackend(windowCaptureBackend))
@@ -388,5 +376,3 @@ Q_DECL_EXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void * /*reserved*/)
 #endif
 
 QT_END_NAMESPACE
-
-#include "qffmpegmediaintegration.moc"

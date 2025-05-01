@@ -127,10 +127,9 @@ int sensorOrientation(QString cameraId)
 {
     QList<QCamera::FocusMode> returnValue;
 
-    const QStringList focusModeStrings =
-        deviceManager.callMethod<QStringList>(
+    const QStringList focusModeStrings = deviceManager.callMethod<QStringList>(
             "getSupportedQCameraFocusModesAsStrings",
-            QJniObject::fromString(cameraDevice.id()).object<jstring>());
+            QJniObject::fromString(QString::fromUtf8(cameraDevice.id())).object<jstring>());
 
     // Translate the strings into enums if possible.
     for (const QString &focusModeString : focusModeStrings) {
@@ -178,7 +177,7 @@ QAndroidCamera::~QAndroidCamera()
 {
     {
         QWriteLocker locker(rwLock);
-        g_qcameras->remove(m_cameraDevice.id());
+        g_qcameras->remove(QString::fromUtf8(m_cameraDevice.id()));
 
         m_jniCamera.callMethod<void>("stopAndClose");
         setState(State::Closed);
@@ -283,7 +282,8 @@ QtVideo::Rotation QAndroidCamera::rotation() const
     }
 
     int sign = (m_cameraDevice.position() == QCameraDevice::Position::FrontFace) ? 1 : -1;
-    int rotation = (sensorOrientation(m_cameraDevice.id()) - deviceOrientation * sign + 360) % 360;
+    int rotation = (sensorOrientation(QString::fromUtf8(m_cameraDevice.id()))
+            - deviceOrientation * sign + 360) % 360;
 
     return QtVideo::Rotation(rotation);
 }
@@ -313,7 +313,7 @@ void QAndroidCamera::setActive(bool active)
         height = FFALIGN(height, 16);
 
         setState(State::WaitingOpen);
-        g_qcameras->insert(m_cameraDevice.id(), this);
+        g_qcameras->insert(QString::fromUtf8(m_cameraDevice.id()), this);
 
         // Create frameFactory when ImageReader is created;
         m_frameFactory = QAndroidVideoFrameFactory::create();
@@ -328,13 +328,14 @@ void QAndroidCamera::setActive(bool active)
                                      jint(m_cameraFormat.maxFrameRate()));
 
         bool canOpen = m_jniCamera.callMethod<jboolean>(
-                "open", QJniObject::fromString(m_cameraDevice.id()).object<jstring>());
+                "open",
+                QJniObject::fromString(QString::fromUtf8(m_cameraDevice.id())).object<jstring>());
 
         if (!canOpen) {
-            g_qcameras->remove(m_cameraDevice.id());
+            g_qcameras->remove(QString::fromUtf8(m_cameraDevice.id()));
             setState(State::Closed);
             updateError(QCamera::CameraError,
-                        QString("Failed to start camera: ").append(m_cameraDevice.description()));
+                        QString(u"Failed to start camera: ").append(m_cameraDevice.description()));
         }
     } else {
         m_jniCamera.callMethod<void>("stopAndClose");
@@ -366,7 +367,7 @@ void QAndroidCamera::setState(QAndroidCamera::State newState)
         m_state = State::Closed;
 
         updateError(QCamera::CameraError,
-                    QString("Failed to start Camera %1").arg(m_cameraDevice.description()));
+                    QString(u"Failed to start Camera %1").arg(m_cameraDevice.description()));
     }
 
     if (m_state == State::Closed && newState == State::WaitingOpen)
@@ -417,11 +418,13 @@ void QAndroidCamera::updateCameraCharacteristics()
 
 
     // Gather capabilities.
+    QCamera::Features newSupportedFeatures = {};
+
     float newMaxZoom = 1.f;
     float newMinZoom = 1.f;
     const auto newZoomRange = deviceManager.callMethod<jfloat[]>(
-        "getZoomRange",
-        QJniObject::fromString(m_cameraDevice.id()).object<jstring>());
+            "getZoomRange",
+            QJniObject::fromString(QString::fromUtf8(m_cameraDevice.id())).object<jstring>());
     if (newZoomRange.isValid() && newZoomRange.size() == 2) {
         newMinZoom = newZoomRange[0];
         newMaxZoom = newZoomRange[1];
@@ -434,8 +437,8 @@ void QAndroidCamera::updateCameraCharacteristics()
     m_supportedFlashModes.clear();
     m_supportedFlashModes.append(QCamera::FlashOff);
     const QStringList flashModes = deviceManager.callMethod<QStringList>(
-        "getSupportedFlashModes",
-        QJniObject::fromString(m_cameraDevice.id()).object<jstring>());
+            "getSupportedFlashModes",
+            QJniObject::fromString(QString::fromUtf8(m_cameraDevice.id())).object<jstring>());
     for (const auto &flashMode : flashModes) {
         if (flashMode == QLatin1String("auto"))
             m_supportedFlashModes.append(QCamera::FlashAuto);
@@ -444,15 +447,21 @@ void QAndroidCamera::updateCameraCharacteristics()
     }
 
     m_TorchModeSupported = deviceManager.callMethod<jboolean>(
-            "isTorchModeSupported", QJniObject::fromString(m_cameraDevice.id()).object<jstring>());
+            "isTorchModeSupported",
+            QJniObject::fromString(QString::fromUtf8(m_cameraDevice.id())).object<jstring>());
 
     m_supportedFocusModes = qGetSupportedFocusModesFromAndroidCamera(
         deviceManager,
         m_cameraDevice);
 
+    if (m_supportedFocusModes.contains(QCamera::FocusMode::FocusModeManual))
+        newSupportedFeatures |= QCamera::Feature::FocusDistance;
 
+
+    // Signal capability changes
     minimumZoomFactorChanged(newMinZoom);
     maximumZoomFactorChanged(newMaxZoom);
+    supportedFeaturesChanged(newSupportedFeatures);
 
 
     // Apply properties
@@ -509,6 +518,58 @@ void QAndroidCamera::cleanCameraCharacteristics()
     if (focusMode() != QCamera::FocusModeAuto)
         setFocusMode(QCamera::FocusModeAuto);
     m_supportedFocusModes.clear();
+
+    supportedFeaturesChanged({});
+}
+
+void QAndroidCamera::setFocusDistance(float distance)
+{
+    if (qFuzzyCompare(focusDistance(), distance))
+        return;
+
+    if (!(supportedFeatures() & QCamera::Feature::FocusDistance)) {
+        qCWarning(qLCAndroidCamera) <<
+            Q_FUNC_INFO <<
+            "attmpted to set focus-distance on camera without support for FocusDistance feature";
+        return;
+    }
+
+    if (distance < 0 || distance > 1) {
+        qCWarning(qLCAndroidCamera) <<
+            Q_FUNC_INFO <<
+            "attempted to set camera focus-distance with out-of-bounds value";
+        return;
+    }
+
+    // focusDistance should only be applied if the focusMode is currently set to Manual.
+    // The Java function will handle this behavior. Either way, the value should be accepted so
+    // we can apply it if FocusModeManual is activated
+    m_jniCamera.callMethod<void>("setFocusDistance", distance);
+
+    focusDistanceChanged(distance);
+}
+
+void QAndroidCamera::setFocusMode(QCamera::FocusMode mode)
+{
+    if (focusMode() == mode)
+        return;
+
+    if (!isFocusModeSupported(mode)) {
+        qCWarning(qLCAndroidCamera) <<
+            Q_FUNC_INFO <<
+            QLatin1String("attempted to set focus-mode '%1' on camera where it is unsupported.")
+                .arg(QString::fromLatin1(
+                        QMetaEnum::fromType<QCamera::FocusMode>().valueToKey(mode)));
+        return;
+    }
+
+    // If the new focus-mode is Manual, then the focusDistance
+    // needs to be applied as well. The Java function handles this.
+    m_jniCamera.callMethod<void>(
+        "setFocusMode",
+        static_cast<jint>(mode));
+
+    focusModeChanged(mode);
 }
 
 void QAndroidCamera::setFlashMode(QCamera::FlashMode mode)
@@ -636,7 +697,7 @@ void QAndroidCamera::onCameraDisconnect()
 void QAndroidCamera::onCameraError(int reason)
 {
     updateError(QCamera::CameraError,
-                QString("Capture error with Camera %1. Camera2 Api error code: %2")
+                QString(u"Capture error with Camera %1. Camera2 Api error code: %2")
                         .arg(m_cameraDevice.description())
                         .arg(reason));
 }

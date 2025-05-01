@@ -22,6 +22,11 @@ if(NOT TARGET Qt::Gui)
     return()
 endif()
 
+if(QNX AND CMAKE_SYSTEM_VERSION GREATER_EQUAL 800)
+    message(NOTICE "Skipping the build as multimedia is not supported on QNX8.0.")
+    return()
+endif()
+
 include(src/multimedia/Qt6MultimediaMacros.cmake)
 
 set(QT_BUILD_EXTRA_IDE_FILE_PATTERNS
@@ -55,7 +60,6 @@ set(QT_BUILD_EXTRA_IDE_FILE_PATTERNS
     src/multimedia/doc/src/qtmultimedia-qml-types.qdoc
     src/multimedia/doc/src/videooverview.qdoc
     src/multimedia/doc/src/advanced-ffmpeg-configuration.qdoc
-    src/multimedia/doc/src/examples/video-qml-paint-rate.qdocinc
     src/multimedia/doc/src/images/Zoom.gif
     src/multimedia/doc/src/images/annotatedurl.png
     src/multimedia/doc/src/images/camera_correctionAngle_90.png
@@ -69,7 +73,7 @@ set(QT_BUILD_EXTRA_IDE_FILE_PATTERNS
     src/multimedia/doc/src/images/slideshow-img1.png
     src/multimedia/doc/src/images/sound-wave-small.jpg
     src/multimedia/doc/src/images/video-graphics-memory.png
-    src/multimedia/doc/src/images/video-qml-paint-rate.png
+
 )
 
 qt_build_repo()

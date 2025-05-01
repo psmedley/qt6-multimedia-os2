@@ -14,9 +14,9 @@
 // We mean it.
 //
 
-#include "qffmpegdefs_p.h"
-#include "qffmpegcodec_p.h"
-#include "qffmpegavaudioformat_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpegdefs_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegcodec_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegavaudioformat_p.h>
 #include <QtMultimedia/qvideoframeformat.h>
 
 #include <qstring.h>
@@ -39,7 +39,17 @@ namespace QFFmpeg
 
 inline std::optional<qint64> mul(qint64 a, AVRational b)
 {
-    return b.den != 0 ? (a * b.num + b.den / 2) / b.den : std::optional<qint64>{};
+    if (b.den == 0)
+        return {};
+
+    auto multiplyAndRound = [](qint64 a, AVRational b) { //
+        return (a * b.num + b.den / 2) / b.den;
+    };
+
+    if (a < 0)
+        return -multiplyAndRound(-a, b);
+    else
+        return multiplyAndRound(a, b);
 }
 
 inline std::optional<qreal> mul(qreal a, AVRational b)
@@ -94,8 +104,7 @@ inline int64_t getAVFrameDuration(const AVFrame &frame)
 #if QT_FFMPEG_HAS_FRAME_DURATION
     return frame.duration;
 #else
-    Q_UNUSED(frame);
-    return 0;
+    return frame.pkt_duration;
 #endif
 }
 

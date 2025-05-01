@@ -21,7 +21,7 @@
 
 QT_BEGIN_NAMESPACE
 
-class QPulseAudioEngine;
+class QPulseAudioContextManager;
 
 class QPulseAudioDevices : public QPlatformAudioDevices
 {
@@ -29,20 +29,22 @@ public:
     QPulseAudioDevices();
     ~QPulseAudioDevices() override;
 
-    QPlatformAudioSource *createAudioSource(const QAudioDevice &deviceInfo,
+    QPlatformAudioSource *createAudioSource(const QAudioDevice &, const QAudioFormat &,
                                             QObject *parent) override;
-    QPlatformAudioSink *createAudioSink(const QAudioDevice &deviceInfo,
+    QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
                                         QObject *parent) override;
 
     using QPlatformAudioDevices::onAudioInputsChanged;
     using QPlatformAudioDevices::onAudioOutputsChanged;
+
+    QLatin1String backendName() const override { return QLatin1String{ "PulseAudio" }; }
 
 protected:
     QList<QAudioDevice> findAudioInputs() const override;
     QList<QAudioDevice> findAudioOutputs() const override;
 
 private:
-    QPulseAudioEngine *pulseEngine;
+    QPulseAudioContextManager *pulseEngine;
 };
 
 QT_END_NAMESPACE

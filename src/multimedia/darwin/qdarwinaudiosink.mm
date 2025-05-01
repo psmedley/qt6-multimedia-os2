@@ -1,27 +1,27 @@
 // Copyright (C) 2016 The Qt Company Ltd and/or its subsidiary(-ies).
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
-#include "qdarwinaudiosink_p.h"
-#include "qcoreaudiosessionmanager_p.h"
-#include "qdarwinaudiodevice_p.h"
-#include "qcoreaudioutils_p.h"
-#include "qdarwinaudiodevices_p.h"
-#include <qmediadevices.h>
 
-#include <QtCore/QLoggingCategory>
-#include <QtCore/QDataStream>
-#include <QtCore/QTimer>
-#include <QtCore/QDebug>
+#include "qdarwinaudiosink_p.h"
+
+#include <QtCore/qloggingcategory.h>
+#include <QtCore/qdatastream.h>
+#include <QtCore/qtimer.h>
+#include <QtCore/qdebug.h>
+#include <QtGui/qguiapplication.h>
+#include <QtMultimedia/qmediadevices.h>
+#include <QtMultimedia/private/qcoreaudioutils_p.h>
+#include <QtMultimedia/private/qdarwinaudiodevice_p.h>
+#include <QtMultimedia/private/qdarwinaudiodevices_p.h>
 
 #include <AudioUnit/AudioUnit.h>
 #if defined(Q_OS_MACOS)
-# include <AudioUnit/AudioComponent.h>
+#  include <AudioUnit/AudioComponent.h>
+#  include <QtMultimedia/private/qmacosaudiodatautils_p.h>
+#else
+#  include <QtMultimedia/private/qaudiohelpers_p.h>
+#  include <QtMultimedia/private/qcoreaudiosessionmanager_p.h>
 #endif
 
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-# include <QtMultimedia/private/qaudiohelpers_p.h>
-#endif
-
-#include <QtWidgets/qapplication.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -193,26 +193,17 @@ qint64 QDarwinAudioSinkDevice::writeData(const char *data, qint64 len)
     return m_audioBuffer->writeBytes(data, len);
 }
 
-QDarwinAudioSink::QDarwinAudioSink(const QAudioDevice &device, QObject *parent)
+QDarwinAudioSink::QDarwinAudioSink(const QAudioDevice &device, const QAudioFormat &format,
+                                   QObject *parent)
     : QPlatformAudioSink(parent),
+      m_audioDevice(device),
+      m_audioFormat(format),
       m_stateMachine(*this)
 {
-    // If incoming device is null, fallback to default device.
-    // Note: Default device can also be null if no audio-devices are connected.
-    m_audioDevice = device.isNull()
-        ? QMediaDevices::defaultAudioInput()
-        : device;
-#if defined(Q_OS_MACOS)
-    // TODO: This code is problematic because the device might be null-device.
-    const QCoreAudioDeviceInfo *info = static_cast<const QCoreAudioDeviceInfo *>(m_audioDevice.handle());
-    Q_ASSERT(info);
-    m_audioDeviceId = info->deviceID();
-#endif
-
     connect(this, &QDarwinAudioSink::stateChanged, this, &QDarwinAudioSink::updateAudioDevice);
 #ifdef Q_OS_IOS
-    if (qApp)
-        connect(qApp, &QApplication::applicationStateChanged, this, &QDarwinAudioSink::appStateChanged);
+    if (qGuiApp)
+        connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, &QDarwinAudioSink::appStateChanged);
 #endif
 }
 
@@ -325,12 +316,6 @@ QAudio::State QDarwinAudioSink::state() const
     return m_stateMachine.state();
 }
 
-void QDarwinAudioSink::setFormat(const QAudioFormat &format)
-{
-    if (state() == QAudio::StoppedState)
-        m_audioFormat = format;
-}
-
 QAudioFormat QDarwinAudioSink::format() const
 {
     return m_audioFormat;
@@ -437,6 +422,18 @@ bool QDarwinAudioSink::open()
         return true;
     }
 
+#if defined(Q_OS_MACOS)
+    // Find the the most recent CoreAudio AudioDeviceID for the current device
+    // to start the audio stream.
+    std::optional<AudioDeviceID> audioDeviceId = QCoreAudioUtils::findAudioDeviceId(m_audioDevice);
+    if (!audioDeviceId) {
+        qWarning() << "QAudioSource: Unable to use find most recent CoreAudio AudioDeviceID for "
+                      "given device-id. The device might not be connected.";
+        return false;
+    }
+    const AudioDeviceID nativeDeviceId = audioDeviceId.value();
+#endif
+
     AudioComponentDescription componentDescription;
     componentDescription.componentType = kAudioUnitType_Output;
 #if defined(Q_OS_MACOS)
@@ -448,8 +445,8 @@ bool QDarwinAudioSink::open()
     componentDescription.componentFlags = 0;
     componentDescription.componentFlagsMask = 0;
 
-    AudioComponent component = AudioComponentFindNext(0, &componentDescription);
-    if (component == 0) {
+    AudioComponent component = AudioComponentFindNext(nullptr, &componentDescription);
+    if (component == nullptr) {
         qWarning() << "QAudioOutput: Failed to find Output component";
         return false;
     }
@@ -475,13 +472,18 @@ bool QDarwinAudioSink::open()
     }
 
 #if defined(Q_OS_MACOS)
+    // register listener
+    if (!addDisconnectListener(*audioDeviceId))
+        return false;
+
     //Set Audio Device
     if (AudioUnitSetProperty(m_audioUnit,
                              kAudioOutputUnitProperty_CurrentDevice,
                              kAudioUnitScope_Global,
                              0,
-                             &m_audioDeviceId,
-                             sizeof(m_audioDeviceId)) != noErr) {
+                             &nativeDeviceId,
+                             sizeof(nativeDeviceId))
+        != noErr) {
         qWarning() << "QAudioOutput: Unable to use configured device";
         return false;
     }
@@ -550,12 +552,15 @@ bool QDarwinAudioSink::open()
 
 void QDarwinAudioSink::close()
 {
-    if (m_audioUnit != 0) {
+    if (m_audioUnit != nullptr) {
         m_stateMachine.stop();
 
+#if defined(Q_OS_MACOS)
+        removeDisconnectListener();
+#endif
         AudioUnitUninitialize(m_audioUnit);
         AudioComponentInstanceDispose(m_audioUnit);
-        m_audioUnit = 0;
+        m_audioUnit = nullptr;
     }
 
     m_audioBuffer.reset();
@@ -574,6 +579,28 @@ void QDarwinAudioSink::onAudioDeviceDrained()
     if (m_stateMachine.onDrained())
         m_drainSemaphore.release();
 }
+
+#if defined(Q_OS_MACOS)
+bool QDarwinAudioSink::addDisconnectListener(AudioObjectID id)
+{
+    m_stopOnDisconnected.cancel();
+
+    if (!m_disconnectMonitor.addDisconnectListener(id))
+        return false;
+
+    m_stopOnDisconnected = m_disconnectMonitor.then(this, [this] {
+        m_stateMachine.stop(QAudio::IOError);
+    });
+
+    return true;
+}
+
+void QDarwinAudioSink::removeDisconnectListener()
+{
+    m_stopOnDisconnected.cancel();
+    m_disconnectMonitor.removeDisconnectListener();
+}
+#endif
 
 void QDarwinAudioSink::onAudioDeviceError()
 {

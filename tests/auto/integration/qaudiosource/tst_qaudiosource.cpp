@@ -127,7 +127,7 @@ void tst_QAudioSource::initTestCase()
     const QList<QAudioDevice> devices = QMediaDevices::audioInputs();
 
     if (devices.size() <= 0)
-        QSKIP("No audio backend");
+        QSKIP("No audio inputs found");
 
     audioDevice = QMediaDevices::defaultAudioInput();
 
@@ -140,31 +140,16 @@ void tst_QAudioSource::initTestCase()
             testFormats.append(audioDevice.preferredFormat());
     }
 
-    // PCM 11025 mono S16LE
-    format.setSampleRate(11025);
     format.setSampleFormat(QAudioFormat::Int16);
-    if (audioDevice.isFormatSupported(format))
-        testFormats.append(format);
+    for (int channels : { 1, 2 }) {
+        format.setChannelCount(channels);
+        for (int rate : { 44100, 48000 }) {
+            format.setSampleRate(rate);
 
-    // PCM 22050 mono S16LE
-    format.setSampleRate(22050);
-    if (audioDevice.isFormatSupported(format))
-        testFormats.append(format);
-
-    // PCM 22050 stereo S16LE
-    format.setChannelCount(2);
-    if (audioDevice.isFormatSupported(format))
-        testFormats.append(format);
-
-    // PCM 44100 stereo S16LE
-    format.setSampleRate(44100);
-    if (audioDevice.isFormatSupported(format))
-        testFormats.append(format);
-
-    // PCM 48000 stereo S16LE
-    format.setSampleRate(48000);
-    if (audioDevice.isFormatSupported(format))
-        testFormats.append(format);
+            if (audioDevice.isFormatSupported(format))
+                testFormats.append(format);
+        }
+    }
 
     QVERIFY(testFormats.size());
 
@@ -402,7 +387,8 @@ void tst_QAudioSource::pull()
 
     // Check that 'elapsed' increases
     QTRY_VERIFY2((audioSource.elapsedUSecs() > 0), "elapsedUSecs() is still zero after start()");
-    QTRY_VERIFY2((audioSource.processedUSecs() > 0), "elapsedUSecs() is still zero after start()");
+    QTRY_VERIFY2((audioSource.processedUSecs() > 0),
+                 "processedUSecs() is still zero after start()");
 
     // Allow some recording to happen
     QTest::qWait(3000); // 3 seconds should be plenty

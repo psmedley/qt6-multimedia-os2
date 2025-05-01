@@ -43,7 +43,11 @@ class QWasmCameraDevices : public QPlatformVideoDevices
 public:
     QWasmCameraDevices(QPlatformMediaIntegration *integration);
 
-    QList<QCameraDevice> videoInputs() const override;
+    using QPlatformVideoDevices::onVideoInputsChanged;
+
+protected:
+    QList<QCameraDevice> findVideoInputs() const override;
+
 private:
     // weak
     QWasmMediaDevices *m_mediaDevices;
@@ -58,11 +62,13 @@ public:
 
     QList<QCameraDevice> videoInputs() const;
 
-    QPlatformAudioSource *createAudioSource(const QAudioDevice &deviceInfo,
+    QPlatformAudioSource *createAudioSource(const QAudioDevice &, const QAudioFormat &,
                                             QObject *parent) override;
-    QPlatformAudioSink *createAudioSink(const QAudioDevice &deviceInfo,
+    QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
                                         QObject *parent) override;
     void initDevices();
+
+    QLatin1String backendName() const override { return QLatin1String{ "WebAssembly" }; }
 
 protected:
     QList<QAudioDevice> findAudioInputs() const override;

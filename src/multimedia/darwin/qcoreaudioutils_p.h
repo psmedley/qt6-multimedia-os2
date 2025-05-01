@@ -15,10 +15,18 @@
 // We mean it.
 //
 
-#include <CoreAudioTypes/CoreAudioTypes.h>
-
-#include <QtMultimedia/QAudioFormat>
+#include <AudioUnit/AudioUnit.h>
 #include <QtCore/qglobal.h>
+#include <QtCore/qpromise.h>
+#include <QtCore/qfuture.h>
+#include <QtCore/qspan.h>
+#include <QtCore/private/quniquehandle_p.h>
+#include <QtMultimedia/qaudioformat.h>
+
+#include <CoreAudioTypes/CoreAudioTypes.h>
+#ifdef Q_OS_MACOS
+#  include <CoreAudio/AudioHardwareBase.h>
+#endif
 
 QT_BEGIN_NAMESPACE
 
@@ -41,6 +49,41 @@ AudioStreamBasicDescription toAudioStreamBasicDescription(QAudioFormat const& au
 Q_MULTIMEDIA_EXPORT std::unique_ptr<AudioChannelLayout, QFreeDeleter>
 toAudioChannelLayout(const QAudioFormat &format, UInt32 *size);
 QAudioFormat::ChannelConfig fromAudioChannelLayout(const AudioChannelLayout *layout);
+
+#ifdef Q_OS_MACOS
+class DeviceDisconnectMonitor
+{
+public:
+    bool addDisconnectListener(AudioObjectID);
+    void removeDisconnectListener();
+
+    template <typename Functor>
+    auto then(QObject *context, Functor &&f)
+    {
+        return m_disconnectedFuture.then(context, std::forward<Functor>(f));
+    }
+
+private:
+    static OSStatus disconnectCallback(AudioObjectID, UInt32 numberOfAddresses,
+                                       const AudioObjectPropertyAddress *inAddresses, void *self);
+    OSStatus streamDisconnectListener(AudioObjectID,
+                                      QSpan<const AudioObjectPropertyAddress> properties);
+
+    QPromise<void> m_disconnectedPromise;
+    QFuture<void> m_disconnectedFuture;
+
+    AudioObjectID m_currentId;
+};
+#endif
+
+struct AudioUnitHandleTraits
+{
+    using Type = AudioUnit;
+    static Type invalidValue() { return nullptr; }
+    static bool close(Type handle) { return AudioComponentInstanceDispose(handle) == noErr; }
+};
+
+using AudioUnitHandle = QUniqueHandle<AudioUnitHandleTraits>;
 
 } // namespace QCoreAudioUtils
 

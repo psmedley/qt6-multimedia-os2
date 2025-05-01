@@ -14,9 +14,9 @@
 // We mean it.
 //
 
-#include <private/qplatformaudioinput_p.h>
-#include <private/qplatformaudiobufferinput_p.h>
-#include "qffmpegthread_p.h"
+#include <QtMultimedia/private/qplatformaudioinput_p.h>
+#include <QtMultimedia/private/qplatformaudiobufferinput_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegthread_p.h>
 #include <qaudioinput.h>
 
 QT_BEGIN_NAMESPACE
@@ -29,7 +29,7 @@ class AudioSourceIO;
 
 constexpr int DefaultAudioInputBufferSize = 4096;
 
-class QFFmpegAudioInput : public QPlatformAudioBufferInputBase, public QPlatformAudioInput
+class QFFmpegAudioInput : public QAudioBufferSource, public QPlatformAudioInput
 {
     // for qobject_cast
     Q_OBJECT
@@ -41,14 +41,14 @@ public:
     void setMuted(bool /*muted*/) override;
     void setVolume(float /*volume*/) override;
 
-    void setFrameSize(int frameSize);
+    void setBufferSize(int bufferSize);
     void setRunning(bool b);
 
     int bufferSize() const;
 
 private:
-    QFFmpeg::AudioSourceIO *audioIO = nullptr;
-    std::unique_ptr<QThread> inputThread;
+    QFFmpeg::AudioSourceIO *m_audioIO = nullptr;
+    std::unique_ptr<QThread> m_inputThread;
 };
 
 QT_END_NAMESPACE

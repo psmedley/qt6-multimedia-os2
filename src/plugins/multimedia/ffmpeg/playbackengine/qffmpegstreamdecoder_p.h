@@ -13,11 +13,11 @@
 //
 // We mean it.
 //
-#include "playbackengine/qffmpegplaybackengineobject_p.h"
-#include "playbackengine/qffmpegframe_p.h"
-#include "playbackengine/qffmpegpacket_p.h"
-#include "playbackengine/qffmpegpositionwithoffset_p.h"
-#include "private/qplatformmediaplayer_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpegplaybackengineobject_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegframe_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegpacket_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegplaybackutils_p.h>
+#include <QtMultimedia/private/qplatformmediaplayer_p.h>
 
 #include <QtCore/qqueue.h>
 
@@ -31,7 +31,7 @@ class StreamDecoder : public PlaybackEngineObject
 {
     Q_OBJECT
 public:
-    StreamDecoder(const CodecContext &codecContext, qint64 absSeekPos);
+    StreamDecoder(const CodecContext &codecContext, TrackPosition absSeekPos);
 
     ~StreamDecoder() override;
 
@@ -41,7 +41,6 @@ public:
     static qint32 maxQueueSize(QPlatformMediaPlayer::TrackType type);
 
 public slots:
-    void setInitialPosition(TimePoint tp, qint64 trackPos);
 
     void decode(Packet);
 
@@ -72,7 +71,7 @@ private:
 
 private:
     CodecContext m_codecContext;
-    qint64 m_absSeekPos = 0;
+    TrackPosition m_absSeekPos = TrackPosition(0);
     const QPlatformMediaPlayer::TrackType m_trackType;
 
     qint32 m_pendingFramesCount = 0;

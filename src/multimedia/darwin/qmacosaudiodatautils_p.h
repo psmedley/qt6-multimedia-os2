@@ -20,9 +20,9 @@
 #include <QtMultimedia/qaudiodevice.h>
 #include <QtMultimedia/private/qcoreaudioutils_p.h>
 #include <QtCore/qdebug.h>
+#include <QtCore/qspan.h>
 #include <QtCore/private/qcore_mac_p.h>
 
-#include <algorithm>
 #include <optional>
 #include <vector>
 
@@ -36,8 +36,15 @@ QStringView audioPropertySelectorToString(AudioObjectPropertySelector);
 QStringView audioPropertyScopeToString(AudioObjectPropertyScope);
 QStringView audioPropertyElementToString(AudioObjectPropertyElement);
 
-} // namespace QCoreAudioUtils
+[[nodiscard]] QByteArray readPersistentDeviceId(
+    AudioDeviceID,
+    QAudioDevice::Mode);
 
+[[nodiscard]] std::optional<AudioDeviceID> findAudioDeviceId(
+    const QByteArray &id,
+    QAudioDevice::Mode);
+
+[[nodiscard]] std::optional<AudioDeviceID> findAudioDeviceId(const QAudioDevice &device);
 
 template<typename... Args>
 void printUnableToReadWarning(AudioObjectID objectID, const AudioObjectPropertyAddress &address, Args &&...args)
@@ -56,18 +63,16 @@ void printUnableToReadWarning(AudioObjectID objectID, const AudioObjectPropertyA
     QAudioDevice::Mode mode,
     AudioObjectPropertyElement element = kAudioObjectPropertyElementMain);
 
-[[nodiscard]] bool getAudioData(
+[[nodiscard]] bool getAudioPropertyRaw(
     AudioObjectID objectID,
     const AudioObjectPropertyAddress &address,
-    void *dst,
-    UInt32 dstSize,
+    QSpan<std::byte> destination,
     bool warnIfMissing = true);
 
 template<typename T>
-std::optional<std::vector<T>> getAudioData(AudioObjectID objectID,
-                                           const AudioObjectPropertyAddress &address,
-                                           size_t minDataSize = 0,
-                                           bool warnIfMissing = true)
+std::optional<std::vector<T>> getAudioPropertyList(AudioObjectID objectID,
+                                                   const AudioObjectPropertyAddress &address,
+                                                   bool warnIfMissing = true)
 {
     static_assert(std::is_trivial_v<T>, "A trivial type is expected");
 
@@ -78,25 +83,21 @@ std::optional<std::vector<T>> getAudioData(AudioObjectID objectID,
         if (warnIfMissing)
             printUnableToReadWarning(objectID, address,
                                      "AudioObjectGetPropertyDataSize failed, Err:", res);
-    } else if (size / sizeof(T) < minDataSize) {
-        if (warnIfMissing)
-            printUnableToReadWarning(objectID, address, "Data size is too small:", size, "VS",
-                                     minDataSize * sizeof(T), "bytes");
     } else {
         std::vector<T> data(size / sizeof(T));
-        if (getAudioData(objectID, address, data.data(), data.size() * sizeof(T)))
-            return { std::move(data) };
+        if (getAudioPropertyRaw(objectID, address, as_writable_bytes(QSpan{data})))
+            return data;
     }
 
     return {};
 }
 
 template<typename T>
-std::optional<T> getAudioObject(AudioObjectID objectID, const AudioObjectPropertyAddress &address,
-                                bool warnIfMissing = false)
+std::optional<T> getAudioProperty(AudioObjectID objectID, const AudioObjectPropertyAddress &address,
+                                  bool warnIfMissing = false)
 {
     if constexpr(std::is_same_v<T, QCFString>) {
-        const std::optional<CFStringRef> string = getAudioObject<CFStringRef>(
+        const std::optional<CFStringRef> string = getAudioProperty<CFStringRef>(
                 objectID, address, warnIfMissing);
         if (string)
             return QCFString{*string};
@@ -106,24 +107,51 @@ std::optional<T> getAudioObject(AudioObjectID objectID, const AudioObjectPropert
         static_assert(std::is_trivial_v<T>, "A trivial type is expected");
 
         T object{};
-        if (getAudioData(objectID, address, &object, sizeof(T), warnIfMissing))
+        if (getAudioPropertyRaw(objectID, address, as_writable_bytes(QSpan(&object, 1)), warnIfMissing))
             return object;
 
         return {};
     }
 }
 
+template<typename T>
+std::unique_ptr<T, QCoreAudioUtils::QFreeDeleter>
+getAudioPropertyWithFlexibleArrayMember(AudioObjectID objectID, const AudioObjectPropertyAddress &address,
+                                        bool warnIfMissing = false)
+{
+    static_assert(std::is_trivial_v<T>, "A trivial type is expected");
 
-[[nodiscard]] QByteArray qCoreAudioReadPersistentAudioDeviceID(
-    AudioDeviceID device,
-    QAudioDevice::Mode mode);
+    UInt32 size = 0;
+    const auto res = AudioObjectGetPropertyDataSize(objectID, &address, 0, nullptr, &size);
+    if (res != noErr) {
+        if (warnIfMissing)
+            printUnableToReadWarning(objectID, address,
+                                     "AudioObjectGetPropertyDataSize failed, Err:", res);
+        return nullptr;
+    }
+    if (size < sizeof(T)) {
+        printUnableToReadWarning(objectID, address, "Data size is too small:", size, "VS",
+                                 sizeof(T), "bytes");
+        return nullptr;
+    }
 
-[[nodiscard]] std::optional<AudioDeviceID> qCoreAudioFindAudioDeviceId(
-    const QByteArray &id,
-    QAudioDevice::Mode mode);
+    using QCoreAudioUtils::QFreeDeleter;
+    std::unique_ptr<std::byte, QFreeDeleter> region {
+        reinterpret_cast<std::byte*>(::malloc(size))
+    };
 
-[[nodiscard]] std::optional<AudioDeviceID> qCoreAudioFindAudioDeviceId(
-    const QAudioDevice &device);
+    if (getAudioPropertyRaw(objectID, address,
+                            QSpan(region.get(), size), warnIfMissing))
+        return std::unique_ptr<T, QFreeDeleter>{
+            reinterpret_cast<T*>(region.release())
+        };
+
+    return {};
+}
+
+} // namespace QCoreAudioUtils
+
+
 
 QT_END_NAMESPACE
 

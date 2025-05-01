@@ -143,7 +143,11 @@ qt_feature("ffmpeg" PRIVATE
 qt_feature("pipewire" PRIVATE
     LABEL "PipeWire"
     ENABLE INPUT_pipewire STREQUAL 'yes'
-    CONDITION QT_FEATURE_dbus AND TARGET PipeWire::PipeWire
+    CONDITION QT_FEATURE_library AND TARGET PipeWire::PipeWire
+)
+qt_feature("pipewire_screencapture" PRIVATE
+    LABEL "PipeWire screen capture"
+    CONDITION QT_FEATURE_dbus AND QT_FEATURE_pipewire
 )
 qt_feature("alsa" PUBLIC PRIVATE
     LABEL "ALSA (experimental)"
@@ -198,7 +202,7 @@ qt_feature("gpu_vivante" PRIVATE
 )
 qt_feature("linux_v4l" PRIVATE
     LABEL "Video for Linux"
-    CONDITION UNIX AND TEST_linux_v4l
+    CONDITION (UNIX AND NOT ANDROID) AND TEST_linux_v4l
 )
 qt_feature("linux_dmabuf" PRIVATE
     LABEL "Linux DMA buffer support"
@@ -212,6 +216,11 @@ qt_feature("mmrenderer" PUBLIC PRIVATE
     LABEL "MMRenderer"
     CONDITION MMRenderer_FOUND AND MMRendererCore_FOUND
     EMIT_IF QNX
+)
+qt_feature("native_android_backend" PUBLIC PRIVATE
+    LABEL "Native Android backend (deprecated)"
+    AUTODETECT true # It is still found and built by default
+    CONDITION ANDROID
 )
 qt_feature("pulseaudio" PUBLIC PRIVATE
     LABEL "PulseAudio"
@@ -260,11 +269,12 @@ qt_configure_add_summary_section(NAME "Plugin")
 qt_configure_add_summary_entry(ARGS "gstreamer")
 qt_configure_add_summary_entry(ARGS "ffmpeg")
 qt_configure_add_summary_section(NAME "FFmpeg plugin features")
-qt_configure_add_summary_entry(ARGS "pipewire")
+qt_configure_add_summary_entry(ARGS "pipewire_screencapture")
 qt_configure_end_summary_section()
 qt_configure_add_summary_entry(ARGS "mmrenderer")
 qt_configure_add_summary_entry(ARGS "avfoundation")
 qt_configure_add_summary_entry(ARGS "wmf")
+qt_configure_add_summary_entry(ARGS "native_android_backend")
 qt_configure_end_summary_section()
 qt_configure_add_summary_section(NAME "Hardware acceleration and features")
 qt_configure_add_summary_entry(ARGS "linux_v4l")
@@ -284,4 +294,10 @@ qt_configure_add_report_entry(
     TYPE WARNING
     MESSAGE "No media backend found"
     CONDITION LINUX AND NOT (QT_FEATURE_gstreamer OR QT_FEATURE_ffmpeg)
+)
+
+qt_configure_add_report_entry(
+    TYPE WARNING
+    MESSAGE "No media backend found"
+    CONDITION ANDROID AND NOT (QT_FEATURE_native_android_backend OR QT_FEATURE_ffmpeg)
 )

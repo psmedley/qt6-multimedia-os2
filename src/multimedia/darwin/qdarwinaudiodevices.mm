@@ -45,38 +45,33 @@ static AudioDeviceID defaultAudioDevice(QAudioDevice::Mode mode)
         kAudioObjectPropertyElementMain,
     };
 
-    if (auto audioDevice = getAudioObject<AudioDeviceID>(kAudioObjectSystemObject, propertyAddress)) {
+    if (auto audioDevice = QCoreAudioUtils::getAudioProperty<AudioDeviceID>(kAudioObjectSystemObject, propertyAddress)) {
         return *audioDevice;
     }
 
     return 0;
 }
 
-static QByteArray uniqueId(AudioDeviceID device, QAudioDevice::Mode mode)
-{
-    const AudioObjectPropertyAddress propertyAddress =
-            makePropertyAddress(kAudioDevicePropertyDeviceUID, mode);
-
-    if (auto name = getAudioObject<QCFString>(device, propertyAddress))
-        return QString{*name}.toUtf8();
-
-    return QByteArray();
-}
-
 static QList<QAudioDevice> availableAudioDevices(QAudioDevice::Mode mode)
 {
+    using namespace QCoreAudioUtils;
+
     QList<QAudioDevice> devices;
 
     AudioDeviceID defaultDevice = defaultAudioDevice(mode);
     if (defaultDevice != 0)
-        devices << createAudioDevice(true, defaultDevice, uniqueId(defaultDevice, mode), mode);
+        devices << createAudioDevice(
+            true,
+            defaultDevice,
+            QCoreAudioUtils::readPersistentDeviceId(defaultDevice, mode),
+            mode);
 
     const AudioObjectPropertyAddress audioDevicesPropertyAddress = {
         kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal,
         kAudioObjectPropertyElementMain
     };
 
-    if (auto audioDevices = getAudioData<AudioDeviceID>(
+    if (auto audioDevices = getAudioPropertyList<AudioDeviceID>(
                 kAudioObjectSystemObject, audioDevicesPropertyAddress)) {
         const AudioObjectPropertyAddress audioDeviceStreamFormatPropertyAddress =
                 makePropertyAddress(kAudioDevicePropertyStreamFormat, mode);
@@ -85,10 +80,13 @@ static QList<QAudioDevice> availableAudioDevices(QAudioDevice::Mode mode)
             if (device == defaultDevice)
                 continue;
 
-            if (getAudioObject<AudioStreamBasicDescription>(device,
+            if (getAudioProperty<AudioStreamBasicDescription>(device,
                                                             audioDeviceStreamFormatPropertyAddress,
                                                             /*warnIfMissing=*/false)) {
-                devices << createAudioDevice(false, device, uniqueId(device, mode), mode);
+                devices << createAudioDevice(false,
+                                             device,
+                                             QCoreAudioUtils::readPersistentDeviceId(device, mode),
+                                             mode);
             }
         }
     }
@@ -203,9 +201,7 @@ static void removeAudioListeners(QDarwinAudioDevices &)
 
 #endif
 
-
 QDarwinAudioDevices::QDarwinAudioDevices()
-    : QPlatformAudioDevices()
 {
 #ifdef Q_OS_MACOS // TODO: implement setAudioListeners, removeAudioListeners for Q_OS_IOS, after
                   // that - remove or modify the define
@@ -215,7 +211,6 @@ QDarwinAudioDevices::QDarwinAudioDevices()
 
     setAudioListeners(*this);
 }
-
 
 QDarwinAudioDevices::~QDarwinAudioDevices()
 {
@@ -233,15 +228,16 @@ QList<QAudioDevice> QDarwinAudioDevices::findAudioOutputs() const
 }
 
 QPlatformAudioSource *QDarwinAudioDevices::createAudioSource(const QAudioDevice &info,
+                                                             const QAudioFormat &fmt,
                                                              QObject *parent)
 {
-    return new QDarwinAudioSource(info, parent);
+    return new QDarwinAudioSource(info, fmt, parent);
 }
 
 QPlatformAudioSink *QDarwinAudioDevices::createAudioSink(const QAudioDevice &info,
-                                                         QObject *parent)
+                                                         const QAudioFormat &fmt, QObject *parent)
 {
-    return new QDarwinAudioSink(info, parent);
+    return new QDarwinAudioSink(info, fmt, parent);
 }
 
 QT_END_NAMESPACE

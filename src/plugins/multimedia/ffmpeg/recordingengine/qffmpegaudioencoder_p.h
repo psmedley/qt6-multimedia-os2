@@ -3,9 +3,20 @@
 #ifndef QFFMPEGAUDIOENCODER_P_H
 #define QFFMPEGAUDIOENCODER_P_H
 
-#include "qffmpeg_p.h"
-#include "qffmpegencoderthread_p.h"
-#include "private/qplatformmediarecorder_p.h"
+//
+//  W A R N I N G
+//  -------------
+//
+// This file is not part of the Qt API. It exists purely as an
+// implementation detail. This header file may change from version to
+// version without notice, or even be removed.
+//
+// We mean it.
+//
+
+#include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegencoderthread_p.h>
+#include <QtMultimedia/private/qplatformmediarecorder_p.h>
 #include <qaudiobuffer.h>
 #include <queue>
 #include <chrono>

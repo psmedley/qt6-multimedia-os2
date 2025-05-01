@@ -48,6 +48,8 @@ PlaybackEngine::PlaybackEngine()
     qCDebug(qLcPlaybackEngine) << "Create PlaybackEngine";
     qRegisterMetaType<QFFmpeg::Packet>();
     qRegisterMetaType<QFFmpeg::Frame>();
+    qRegisterMetaType<QFFmpeg::TrackPosition>();
+    qRegisterMetaType<QFFmpeg::TrackDuration>();
 }
 
 PlaybackEngine::~PlaybackEngine() {
@@ -76,7 +78,7 @@ void PlaybackEngine::onRendererFinished()
     if (std::exchange(m_state, QMediaPlayer::StoppedState) == QMediaPlayer::StoppedState)
         return;
 
-    finilizeTime(duration());
+    finilizeTime(duration().asTimePoint());
 
     forceUpdate();
 
@@ -85,23 +87,42 @@ void PlaybackEngine::onRendererFinished()
     emit endOfStream();
 }
 
-void PlaybackEngine::onRendererLoopChanged(quint64 id, qint64 offset, int loopIndex)
+void PlaybackEngine::onRendererLoopChanged(quint64 id, TrackPosition offset, int loopIndex)
 {
     if (!hasRenderer(id))
         return;
 
-    if (loopIndex > m_currentLoopOffset.index) {
+    if (loopIndex > m_currentLoopOffset.loopIndex) {
         m_currentLoopOffset = { offset, loopIndex };
         emit loopChanged();
-    } else if (loopIndex == m_currentLoopOffset.index && offset != m_currentLoopOffset.pos) {
-        qWarning() << "Unexpected offset for loop" << loopIndex << ":" << offset << "vs"
-                   << m_currentLoopOffset.pos;
-        m_currentLoopOffset.pos = offset;
+    } else if (loopIndex == m_currentLoopOffset.loopIndex && offset != m_currentLoopOffset.loopStartTimeUs) {
+        qWarning() << "Unexpected offset for loop" << loopIndex << ":" << offset.get() << "vs"
+                   << m_currentLoopOffset.loopStartTimeUs.get();
+        m_currentLoopOffset.loopStartTimeUs = offset;
     }
 }
 
-void PlaybackEngine::onRendererSynchronized(quint64 id, std::chrono::steady_clock::time_point tp,
-                                            qint64 pos)
+void PlaybackEngine::onFirsPacketFound(quint64 id, TrackPosition absSeekPos)
+{
+    if (!m_demuxer || m_demuxer->id() != id)
+        return;
+
+    if (m_shouldUpdateTimeOnFirstPacket) {
+        const auto timePoint = RealClock::now();
+        const RealClock::time_point expectedTimePoint =
+                m_timeController.timeFromPosition(absSeekPos);
+        const auto delay = std::chrono::duration_cast<std::chrono::microseconds>(
+                timePoint - expectedTimePoint);
+        qCDebug(qLcPlaybackEngine) << "Delay of demuxer initialization:" << delay;
+        m_timeController.sync(timePoint, absSeekPos);
+
+        m_shouldUpdateTimeOnFirstPacket = false; // turn the flag back to ensure the consistency.
+    }
+
+    forEachExistingObject<Renderer>([&](auto &renderer) { renderer->start(m_timeController); });
+}
+
+void PlaybackEngine::onRendererSynchronized(quint64 id, RealClock::time_point tp, TrackPosition pos)
 {
     if (!hasRenderer(id))
         return;
@@ -128,7 +149,7 @@ void PlaybackEngine::setState(QMediaPlayer::PlaybackState state) {
 
     if (m_state == QMediaPlayer::StoppedState) {
         finalizeOutputs();
-        finilizeTime(0);
+        finilizeTime(TrackPosition(0));
     }
 
     if (prevState == QMediaPlayer::StoppedState || m_state == QMediaPlayer::StoppedState)
@@ -233,12 +254,13 @@ void PlaybackEngine::forEachExistingObject(Action &&action)
     forEachExistingObject<PlaybackEngineObject>(std::forward<Action>(action));
 }
 
-void PlaybackEngine::seek(qint64 pos)
+void PlaybackEngine::seek(TrackPosition pos)
 {
     pos = boundPosition(pos);
 
     m_timeController.setPaused(true);
-    m_timeController.sync(m_currentLoopOffset.pos + pos);
+    m_timeController.sync(m_currentLoopOffset.loopStartTimeUs.asDuration() + pos);
+    m_seekPending = true;
 
     forceUpdate();
 }
@@ -254,7 +276,7 @@ void PlaybackEngine::setLoops(int loops)
         return;
 
     qCDebug(qLcPlaybackEngine) << "set playback engine loops:" << loops << "prev loops:" << m_loops
-                               << "index:" << m_currentLoopOffset.index;
+                               << "index:" << m_currentLoopOffset.loopIndex;
 
     if (m_demuxer)
         m_demuxer->setLoops(loops);
@@ -275,7 +297,7 @@ void PlaybackEngine::triggerStepIfNeeded()
 
 QString PlaybackEngine::objectThreadName(const PlaybackEngineObject &object)
 {
-    QString result = object.metaObject()->className();
+    QString result = QString::fromLatin1(object.metaObject()->className());
     if (auto stream = qobject_cast<const StreamDecoder *>(&object))
         result += QString::number(stream->trackType());
 
@@ -378,7 +400,7 @@ std::optional<CodecContext> PlaybackEngine::codecContextForTrack(QPlatformMediaP
 
         if (!maybeCodecContext) {
             emit errorOccured(QMediaPlayer::FormatError,
-                              "Cannot create codec," + maybeCodecContext.error());
+                              u"Cannot create codec," + maybeCodecContext.error());
             return {};
         }
 
@@ -408,10 +430,13 @@ void PlaybackEngine::createDemuxer()
     if (!hasStreams)
         return;
 
-    const PositionWithOffset positionWithOffset{ currentPosition(false), m_currentLoopOffset };
+    const TrackPosition currentLoopPosUs = currentPosition(false);
 
-    m_demuxer = createPlaybackEngineObject<Demuxer>(m_media.avContext(), positionWithOffset,
+    m_demuxer = createPlaybackEngineObject<Demuxer>(m_media.avContext(), currentLoopPosUs,
+                                                    m_seekPending, m_currentLoopOffset,
                                                     streamIndexes, m_loops);
+
+    m_seekPending = false;
 
     connect(m_demuxer.get(), &Demuxer::packetsBuffered, this, &PlaybackEngine::buffered);
 
@@ -424,21 +449,8 @@ void PlaybackEngine::createDemuxer()
                 &Demuxer::onPacketProcessed);
     });
 
-    if (!isSeekable() || duration() <= 0) {
-        // We need initial synchronization for such streams
-        forEachExistingObject([&](auto &object) {
-            using Type = std::remove_reference_t<decltype(*object)>;
-            if constexpr (!std::is_same_v<Type, Demuxer>)
-                connect(m_demuxer.get(), &Demuxer::firstPacketFound, object.get(),
-                        &Type::setInitialPosition);
-        });
-
-        auto updateTimeController = [this](TimeController::TimePoint tp, qint64 pos) {
-            m_timeController.sync(tp, pos);
-        };
-
-        connect(m_demuxer.get(), &Demuxer::firstPacketFound, this, updateTimeController);
-    }
+    m_shouldUpdateTimeOnFirstPacket = true;
+    connect(m_demuxer.get(), &Demuxer::firstPacketFound, this, &PlaybackEngine::onFirsPacketFound);
 }
 
 void PlaybackEngine::deleteFreeThreads() {
@@ -507,8 +519,9 @@ void PlaybackEngine::setAudioBufferOutput(QAudioBufferOutput *output)
     updateActiveAudioOutput(output);
 }
 
-qint64 PlaybackEngine::currentPosition(bool topPos) const {
-    std::optional<qint64> pos;
+TrackPosition PlaybackEngine::currentPosition(bool topPos) const
+{
+    std::optional<TrackPosition> pos;
 
     for (size_t i = 0; i < m_renderers.size(); ++i) {
         const auto &renderer = m_renderers[i];
@@ -528,10 +541,10 @@ qint64 PlaybackEngine::currentPosition(bool topPos) const {
     if (!pos)
         pos = m_timeController.currentPosition();
 
-    return boundPosition(*pos - m_currentLoopOffset.pos);
+    return boundPosition(*pos - m_currentLoopOffset.loopStartTimeUs.asDuration());
 }
 
-qint64 PlaybackEngine::duration() const
+TrackDuration PlaybackEngine::duration() const
 {
     return m_media.duration();
 }
@@ -568,11 +581,16 @@ void PlaybackEngine::setActiveTrack(QPlatformMediaPlayer::TrackType trackType, i
     updateVideoSinkSize();
     createObjectsIfNeeded();
     updateObjectsPausedState();
+
+    // We strive to have a smooth playback if we change the active track. It means that
+    // we don't want to do any time shiftings. Instead, we rely on the fact that
+    // buffers in renderers are not empty to compensate the demuxer's lag.
+    m_shouldUpdateTimeOnFirstPacket = false;
 }
 
-void PlaybackEngine::finilizeTime(qint64 pos)
+void PlaybackEngine::finilizeTime(TrackPosition pos)
 {
-    Q_ASSERT(pos >= 0 && pos <= duration());
+    Q_ASSERT(pos >= TrackPosition(0) && pos <= duration().asTimePoint());
 
     m_timeController.setPaused(true);
     m_timeController.sync(pos);
@@ -638,10 +656,10 @@ void PlaybackEngine::updateVideoSinkSize(QVideoSink *prevSink)
     }
 }
 
-qint64 PlaybackEngine::boundPosition(qint64 position) const
+TrackPosition PlaybackEngine::boundPosition(TrackPosition position) const
 {
-    position = qMax(position, 0);
-    return duration() > 0 ? qMin(position, duration()) : position;
+    position = qMax(position, TrackPosition(0));
+    return duration() > TrackDuration(0) ? qMin(position, duration().asTimePoint()) : position;
 }
 } // namespace QFFmpeg
 

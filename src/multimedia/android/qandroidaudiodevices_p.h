@@ -24,15 +24,17 @@ class QAndroidAudioDevices : public QPlatformAudioDevices
 {
 public:
     QAndroidAudioDevices();
-
     ~QAndroidAudioDevices();
-    QPlatformAudioSource *createAudioSource(const QAudioDevice &deviceInfo,
+
+    QPlatformAudioSource *createAudioSource(const QAudioDevice &, const QAudioFormat &,
                                             QObject *parent) override;
-    QPlatformAudioSink *createAudioSink(const QAudioDevice &deviceInfo,
+    QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
                                         QObject *parent) override;
 
     using QPlatformAudioDevices::onAudioInputsChanged;
     using QPlatformAudioDevices::onAudioOutputsChanged;
+
+    QLatin1String backendName() const override { return QLatin1String{ "Android" }; }
 
 protected:
     QList<QAudioDevice> findAudioInputs() const override;

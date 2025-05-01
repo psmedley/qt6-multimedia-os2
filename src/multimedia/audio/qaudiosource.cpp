@@ -144,6 +144,12 @@ void QAudioSource::start(QIODevice* device)
 {
     if (!d)
         return;
+    if (!device->isWritable()) {
+        qWarning() << "QAudioSource::start: QIODevice is not writable";
+        d->setError(QAudio::OpenError);
+        return;
+    }
+
     d->elapsedTime.start();
     d->start(device);
 }
@@ -328,8 +334,6 @@ qint64 QAudioSource::processedUSecs() const
     Returns the microseconds since start() was called, including time in Idle and
     Suspend states.
 */
-
-#include <qdebug.h>
 
 qint64 QAudioSource::elapsedUSecs() const
 {

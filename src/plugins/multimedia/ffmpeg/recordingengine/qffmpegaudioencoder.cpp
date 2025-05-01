@@ -70,6 +70,8 @@ bool openCodecContext(AVCodecContext *codecContext, AVStream *stream,
     qCDebug(qLcFFmpegAudioEncoder) << "audio codec params: fmt=" << codecContext->sample_fmt
                                    << "rate=" << codecContext->sample_rate;
 
+    avcodec_parameters_from_context(stream->codecpar, codecContext);
+
     return true;
 }
 
@@ -179,7 +181,7 @@ bool AudioEncoder::init()
 
     // TODO: try to address this dependency here.
     if (auto input = qobject_cast<QFFmpegAudioInput *>(source()))
-        input->setFrameSize(m_codecContext->frame_size);
+        input->setBufferSize(m_codecContext->frame_size);
 
     return EncoderThread::init();
 }

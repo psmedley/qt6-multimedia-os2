@@ -17,14 +17,18 @@ function(qt6_add_ios_ffmpeg_libraries target)
         return()
     endif()
 
-    file (GLOB ffmpeg_frameworks "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_LIBS}/ffmpeg/*.framework")
+    file (GLOB ffmpeg_frameworks "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_LIBS}/ffmpeg/*.xcframework")
     if(NOT ffmpeg_frameworks)
+        message(
+            WARNING
+            "CMake script explicitly links against Qt deployed FFmpeg libraries, "
+            "but none were found in the Qt build.")
         return()
     endif()
     set_property(TARGET ${target} APPEND PROPERTY XCODE_EMBED_FRAMEWORKS "${ffmpeg_frameworks}")
 
     set_property(TARGET ${target} APPEND PROPERTY
-                 XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/")
+                 XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks")
 
     if(NOT QT_NO_FFMPEG_XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY)
         set_property(TARGET ${target} PROPERTY XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY ON)

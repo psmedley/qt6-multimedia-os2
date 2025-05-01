@@ -1,45 +1,40 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "qpipewire_screencapture_p.h"
 #include "qpipewire_screencapturehelper_p.h"
+
+#include "qpipewire_instance_p.h"
 #include "qpipewire_symbolloader_p.h"
 
 #include <QtCore/qdebug.h>
+#include <QtCore/qfileinfo.h>
 #include <QtCore/qloggingcategory.h>
 #include <QtCore/qmutex.h>
 #include <QtCore/qrandom.h>
+#include <QtCore/qurlquery.h>
 #include <QtCore/quuid.h>
 #include <QtCore/qvariantmap.h>
+#include <QtCore/private/qcore_unix_p.h>
+#include <QtDBus/qdbusconnection.h>
+#include <QtDBus/qdbusinterface.h>
+#include <QtDBus/qdbusmessage.h>
+#include <QtDBus/qdbuspendingcall.h>
+#include <QtDBus/qdbuspendingreply.h>
+#include <QtDBus/qdbusreply.h>
+#include <QtDBus/qdbusunixfiledescriptor.h>
+#include <QtGui/qguiapplication.h>
+#include <QtGui/qpa/qplatformintegration.h>
 #include <QtGui/qscreen.h>
 #include <QtGui/qwindow.h>
-#include <QtGui/qguiapplication.h>
+#include <QtGui/private/qgenericunixservices_p.h>
+#include <QtGui/private/qguiapplication_p.h>
 #include <QtMultimedia/qabstractvideobuffer.h>
 #include <QtMultimedia/private/qvideoframe_p.h>
 #include <QtMultimedia/private/qcapturablewindow_p.h>
 #include <QtMultimedia/private/qmemoryvideobuffer_p.h>
 #include <QtMultimedia/private/qvideoframeconversionhelper_p.h>
 
-#if QT_CONFIG(dbus)
-// These QtCore includes are needed for xdg-desktop-portal support
-#include <QtCore/private/qcore_unix_p.h>
-
-#include <QtCore/QFileInfo>
-#include <QtCore/QUrlQuery>
-
-#include <QtDBus/QDBusConnection>
-#include <QtDBus/QDBusInterface>
-#include <QtDBus/QDBusMessage>
-#include <QtDBus/QDBusReply>
-#include <QtDBus/QDBusPendingCall>
-#include <QtDBus/QDBusPendingCallWatcher>
-#include <QtDBus/QDBusPendingReply>
-#include <QtDBus/QDBusUnixFileDescriptor>
-
 #include <fcntl.h>
-
-#endif // QT_CONFIG(dbus)
-
 
 QT_BEGIN_NAMESPACE
 
@@ -49,19 +44,6 @@ static Q_LOGGING_CATEGORY(qLcPipeWireCapture, "qt.multimedia.pipewirecapture");
 static Q_LOGGING_CATEGORY(qLcPipeWireCaptureMore, "qt.multimedia.pipewirecapture.more");
 
 namespace QtPipeWire {
-
-class Pipewire
-{
-public:
-    Pipewire() {
-        pw_init(nullptr, nullptr);
-    };
-    ~Pipewire() {
-        pw_deinit();
-    }
-
-    Q_DISABLE_COPY(Pipewire)
-};
 
 struct PipeWireCaptureGlobalState
 {
@@ -88,28 +70,9 @@ struct PipeWireCaptureGlobalState
     }
 
     bool hasScreenCastPortal = false;
-
-    std::weak_ptr<Pipewire> pipewire;
 };
 
 Q_GLOBAL_STATIC(PipeWireCaptureGlobalState, globalState)
-
-void QPipeWireCaptureHelper::initPipeWire()
-{
-    if (!globalState->hasScreenCastPortal)
-        return;
-
-    m_pipewire = globalState->pipewire.lock();
-    if (!m_pipewire) {
-        m_pipewire = std::make_shared<Pipewire>();
-        globalState->pipewire = m_pipewire;
-    }
-}
-
-void QPipeWireCaptureHelper::deinitPipeWire()
-{
-    m_pipewire.reset();
-}
 
 bool QPipeWireCaptureHelper::setActiveInternal(bool active)
 {
@@ -291,8 +254,13 @@ void QPipeWireCaptureHelper::startStream()
     QVariantMap options{
         { u"handle_token"_s, getRequestToken() },
     };
-    QDBusMessage reply = m_screenCastInterface->call(u"Start"_s, QDBusObjectPath(m_sessionHandle),
-                                                     u""_s, options);
+
+    const auto unixServices = dynamic_cast<QGenericUnixServices *>(QGuiApplicationPrivate::platformIntegration()->services());
+    const QString parentWindow = QGuiApplication::focusWindow() && unixServices
+            ? unixServices->portalWindowIdentifier(QGuiApplication::focusWindow())
+            : QString();
+    QDBusMessage reply = m_screenCastInterface->call("Start"_L1, QDBusObjectPath(m_sessionHandle),
+                                                     parentWindow, options);
     if (!reply.errorMessage().isEmpty()) {
         updateError(QPlatformSurfaceCapture::InternalError,
                     u"Failed to start stream for org.freedesktop.portal.ScreenCast. Error: "_s
@@ -416,8 +384,9 @@ bool QPipeWireCaptureHelper::open(int pipewireFd)
 
     if (!globalState)
         return false;
-    if (!m_pipewire)
-        initPipeWire();
+
+    if (!m_instance)
+        m_instance = QPipeWireInstance::instance();
 
     static const pw_core_events coreEvents = {
         .version = PW_VERSION_CORE_EVENTS,
@@ -813,9 +782,6 @@ void QPipeWireCaptureHelper::destroy()
     m_core = {};
     m_context = {};
     m_threadLoop = {};
-
-    if (m_pipewire)
-        deinitPipeWire();
 
     m_state = NoState;
 }

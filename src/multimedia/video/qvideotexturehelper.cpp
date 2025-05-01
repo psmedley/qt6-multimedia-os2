@@ -9,6 +9,7 @@
 #include "qvideoframetexturefromsource_p.h"
 #include "private/qmultimediautils_p.h"
 
+#include <QtCore/qfile.h>
 #include <qpainter.h>
 #include <qloggingcategory.h>
 
@@ -224,14 +225,25 @@ static const TextureDescription descriptions[QVideoFrameFormat::NPixelFormats] =
     },
 };
 
+Q_GLOBAL_STATIC(QList<QRhiTexture::Format>, g_excludedRhiTextureFormats) // for tests only
+
+static bool isRhiTextureFormatSupported(const QRhi *rhi, QRhiTexture::Format format)
+{
+    if (g_excludedRhiTextureFormats->contains(format))
+        return false;
+    if (!rhi) // consider the format is supported if no rhi specified
+        return true;
+    return rhi->isTextureFormatSupported(format);
+}
+
 static QRhiTexture::Format
 resolveRhiTextureFormat(QRhi *rhi, QRhiTexture::Format format,
                         QRhiTexture::Format fallback = QRhiTexture::UnknownFormat)
 {
-    if (!rhi || rhi->isTextureFormatSupported(format))
+    if (isRhiTextureFormatSupported(rhi, format))
         return format;
 
-    if (fallback != QRhiTexture::UnknownFormat && rhi->isTextureFormatSupported(fallback))
+    if (fallback != QRhiTexture::UnknownFormat && isRhiTextureFormatSupported(rhi, fallback))
         return fallback;
 
     qWarning() << "Cannot determine any usable texture format, using preferred format" << format;
@@ -248,9 +260,7 @@ QRhiTexture::Format TextureDescription::rhiTextureFormat(int plane, QRhi *rhi) c
             // RedOrAlpha8IsRed
             return resolveRhiTextureFormat(rhi, QRhiTexture::R8, QRhiTexture::RED_OR_ALPHA8);
         case RG_8:
-            // TODO: Pack four values in one pixel of texture, requires special handling of
-            // width here and components in shader
-            return resolveRhiTextureFormat(rhi, QRhiTexture::RG8);
+            return resolveRhiTextureFormat(rhi, QRhiTexture::RG8, QRhiTexture::RGBA8);
         case RGBA_8:
             return resolveRhiTextureFormat(rhi, QRhiTexture::RGBA8);
         case BGRA_8:
@@ -258,12 +268,17 @@ QRhiTexture::Format TextureDescription::rhiTextureFormat(int plane, QRhi *rhi) c
         case Red_16:
             // TODO: Special handling for 16-bit formats, if we want to support them at all.
             // Otherwise should give an error.
-            return resolveRhiTextureFormat(rhi, QRhiTexture::R16);
+            return resolveRhiTextureFormat(rhi, QRhiTexture::R16, QRhiTexture::RG8);
         case RG_16:
-            return resolveRhiTextureFormat(rhi, QRhiTexture::RG16);
+            return resolveRhiTextureFormat(rhi, QRhiTexture::RG16, QRhiTexture::RGBA8);
         default:
             Q_UNREACHABLE();
     }
+}
+
+void setExcludedRhiTextureFormats(QList<QRhiTexture::Format> formats)
+{
+    g_excludedRhiTextureFormats->swap(formats);
 }
 
 const TextureDescription *textureDescription(QVideoFrameFormat::PixelFormat format)
@@ -288,14 +303,16 @@ QString vertexShaderFileName(const QVideoFrameFormat &format)
     return QStringLiteral(":/qt-project.org/multimedia/shaders/vertex.vert.qsb");
 }
 
-QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhi *rhi,
+QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhi *,
                                QRhiSwapChain::Format surfaceFormat)
 {
     QString shaderFile;
     switch (format.pixelFormat()) {
     case QVideoFrameFormat::Format_Y8:
-    case QVideoFrameFormat::Format_Y16:
         shaderFile = QStringLiteral("y");
+        break;
+    case QVideoFrameFormat::Format_Y16:
+        shaderFile = QStringLiteral("y16");
         break;
     case QVideoFrameFormat::Format_AYUV:
     case QVideoFrameFormat::Format_AYUV_Premultiplied:
@@ -355,8 +372,8 @@ QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhi *rhi,
             shaderFile = QStringLiteral("nv12_bt2020_hlg");
             break;
         }
-        // Fall through, should be bt709
-        Q_FALLTHROUGH();
+        shaderFile = QStringLiteral("p016");
+        break;
     case QVideoFrameFormat::Format_NV12:
         shaderFile = QStringLiteral("nv12");
         break;
@@ -384,23 +401,13 @@ QString fragmentShaderFileName(const QVideoFrameFormat &format, QRhi *rhi,
 
     shaderFile.prepend(u":/qt-project.org/multimedia/shaders/");
 
-    if (rhi && !rhi->isFeatureSupported(QRhi::RedOrAlpha8IsRed)) {
-        // Check if texture description formats contain RED_OR_ALPHA8
-        auto desc = textureDescription(format.pixelFormat());
-        for (auto i = 0; i < desc->nplanes; ++i) {
-            if (desc->rhiTextureFormat(i, rhi) != QRhiTexture::RED_OR_ALPHA8)
-                // Only use alpha shaders with single component textures
-                continue;
-
-            shaderFile.append(u"_a");
-            break;
-        }
-    }
-
     if (surfaceFormat == QRhiSwapChain::HDRExtendedSrgbLinear)
         shaderFile.append(u"_linear");
 
     shaderFile.append(u".frag.qsb");
+
+    Q_ASSERT_X(QFile::exists(shaderFile), Q_FUNC_INFO,
+               QStringLiteral("Shader file %1 does not exist").arg(shaderFile).toLatin1());
     return shaderFile;
 }
 
@@ -538,7 +545,9 @@ static float convertSDRFromLinear(float sig)
     return sig;
 }
 
-void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const QVideoFrame &frame, const QMatrix4x4 &transform, float opacity, float maxNits)
+void updateUniformData(QByteArray *dst, QRhi *rhi, const QVideoFrameFormat &format,
+                       const QVideoFrame &frame, const QMatrix4x4 &transform, float opacity,
+                       float maxNits)
 {
 #ifndef Q_OS_ANDROID
     Q_UNUSED(frame);
@@ -624,6 +633,18 @@ void updateUniformData(QByteArray *dst, const QVideoFrameFormat &format, const Q
     ud->width = float(format.frameWidth());
     ud->masteringWhite = fromLinear(float(format.maxLuminance())/100.f);
     ud->maxLum = fromLinear(float(maxNits)/100.f);
+    const TextureDescription* desc = textureDescription(format.pixelFormat());
+
+    // Let's consider using the red component if Red_8 is not used,
+    // it's useful for compatibility the shaders with 16bit formats.
+
+    const bool useRedComponent =
+            !desc->hasTextureFormat(TextureDescription::Red_8) ||
+            isRhiTextureFormatSupported(rhi, QRhiTexture::R8) ||
+            rhi->isFeatureSupported(QRhi::RedOrAlpha8IsRed);
+    ud->redOrAlphaIndex = useRedComponent ? 0 : 3; // r:0 g:1 b:2 a:3
+    for (int plane = 0; plane < desc->nplanes; ++plane)
+        ud->planeFormats[plane] = desc->rhiTextureFormat(plane, rhi);
 }
 
 enum class UpdateTextureWithMapResult : uint8_t {
@@ -643,7 +664,7 @@ static UpdateTextureWithMapResult updateTextureWithMap(const QVideoFrame &frame,
     QSize size = fmt.frameSize();
 
     const TextureDescription &texDesc = descriptions[pixelFormat];
-    QSize planeSize(size.width()/texDesc.sizeScale[plane].x, size.height()/texDesc.sizeScale[plane].y);
+    QSize planeSize = texDesc.rhiPlaneSize(size, plane, &rhi);
 
     bool needsRebuild = !tex || tex->pixelSize() != planeSize || tex->format() != texDesc.rhiTextureFormat(plane, &rhi);
     if (!tex) {
@@ -708,7 +729,7 @@ createTextureFromHandle(QVideoFrameTexturesHandles &texturesSet, QRhi &rhi,
                         QVideoFrameFormat::PixelFormat pixelFormat, QSize size, int plane)
 {
     const TextureDescription &texDesc = descriptions[pixelFormat];
-    QSize planeSize(size.width()/texDesc.sizeScale[plane].x, size.height()/texDesc.sizeScale[plane].y);
+    QSize planeSize = texDesc.rhiPlaneSize(size, plane, &rhi);
 
     QRhiTexture::Flags textureFlags = {};
     if (pixelFormat == QVideoFrameFormat::Format_SamplerExternalOES) {

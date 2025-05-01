@@ -5,7 +5,7 @@
 #define QENCODINGINITIALIZER_P_H
 
 #include "qobject.h"
-#include "private/qmediainputencoderinterface_p.h"
+#include <QtMultimedia/private/qmediainputencoderinterface_p.h>
 #include <unordered_set>
 #include <vector>
 
@@ -25,7 +25,7 @@ QT_BEGIN_NAMESPACE
 class QFFmpegAudioInput;
 class QPlatformVideoSource;
 class QPlatformAudioBufferInput;
-class QPlatformAudioBufferInputBase;
+class QAudioBufferSource;
 class QMediaInputEncoderInterface;
 
 namespace QFFmpeg {
@@ -41,7 +41,7 @@ public:
 
     ~EncodingInitializer() override;
 
-    void start(const std::vector<QPlatformAudioBufferInputBase *> &audioSources,
+    bool start(const std::vector<QAudioBufferSource *> &audioSources,
                const std::vector<QPlatformVideoSource *> &videoSources);
 
 private:
@@ -55,7 +55,7 @@ private:
 
     void addPendingSource(QObject *source);
 
-    void tryStartRecordingEngine();
+    bool tryStartRecordingEngine();
 
 private:
     void emitStreamInitializationError(QString error);

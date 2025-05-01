@@ -2,9 +2,21 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #include "qffmpegencoderoptions_p.h"
 
+#include "qffmpegmediaformatinfo_p.h"
+
+#include <QtMultimedia/qaudioformat.h>
+
 #if QT_CONFIG(vaapi)
 #include <va/va.h>
 #endif
+
+#ifdef Q_OS_ANDROID
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+#endif
+
+#include <libavutil/channel_layout.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -270,8 +282,14 @@ static void apply_mediacodec(const QMediaEncoderSettings &settings, AVCodecConte
         break;
     }
     case QMediaFormat::VideoCodec::H265: {
-        const char *levels[] = { "h2.1", "h3.1", "h4.1", "h5.1", "h6.1" };
-        av_dict_set(opts, "level", levels[settings.quality()], 1);
+        // Set the level only for FFmpeg versions that correctly recognize level values.
+        // Affected revisions: from n7.1 https://github.com/FFmpeg/FFmpeg/commit/7753a9d62725d5bd8313e2d249acbe1c8af79ab1
+        // up to https://github.com/FFmpeg/FFmpeg/commit/020d9f2b4886aa620252da4db7a4936378d6eb3a
+        if (avcodec_version() < 4000612 || avcodec_version() > 4002660) {
+            const char *levels[] = { "h2.1", "h3.1", "h4.1", "h5.1", "h6.1" };
+            av_dict_set(opts, "level", levels[settings.quality()], 1);
+        }
+
         codec->profile = FF_PROFILE_HEVC_MAIN;
         break;
     }
@@ -347,6 +365,21 @@ void applyAudioEncoderOptions(const QMediaEncoderSettings &settings, const QByte
     codec->thread_count = -1; // we always want automatic threading
     if (settings.encodingMode() == QMediaRecorder::ConstantBitRateEncoding || settings.encodingMode() == QMediaRecorder::AverageBitRateEncoding)
         codec->bit_rate = settings.audioBitRate();
+
+    if (settings.audioSampleRate() != -1)
+        codec->sample_rate = settings.audioSampleRate();
+
+    if (settings.audioChannelCount() != -1) {
+        auto mask = QFFmpegMediaFormatInfo::avChannelLayout(
+                QAudioFormat::defaultChannelConfigForChannelCount(settings.audioChannelCount()));
+
+#if QT_FFMPEG_HAS_AV_CHANNEL_LAYOUT
+        av_channel_layout_from_mask(&codec->ch_layout, mask);
+#else
+        codec->channel_layout = mask;
+        codec->channels = qPopulationCount(codec->channel_layout);
+#endif
+    }
 
     auto *table = audioCodecOptionTable;
     while (table->name) {
