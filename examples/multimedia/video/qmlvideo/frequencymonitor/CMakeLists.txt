@@ -11,6 +11,7 @@ qt_add_qml_module(frequencymonitor
     URI frequencymonitor
     QML_FILES
         "FrequencyItem.qml"
+    OS2_SHORT_NAME freqmoni
 )
 
 target_link_libraries(frequencymonitor PRIVATE

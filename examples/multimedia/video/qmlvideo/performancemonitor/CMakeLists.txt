@@ -11,6 +11,7 @@ qt_add_qml_module(performancemonitor
     URI performancemonitor
     QML_FILES
         "PerformanceItem.qml"
+    OS2_SHORT_NAME qmlperfm
 )
 
 target_link_libraries(performancemonitor PRIVATE

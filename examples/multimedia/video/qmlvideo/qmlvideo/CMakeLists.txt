@@ -60,6 +60,7 @@ qt_add_qml_module(qmlvideo
         "images/folder.png"
         "images/leaves.jpg"
         "images/up.png"
+    OS2_SHORT_NAME  "qmlvide2"
 )
 
 target_compile_definitions(qmlvideo PRIVATE QMLVIDEO_LIB)
