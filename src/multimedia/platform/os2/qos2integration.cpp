@@ -40,6 +40,7 @@
 
 #include "qos2integration_p.h"
 #include "qos2mediadevices_p.h"
+#include "qos2audiostream_p.h"
 
 #include <private/qplatformmediaformatinfo_p.h>
 
@@ -47,12 +48,14 @@ QT_BEGIN_NAMESPACE
 
 QOS2Integration::QOS2Integration()
 {
+    QOS2AudioStream::initializeBackend();
 }
 
 QOS2Integration::~QOS2Integration()
 {
     delete m_devices;
     delete m_formatInfo;
+    QOS2AudioStream::shutdownBackend();
 }
 
 QPlatformMediaDevices *QOS2Integration::devices()

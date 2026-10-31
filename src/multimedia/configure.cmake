@@ -20,6 +20,9 @@ if((QNX) OR QT_FIND_ALL_PACKAGES_ALWAYS)
 endif()
 qt_find_package(WrapPulseAudio PROVIDED_TARGETS WrapPulseAudio::WrapPulseAudio MODULE_NAME multimedia QMAKE_LIB pulseaudio)
 qt_find_package(WMF PROVIDED_TARGETS WMF::WMF MODULE_NAME multimedia QMAKE_LIB wmf)
+if(OS2 OR CMAKE_SYSTEM_NAME STREQUAL "OS2" OR QT_FIND_ALL_PACKAGES_ALWAYS)
+    qt_find_package(KAI PROVIDED_TARGETS KAI::KAI MODULE_NAME multimedia QMAKE_LIB kai)
+endif()
 qt_find_package(EGL)
 
 
@@ -135,6 +138,10 @@ qt_feature("os2audio" PUBLIC PRIVATE
     CONDITION QT_MULTIMEDIA_OS2 AND NOT QT_FEATURE_gstreamer
 )
 qt_feature_definition("os2audio" "QT_NO_OS2AUDIO" NEGATE VALUE "1")
+qt_feature("os2kai" PRIVATE
+    LABEL "OS/2 KAI audio"
+    CONDITION QT_FEATURE_os2audio AND KAI_FOUND
+)
 qt_feature("pulseaudio" PUBLIC PRIVATE
     LABEL "PulseAudio"
     AUTODETECT false
@@ -159,4 +166,5 @@ qt_configure_add_summary_entry(ARGS "mmrenderer")
 qt_configure_add_summary_entry(ARGS "avfoundation")
 qt_configure_add_summary_entry(ARGS "wmf")
 qt_configure_add_summary_entry(ARGS "os2audio")
+qt_configure_add_summary_entry(ARGS "os2kai")
 qt_configure_end_summary_section() # end of "Qt Multimedia" section

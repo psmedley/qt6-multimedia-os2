@@ -61,7 +61,7 @@
 
 QT_BEGIN_NAMESPACE
 
-class QOS2DartStream;
+class QOS2AudioStream;
 
 class QOS2AudioSink : public QPlatformAudioSink
 {
@@ -114,7 +114,7 @@ private:
     QTimer *m_timer = nullptr;
     QByteArray m_scratch;
     QOS2AudioRingBuffer m_ring;
-    QOS2DartStream *m_stream = nullptr;
+    QOS2AudioStream *m_stream = nullptr;
 };
 
 class QOS2AudioSinkDevice : public QIODevice

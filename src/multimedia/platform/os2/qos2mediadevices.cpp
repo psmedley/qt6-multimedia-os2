@@ -42,7 +42,7 @@
 #include "qos2audiodevice_p.h"
 #include "qos2audiosink_p.h"
 #include "qos2audiosource_p.h"
-#include "qos2dartstream_p.h"
+#include "qos2audiostream_p.h"
 
 #include <qcameradevice.h>
 
@@ -62,8 +62,10 @@ static QList<QAudioDevice> availableDevices(QAudioDevice::Mode mode)
                                             QStringLiteral("Default audio device"),
                                             mode))->create());
 
-    const auto dartDevices = QOS2DartStream::availableDevices();
-    for (const auto &dev : dartDevices) {
+    const auto direction = (mode == QAudioDevice::Input) ? QOS2AudioStream::Record
+                                                         : QOS2AudioStream::Playback;
+    const auto installed = QOS2AudioStream::availableDevices(direction);
+    for (const auto &dev : installed) {
         devices.append((new QOS2AudioDeviceInfo(QByteArray::number(dev.first),
                                                 dev.second, mode))->create());
     }

@@ -40,7 +40,7 @@
 
 #include "qos2audiosink_p.h"
 #include "qos2audiodevice_p.h"
-#include "qos2dartstream_p.h"
+#include "qos2audiostream_p.h"
 
 #include <QtCore/qloggingcategory.h>
 #include <QtMultimedia/private/qaudiohelpers_p.h>
@@ -65,7 +65,7 @@ QOS2AudioSink::QOS2AudioSink(const QByteArray &device, QObject *parent)
     : QPlatformAudioSink(parent),
       m_device(device)
 {
-    m_stream = new QOS2DartStream(QOS2DartStream::Playback, &m_ring);
+    m_stream = QOS2AudioStream::create(QOS2AudioStream::Playback, &m_ring);
     m_timer = new QTimer(this);
     m_timer->setInterval(TimerIntervalMs);
     connect(m_timer, &QTimer::timeout, this, &QOS2AudioSink::onTimer);

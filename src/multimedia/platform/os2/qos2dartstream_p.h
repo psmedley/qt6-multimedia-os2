@@ -51,76 +51,41 @@
 //
 // We mean it.
 //
-
 #define INCL_DOS
 #define INCL_OS2MM
 #include <os2.h>
 #include <os2me.h>
 
-#include <QtCore/qatomic.h>
-#include <QtCore/qbytearray.h>
-#include <QtCore/qlist.h>
-#include <QtCore/qmutex.h>
-#include <QtCore/qpair.h>
-#include <QtCore/qstring.h>
-#include <QtMultimedia/qaudioformat.h>
+#include "qos2audiostream_p.h"
 
 QT_BEGIN_NAMESPACE
 
-class QOS2AudioRingBuffer;
-
-// Wraps an MMPM/2 DART (Direct Audio Real-Time) mixer stream.
-//
-// For playback, the DART callback thread pulls data out of the ring buffer
-// (padding with silence on underrun) and resubmits the buffer. For recording,
-// the callback pushes captured data into the ring buffer.
-class QOS2DartStream
+// Audio stream on top of the MMPM/2 DART (Direct Audio Real-Time) mixer.
+class QOS2DartStream : public QOS2AudioStream
 {
 public:
-    enum Direction { Playback, Record };
-
     QOS2DartStream(Direction direction, QOS2AudioRingBuffer *ring);
-    ~QOS2DartStream();
+    ~QOS2DartStream() override;
 
-    // deviceIndex 0 is the system default AMPMIX device, 1..N select a
-    // specific installed device.
-    bool open(USHORT deviceIndex, const QAudioFormat &format);
-    bool start();
-    void close();
-    bool pause();
-    bool resume();
+    bool open(unsigned short deviceIndex, const QAudioFormat &format) override;
+    bool start() override;
+    void close() override;
+    bool pause() override;
+    bool resume() override;
+    bool isOpen() const override { return m_deviceId != 0; }
 
-    bool isOpen() const { return m_deviceId != 0; }
-    qsizetype bufferBytes() const { return m_bufferBytes; }
-    int bufferCount() const { return m_buffers.size(); }
-
-    qint64 processedBytes() const;
-    void resetProcessedBytes();
-    int xrunCount() const { return m_xruns.loadRelaxed(); }
-
-    static QList<QPair<USHORT, QString>> availableDevices();
+    static QList<QPair<unsigned short, QString>> availableDevices();
 
 private:
     static LONG APIENTRY mixEvent(ULONG status, PMCI_MIX_BUFFER buffer, ULONG flags);
     void handleEvent(PMCI_MIX_BUFFER buffer, ULONG flags);
-    void fillPlaybackBuffer(PMCI_MIX_BUFFER buffer);
     void setupRecordConnector();
 
-    Direction m_direction;
-    QOS2AudioRingBuffer *m_ring;
     USHORT m_deviceId = 0;
     bool m_mixInitialized = false;
     bool m_buffersAllocated = false;
     MCI_MIXSETUP_PARMS m_mixSetup;
     QList<MCI_MIX_BUFFER> m_buffers;
-    qsizetype m_bufferBytes = 0;
-    char m_silence = 0;
-
-    QAtomicInt m_stopping = 0;
-    QAtomicInt m_xruns = 0;
-    QMutex m_callbackMutex;
-    mutable QMutex m_counterMutex;
-    qint64 m_processedBytes = 0;
 };
 
 QT_END_NAMESPACE

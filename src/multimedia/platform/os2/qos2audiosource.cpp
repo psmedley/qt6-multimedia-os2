@@ -40,7 +40,7 @@
 
 #include "qos2audiosource_p.h"
 #include "qos2audiodevice_p.h"
-#include "qos2dartstream_p.h"
+#include "qos2audiostream_p.h"
 
 #include <QtCore/qloggingcategory.h>
 #include <QtMultimedia/private/qaudiohelpers_p.h>
@@ -66,7 +66,7 @@ QOS2AudioSource::QOS2AudioSource(const QByteArray &device, QObject *parent)
     : m_device(device)
 {
     setParent(parent);
-    m_stream = new QOS2DartStream(QOS2DartStream::Record, &m_ring);
+    m_stream = QOS2AudioStream::create(QOS2AudioStream::Record, &m_ring);
     m_timer = new QTimer(this);
     m_timer->setInterval(TimerIntervalMs);
     connect(m_timer, &QTimer::timeout, this, &QOS2AudioSource::onTimer);

@@ -298,6 +298,7 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_alsa
 qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2audio
     SOURCES
         platform/os2/qos2audioringbuffer_p.h
+        platform/os2/qos2audiostream.cpp platform/os2/qos2audiostream_p.h
         platform/os2/qos2dartstream.cpp platform/os2/qos2dartstream_p.h
         platform/os2/qos2audiodevice.cpp platform/os2/qos2audiodevice_p.h
         platform/os2/qos2audiosink.cpp platform/os2/qos2audiosink_p.h
@@ -306,6 +307,13 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2audio
         platform/os2/qos2integration.cpp platform/os2/qos2integration_p.h
     LIBRARIES
         mmpm2
+)
+
+qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2kai
+    SOURCES
+        platform/os2/qos2kaistream.cpp platform/os2/qos2kaistream_p.h
+    LIBRARIES
+        KAI::KAI
 )
 
 qt_internal_extend_target(Multimedia CONDITION ANDROID

@@ -54,10 +54,6 @@ Q_LOGGING_CATEGORY(qLcOS2Dart, "qt.multimedia.os2.dart")
 
 namespace {
 
-// Number of DART buffers queued in the driver and the duration of each.
-constexpr int DartBufferCount = 4;
-constexpr int DartBufferMs = 40;
-
 inline bool mciFailed(ULONG rc)
 {
     return LOUSHORT(rc) != MCIERR_SUCCESS;
@@ -74,8 +70,7 @@ QString mciErrorString(ULONG rc)
 } // namespace
 
 QOS2DartStream::QOS2DartStream(Direction direction, QOS2AudioRingBuffer *ring)
-    : m_direction(direction),
-      m_ring(ring)
+    : QOS2AudioStream(direction, ring)
 {
     memset(&m_mixSetup, 0, sizeof(m_mixSetup));
 }
@@ -85,21 +80,12 @@ QOS2DartStream::~QOS2DartStream()
     close();
 }
 
-bool QOS2DartStream::open(USHORT deviceIndex, const QAudioFormat &format)
+bool QOS2DartStream::open(unsigned short deviceIndex, const QAudioFormat &format)
 {
     close();
 
     int bitsPerSample = 0;
-    switch (format.sampleFormat()) {
-    case QAudioFormat::UInt8:
-        bitsPerSample = 8;
-        m_silence = char(0x80);
-        break;
-    case QAudioFormat::Int16:
-        bitsPerSample = 16;
-        m_silence = 0;
-        break;
-    default:
+    if (!silenceFor(format, &bitsPerSample, &m_silence)) {
         qCWarning(qLcOS2Dart) << "Unsupported sample format" << format.sampleFormat();
         return false;
     }
@@ -140,14 +126,9 @@ bool QOS2DartStream::open(USHORT deviceIndex, const QAudioFormat &format)
     m_mixInitialized = true;
 
     // Allocate the DART buffers
-    const int bytesPerFrame = format.bytesPerFrame();
-    qsizetype bytes = qsizetype(format.sampleRate()) * DartBufferMs / 1000 * bytesPerFrame;
-    // Keep buffers a multiple of 4 bytes as well as a whole number of frames
-    while (bytes % 4)
-        bytes += bytesPerFrame;
-    m_bufferBytes = qMax<qsizetype>(bytes, 4 * bytesPerFrame);
+    m_bufferBytes = preferredBufferBytes(format);
 
-    m_buffers.resize(DartBufferCount);
+    m_buffers.resize(m_bufferCount);
     memset(m_buffers.data(), 0, m_buffers.size() * sizeof(MCI_MIX_BUFFER));
 
     MCI_BUFFER_PARMS bufferParms;
@@ -165,6 +146,7 @@ bool QOS2DartStream::open(USHORT deviceIndex, const QAudioFormat &format)
     m_buffersAllocated = true;
     // DART may hand back fewer buffers than requested
     m_buffers.resize(qMin<qsizetype>(m_buffers.size(), bufferParms.ulNumBuffers));
+    m_bufferCount = m_buffers.size();
     m_bufferBytes = bufferParms.ulBufferSize;
 
     for (MCI_MIX_BUFFER &buffer : m_buffers) {
@@ -190,8 +172,10 @@ bool QOS2DartStream::start()
 
     ULONG rc;
     if (m_direction == Playback) {
-        for (MCI_MIX_BUFFER &buffer : m_buffers)
-            fillPlaybackBuffer(&buffer);
+        for (MCI_MIX_BUFFER &buffer : m_buffers) {
+            fillPlayback(static_cast<char *>(buffer.pBuffer), m_bufferBytes);
+            buffer.ulBufferLength = m_bufferBytes;
+        }
         rc = m_mixSetup.pmixWrite(m_mixSetup.ulMixHandle, m_buffers.data(), m_buffers.size());
     } else {
         rc = m_mixSetup.pmixRead(m_mixSetup.ulMixHandle, m_buffers.data(), m_buffers.size());
@@ -257,18 +241,6 @@ bool QOS2DartStream::resume()
     return !mciFailed(mciSendCommand(m_deviceId, MCI_RESUME, MCI_WAIT, &genericParms, 0));
 }
 
-qint64 QOS2DartStream::processedBytes() const
-{
-    QMutexLocker locker(&m_counterMutex);
-    return m_processedBytes;
-}
-
-void QOS2DartStream::resetProcessedBytes()
-{
-    QMutexLocker locker(&m_counterMutex);
-    m_processedBytes = 0;
-}
-
 void QOS2DartStream::setupRecordConnector()
 {
     // Select the input connector. Defaults to the microphone; set
@@ -289,19 +261,6 @@ void QOS2DartStream::setupRecordConnector()
     memset(&ampSetParms, 0, sizeof(ampSetParms));
     ampSetParms.ulItem = MCI_AMP_SET_MONITOR;
     mciSendCommand(m_deviceId, MCI_SET, MCI_WAIT | MCI_SET_OFF | MCI_SET_ITEM, &ampSetParms, 0);
-}
-
-void QOS2DartStream::fillPlaybackBuffer(PMCI_MIX_BUFFER buffer)
-{
-    char *data = static_cast<char *>(buffer->pBuffer);
-    const qsizetype got = m_ring->read(data, m_bufferBytes);
-    if (got < m_bufferBytes) {
-        memset(data + got, m_silence, m_bufferBytes - got);
-        m_xruns.ref();
-    }
-    buffer->ulBufferLength = m_bufferBytes;
-    QMutexLocker locker(&m_counterMutex);
-    m_processedBytes += got;
 }
 
 LONG APIENTRY QOS2DartStream::mixEvent(ULONG status, PMCI_MIX_BUFFER buffer, ULONG flags)
@@ -327,25 +286,20 @@ void QOS2DartStream::handleEvent(PMCI_MIX_BUFFER buffer, ULONG flags)
     }
 
     if (m_direction == Playback && (flags & MIX_WRITE_COMPLETE)) {
-        fillPlaybackBuffer(buffer);
+        fillPlayback(static_cast<char *>(buffer->pBuffer), m_bufferBytes);
+        buffer->ulBufferLength = m_bufferBytes;
         m_mixSetup.pmixWrite(m_mixSetup.ulMixHandle, buffer, 1);
     } else if (m_direction == Record && (flags & MIX_READ_COMPLETE)) {
         const qsizetype len = qMin<qsizetype>(buffer->ulBufferLength, m_bufferBytes);
-        const qsizetype written = m_ring->write(static_cast<const char *>(buffer->pBuffer), len);
-        if (written < len)
-            m_xruns.ref();
-        {
-            QMutexLocker counterLocker(&m_counterMutex);
-            m_processedBytes += len;
-        }
+        storeCaptured(static_cast<const char *>(buffer->pBuffer), len);
         buffer->ulBufferLength = m_bufferBytes;
         m_mixSetup.pmixRead(m_mixSetup.ulMixHandle, buffer, 1);
     }
 }
 
-QList<QPair<USHORT, QString>> QOS2DartStream::availableDevices()
+QList<QPair<unsigned short, QString>> QOS2DartStream::availableDevices()
 {
-    QList<QPair<USHORT, QString>> devices;
+    QList<QPair<unsigned short, QString>> devices;
 
     char buf[256];
     MCI_SYSINFO_PARMS sysInfo;
@@ -383,7 +337,7 @@ QList<QPair<USHORT, QString>> QOS2DartStream::availableDevices()
         if (!mciFailed(rc) && logDevice.szProductInfo[0])
             description = QString::fromLocal8Bit(logDevice.szProductInfo).trimmed();
 
-        devices.append({ USHORT(i), description });
+        devices.append({ static_cast<unsigned short>(i), description });
     }
     return devices;
 }
