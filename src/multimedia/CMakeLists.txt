@@ -295,6 +295,19 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_alsa
         ALSA::ALSA
 )
 
+qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2audio
+    SOURCES
+        platform/os2/qos2audioringbuffer_p.h
+        platform/os2/qos2dartstream.cpp platform/os2/qos2dartstream_p.h
+        platform/os2/qos2audiodevice.cpp platform/os2/qos2audiodevice_p.h
+        platform/os2/qos2audiosink.cpp platform/os2/qos2audiosink_p.h
+        platform/os2/qos2audiosource.cpp platform/os2/qos2audiosource_p.h
+        platform/os2/qos2mediadevices.cpp platform/os2/qos2mediadevices_p.h
+        platform/os2/qos2integration.cpp platform/os2/qos2integration_p.h
+    LIBRARIES
+        mmpm2
+)
+
 qt_internal_extend_target(Multimedia CONDITION ANDROID
     SOURCES
         platform/android/audio/qandroidaudiosource.cpp platform/android/audio/qandroidaudiosource_p.h

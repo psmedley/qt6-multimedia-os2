@@ -47,6 +47,9 @@
 #if QT_CONFIG(gstreamer)
 #include <private/qgstreamerintegration_p.h>
 using PlatformIntegration = QGstreamerIntegration;
+#elif QT_CONFIG(os2audio)
+#include <private/qos2integration_p.h>
+using PlatformIntegration = QOS2Integration;
 #elif QT_CONFIG(pulseaudio)
 #include <private/qpulseaudiointegration_p.h>
 using PlatformIntegration = QPulseAudioIntegration;

@@ -68,6 +68,13 @@ int main(int, char **)
 
 #### Features
 
+# OS/2 builds: CMake ports normally set OS2, fall back to the system name.
+if(OS2 OR CMAKE_SYSTEM_NAME STREQUAL "OS2")
+    set(QT_MULTIMEDIA_OS2 ON)
+else()
+    set(QT_MULTIMEDIA_OS2 OFF)
+endif()
+
 qt_feature("alsa" PUBLIC PRIVATE
     LABEL "ALSA"
     AUTODETECT false
@@ -123,10 +130,15 @@ qt_feature("mmrenderer" PUBLIC PRIVATE
     EMIT_IF QNX
 )
 qt_feature_definition("mmrenderer" "QT_NO_MMRENDERER" NEGATE VALUE "1")
+qt_feature("os2audio" PUBLIC PRIVATE
+    LABEL "OS/2 DART audio"
+    CONDITION QT_MULTIMEDIA_OS2 AND NOT QT_FEATURE_gstreamer
+)
+qt_feature_definition("os2audio" "QT_NO_OS2AUDIO" NEGATE VALUE "1")
 qt_feature("pulseaudio" PUBLIC PRIVATE
     LABEL "PulseAudio"
     AUTODETECT false
-    CONDITION WrapPulseAudio_FOUND AND NOT QT_FEATURE_gstreamer
+    CONDITION WrapPulseAudio_FOUND AND NOT QT_FEATURE_gstreamer AND NOT QT_FEATURE_os2audio
 )
 qt_feature_definition("pulseaudio" "QT_NO_PULSEAUDIO" NEGATE VALUE "1")
 qt_feature("wmsdk" PRIVATE
@@ -146,4 +158,5 @@ qt_configure_add_summary_entry(ARGS "linux_dmabuf")
 qt_configure_add_summary_entry(ARGS "mmrenderer")
 qt_configure_add_summary_entry(ARGS "avfoundation")
 qt_configure_add_summary_entry(ARGS "wmf")
+qt_configure_add_summary_entry(ARGS "os2audio")
 qt_configure_end_summary_section() # end of "Qt Multimedia" section
