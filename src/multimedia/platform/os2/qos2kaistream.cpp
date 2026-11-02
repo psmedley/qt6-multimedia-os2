@@ -216,6 +216,7 @@ QList<QPair<unsigned short, QString>> QOS2KaiStream::availableDevices()
 {
     QList<QPair<unsigned short, QString>> devices;
 
+#if defined(QT_KAI_HAS_CARD_API)
     const ULONG count = kaiGetCardCount();
     for (ULONG i = 1; i <= count; ++i) {
         KAICAPS caps;
@@ -227,6 +228,10 @@ QList<QPair<unsigned short, QString>> QOS2KaiStream::availableDevices()
             description = QStringLiteral("Audio device %1").arg(i);
         devices.append({ static_cast<unsigned short>(i), description });
     }
+#else
+    // Older KAI releases have no kaiGetCardCount()/kaiCapsEx(), so only the
+    // default device (index 0, always listed by QOS2MediaDevices) is usable.
+#endif
     return devices;
 }
 

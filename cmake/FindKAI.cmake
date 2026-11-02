@@ -29,11 +29,37 @@ if(KAI_FOUND)
     if(KAI_MMPM2_LIBRARY)
         list(APPEND KAI_LIBRARIES ${KAI_MMPM2_LIBRARY})
     endif()
+
+    # kaiGetCardCount()/kaiCapsEx() (multiple sound cards) only exist in
+    # newer KAI releases.
+    include(CheckCXXSourceCompiles)
+    include(CMakePushCheckState)
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_INCLUDES ${KAI_INCLUDE_DIRS})
+    set(CMAKE_REQUIRED_QUIET ON)
+    check_cxx_source_compiles("
+#define INCL_DOS
+#define INCL_OS2MM
+#include <os2.h>
+#include <os2me.h>
+#include <kai.h>
+int main()
+{
+    KAICAPS caps;
+    return int(kaiGetCardCount()) + int(kaiCapsEx(1, &caps));
+}
+" KAI_HAS_CARD_API)
+    cmake_pop_check_state()
+
     if(NOT TARGET KAI::KAI)
         add_library(KAI::KAI INTERFACE IMPORTED)
         set_target_properties(KAI::KAI PROPERTIES
             INTERFACE_INCLUDE_DIRECTORIES "${KAI_INCLUDE_DIRS}"
             INTERFACE_LINK_LIBRARIES "${KAI_LIBRARIES}")
+        if(KAI_HAS_CARD_API)
+            set_property(TARGET KAI::KAI APPEND PROPERTY
+                INTERFACE_COMPILE_DEFINITIONS QT_KAI_HAS_CARD_API)
+        endif()
     endif()
 endif()
 
