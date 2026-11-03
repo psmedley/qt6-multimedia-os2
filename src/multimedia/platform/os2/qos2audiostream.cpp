@@ -180,6 +180,7 @@ QOS2AudioStream *QOS2AudioStream::create(Direction direction, QOS2AudioRingBuffe
 
 QList<QPair<unsigned short, QString>> QOS2AudioStream::availableDevices(Direction direction)
 {
+    Q_UNUSED(direction);
 #if QT_CONFIG(os2kai)
     if (backend(direction) == Kai)
         return QOS2KaiStream::availableDevices();

@@ -22,6 +22,7 @@ qt_find_package(WrapPulseAudio PROVIDED_TARGETS WrapPulseAudio::WrapPulseAudio M
 qt_find_package(WMF PROVIDED_TARGETS WMF::WMF MODULE_NAME multimedia QMAKE_LIB wmf)
 if(OS2 OR CMAKE_SYSTEM_NAME STREQUAL "OS2" OR QT_FIND_ALL_PACKAGES_ALWAYS)
     qt_find_package(KAI PROVIDED_TARGETS KAI::KAI MODULE_NAME multimedia QMAKE_LIB kai)
+    qt_find_package(FFmpeg PROVIDED_TARGETS FFmpeg::FFmpeg MODULE_NAME multimedia QMAKE_LIB ffmpeg)
 endif()
 qt_find_package(EGL)
 
@@ -142,6 +143,10 @@ qt_feature("os2kai" PRIVATE
     LABEL "OS/2 KAI audio"
     CONDITION QT_FEATURE_os2audio AND KAI_FOUND
 )
+qt_feature("os2ffmpeg" PRIVATE
+    LABEL "OS/2 FFmpeg media player"
+    CONDITION QT_FEATURE_os2audio AND FFmpeg_FOUND
+)
 qt_feature("pulseaudio" PUBLIC PRIVATE
     LABEL "PulseAudio"
     AUTODETECT false
@@ -167,4 +172,5 @@ qt_configure_add_summary_entry(ARGS "avfoundation")
 qt_configure_add_summary_entry(ARGS "wmf")
 qt_configure_add_summary_entry(ARGS "os2audio")
 qt_configure_add_summary_entry(ARGS "os2kai")
+qt_configure_add_summary_entry(ARGS "os2ffmpeg")
 qt_configure_end_summary_section() # end of "Qt Multimedia" section

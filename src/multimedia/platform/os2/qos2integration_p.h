@@ -68,6 +68,10 @@ public:
     QPlatformMediaDevices *devices() override;
     QPlatformMediaFormatInfo *formatInfo() override;
 
+    QPlatformAudioOutput *createAudioOutput(QAudioOutput *q) override;
+    QPlatformVideoSink *createVideoSink(QVideoSink *sink) override;
+    QPlatformMediaPlayer *createPlayer(QMediaPlayer *player) override;
+
 private:
     QOS2MediaDevices *m_devices = nullptr;
     QPlatformMediaFormatInfo *m_formatInfo = nullptr;

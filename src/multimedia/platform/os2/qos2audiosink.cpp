@@ -221,7 +221,14 @@ qint64 QOS2AudioSink::processedUSecs() const
     const int bpf = m_format.bytesPerFrame();
     if (bpf <= 0 || m_format.sampleRate() <= 0)
         return 0;
-    const qint64 frames = m_stream->processedBytes() / bpf;
+    qint64 bytes = m_stream->processedBytes();
+    // Data handed to the driver is still queued in its other buffers for a
+    // while; report what has actually reached the speakers so that A/V sync
+    // based on this value is accurate.
+    if (m_stream->isOpen())
+        bytes = qMax<qint64>(0, bytes - qint64(qMax(0, m_stream->bufferCount() - 1))
+                                                * m_stream->bufferBytes());
+    const qint64 frames = bytes / bpf;
     return frames * 1000000 / m_format.sampleRate();
 }
 

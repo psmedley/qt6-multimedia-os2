@@ -38,9 +38,18 @@
 ****************************************************************************/
 
 
+#include <private/qtmultimediaglobal_p.h>
+
 #include "qos2integration_p.h"
 #include "qos2mediadevices_p.h"
 #include "qos2audiostream_p.h"
+
+#include "qos2audiooutput_p.h"
+#include "qos2videosink_p.h"
+#if QT_CONFIG(os2ffmpeg)
+#include "qos2ffmpegformatinfo_p.h"
+#include "qos2mediaplayer_p.h"
+#endif
 
 #include <private/qplatformmediaformatinfo_p.h>
 
@@ -67,11 +76,35 @@ QPlatformMediaDevices *QOS2Integration::devices()
 
 QPlatformMediaFormatInfo *QOS2Integration::formatInfo()
 {
-    // The OS/2 backend only provides raw PCM audio input/output; there are
-    // no native encoders or decoders.
-    if (!m_formatInfo)
+    if (!m_formatInfo) {
+#if QT_CONFIG(os2ffmpeg)
+        m_formatInfo = new QOS2FFmpegFormatInfo();
+#else
+        // Raw PCM audio input/output only: no encoders or decoders
         m_formatInfo = new QPlatformMediaFormatInfo();
+#endif
+    }
     return m_formatInfo;
+}
+
+QPlatformAudioOutput *QOS2Integration::createAudioOutput(QAudioOutput *q)
+{
+    return new QOS2AudioOutput(q);
+}
+
+QPlatformVideoSink *QOS2Integration::createVideoSink(QVideoSink *sink)
+{
+    return new QOS2VideoSink(sink);
+}
+
+QPlatformMediaPlayer *QOS2Integration::createPlayer(QMediaPlayer *player)
+{
+#if QT_CONFIG(os2ffmpeg)
+    return new QOS2MediaPlayer(player);
+#else
+    Q_UNUSED(player);
+    return nullptr;
+#endif
 }
 
 QT_END_NAMESPACE

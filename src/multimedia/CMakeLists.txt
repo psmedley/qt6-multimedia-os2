@@ -305,8 +305,20 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2audio
         platform/os2/qos2audiosource.cpp platform/os2/qos2audiosource_p.h
         platform/os2/qos2mediadevices.cpp platform/os2/qos2mediadevices_p.h
         platform/os2/qos2integration.cpp platform/os2/qos2integration_p.h
+        platform/os2/qos2audiooutput_p.h
+        platform/os2/qos2videosink_p.h
     LIBRARIES
         mmpm2
+)
+
+qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2ffmpeg
+    SOURCES
+        platform/os2/qos2ffmpegengine.cpp platform/os2/qos2ffmpegengine_p.h
+        platform/os2/qos2ffmpegformatinfo.cpp platform/os2/qos2ffmpegformatinfo_p.h
+        platform/os2/qos2ffmpegvideobuffer.cpp platform/os2/qos2ffmpegvideobuffer_p.h
+        platform/os2/qos2mediaplayer.cpp platform/os2/qos2mediaplayer_p.h
+    LIBRARIES
+        FFmpeg::FFmpeg
 )
 
 qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2kai
