@@ -2,17 +2,27 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "avfmediaplayer_p.h"
-#include "avfvideorenderercontrol_p.h"
+
 #include <avfvideosink_p.h>
-#include <avfmetadata_p.h>
+#include <common/avfmetadata_p.h>
+#include <mediaplayer/avfvideorenderercontrol_p.h>
 
-#include "qaudiooutput.h"
-#include "private/qplatformaudiooutput_p.h"
+#include <QtMultimedia/qaudiooutput.h>
+#include <QtMultimedia/private/qplatformaudiooutput_p.h>
+#if defined(Q_OS_IOS) || defined(Q_OS_VISIONOS) || defined(Q_OS_TVOS)
+#  include <QtMultimedia/private/qavaudiosessionmanager_p.h>
+#endif
 
-#include <qpointer.h>
-#include <QFileInfo>
+#include <QtCore/qdir.h>
+#include <QtCore/qfileinfo.h>
 #include <QtCore/qmath.h>
+#include <QtCore/qmimedatabase.h>
 #include <QtCore/qmutex.h>
+#include <QtCore/qpointer.h>
+#include <QtCore/qthread.h>
+#include <QtCore/private/qexpected_p.h>
+
+#include <optional>
 
 #import <AVFoundation/AVFoundation.h>
 
@@ -31,7 +41,8 @@ static NSString* const AVF_RATE_KEY                     = @"rate";
 static NSString* const AVF_CURRENT_ITEM_KEY             = @"currentItem";
 static NSString* const AVF_CURRENT_ITEM_DURATION_KEY    = @"currentItem.duration";
 
-static void *AVFMediaPlayerObserverRateObservationContext = &AVFMediaPlayerObserverRateObservationContext;
+static void *AVFMediaPlayerObserverRateObservationContext =
+        &AVFMediaPlayerObserverRateObservationContext;
 static void *AVFMediaPlayerObserverStatusObservationContext = &AVFMediaPlayerObserverStatusObservationContext;
 static void *AVFMediaPlayerObserverPresentationSizeContext = &AVFMediaPlayerObserverPresentationSizeContext;
 static void *AVFMediaPlayerObserverBufferLikelyToKeepUpContext = &AVFMediaPlayerObserverBufferLikelyToKeepUpContext;
@@ -44,7 +55,6 @@ static void *AVFMediaPlayerObserverCurrentItemDurationObservationContext = &AVFM
 @property (readonly, getter=player) AVPlayer* m_player;
 @property (readonly, getter=playerItem) AVPlayerItem* m_playerItem;
 @property (readonly, getter=playerLayer) AVPlayerLayer* m_playerLayer;
-@property (readonly, getter=session) AVFMediaPlayer* m_session;
 @property (retain) AVPlayerItemTrack *videoTrack;
 
 - (AVFMediaPlayerObserver *) initWithMediaPlayerSession:(AVFMediaPlayer *)session;
@@ -55,21 +65,77 @@ static void *AVFMediaPlayerObserverCurrentItemDurationObservationContext = &AVFM
 - (void) playerItemDidReachEnd:(NSNotification *)notification;
 - (void) observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
                          change:(NSDictionary *)change context:(void *)context;
-- (void) detatchSession;
+- (void) clearSession;
+- (void) notifySeekComplete;
 - (void) dealloc;
 - (BOOL) resourceLoader:(AVAssetResourceLoader *)resourceLoader shouldWaitForLoadingOfRequestedResource:(AVAssetResourceLoadingRequest *)loadingRequest;
 @end
 
-#ifdef Q_OS_IOS
-// Alas, no such thing as 'class variable', hence globals:
-static unsigned sessionActivationCount;
-static QMutex sessionMutex;
-#endif // Q_OS_IOS
+namespace {
 
-@implementation AVFMediaPlayerObserver
+struct GuardedPlatformPlayer
 {
+    mutable QMutex mutex;
+    AVFMediaPlayer *player{};
+
+    explicit operator bool() const
+    {
+        std::lock_guard guard(mutex);
+        return player;
+    }
+
+    struct not_a_platform_player_t
+    {
+    };
+
+    template <typename Functor>
+    auto withPlatformPlayer(Functor &&f)
+            -> q23::expected<std::invoke_result_t<Functor, AVFMediaPlayer *>,
+                             not_a_platform_player_t>
+    {
+        std::unique_lock guard(mutex);
+        if (!player)
+            return q23::unexpected{ not_a_platform_player_t{} };
+        if constexpr (std::is_void_v<std::invoke_result_t<Functor, AVFMediaPlayer *>>) {
+            f(player);
+            return {};
+        } else {
+            return f(player);
+        }
+    }
+
+    template <typename Functor>
+    void invokeWithPlatformPlayer(Functor f)
+    {
+        std::unique_lock guard(mutex);
+        if (!player)
+            return;
+
+        if (player->thread()->isCurrentThread()) {
+            guard.unlock();
+            f(player);
+        } else {
+            QMetaObject::invokeMethod(player, [f = std::move(f), player = player]() {
+                f(player);
+            });
+        }
+    }
+
+    void clear()
+    {
+        std::lock_guard<QMutex> guard(mutex);
+        player = nullptr;
+    }
+};
+} // namespace
+
+#if defined(Q_OS_IOS) || defined(Q_OS_VISIONOS) || defined(Q_OS_TVOS)
+using ActivationToken = QtMultimediaPrivate::QAVAudioSessionManager::ActivationToken;
+#endif
+
+@implementation AVFMediaPlayerObserver {
 @private
-    AVFMediaPlayer *m_session;
+    GuardedPlatformPlayer m_platformPlayer;
     AVPlayer *m_player;
     AVPlayerItem *m_playerItem;
     AVPlayerLayer *m_playerLayer;
@@ -77,45 +143,18 @@ static QMutex sessionMutex;
     BOOL m_bufferIsLikelyToKeepUp;
     NSData *m_data;
     NSString *m_mimeType;
-#ifdef Q_OS_IOS
-    BOOL m_activated;
+#if defined(Q_OS_IOS) || defined(Q_OS_VISIONOS) || defined(Q_OS_TVOS)
+    std::optional<ActivationToken> m_sessionActivation;
 #endif
 }
 
-@synthesize m_player, m_playerItem, m_playerLayer, m_session;
-
-#ifdef Q_OS_IOS
-- (void)setSessionActive:(BOOL)active
-{
-    const QMutexLocker lock(&sessionMutex);
-    if (active) {
-        // Don't count the same player twice if already activated,
-        // unless it tried to deactivate first:
-        if (m_activated)
-            return;
-        if (!sessionActivationCount)
-            [AVAudioSession.sharedInstance setActive:YES error:nil];
-        ++sessionActivationCount;
-        m_activated = YES;
-    } else {
-        if (!sessionActivationCount || !m_activated) {
-            qWarning("Unbalanced audio session deactivation, ignoring.");
-            return;
-        }
-        --sessionActivationCount;
-        m_activated = NO;
-        if (!sessionActivationCount)
-            [AVAudioSession.sharedInstance setActive:NO error:nil];
-    }
-}
-#endif // Q_OS_IOS
+@synthesize m_player, m_playerItem, m_playerLayer;
 
 - (AVFMediaPlayerObserver *) initWithMediaPlayerSession:(AVFMediaPlayer *)session
 {
     if (!(self = [super init]))
         return nil;
-
-    m_session = session;
+    m_platformPlayer.player = session;
     m_bufferIsLikelyToKeepUp = FALSE;
 
     m_playerLayer = [AVPlayerLayer playerLayerWithPlayer:nil];
@@ -127,9 +166,6 @@ static QMutex sessionMutex;
 
 - (void) setURL:(NSURL *)url mimeType:(NSString *)mimeType
 {
-    if (!m_session)
-        return;
-
     [m_mimeType release];
     m_mimeType = [mimeType retain];
 
@@ -143,31 +179,26 @@ static QMutex sessionMutex;
 
         // use __block to avoid maintaining strong references on variables captured by the
         // following block callback
-#if defined(Q_OS_IOS)
-        BOOL isAccessing = [m_URL startAccessingSecurityScopedResource];
-#endif
+        __block BOOL isAccessing = [m_URL startAccessingSecurityScopedResource];
         __block AVURLAsset *asset = [[AVURLAsset URLAssetWithURL:m_URL options:nil] retain];
         [asset.resourceLoader setDelegate:self queue:dispatch_get_main_queue()];
 
-        __block NSArray *requestedKeys = [[NSArray arrayWithObjects:AVF_TRACKS_KEY, AVF_PLAYABLE_KEY, nil] retain];
+        __block NSArray *requestedKeys = [@[ AVF_TRACKS_KEY, AVF_PLAYABLE_KEY ] retain];
 
         __block AVFMediaPlayerObserver *blockSelf = [self retain];
 
         // Tells the asset to load the values of any of the specified keys that are not already loaded.
-        [asset loadValuesAsynchronouslyForKeys:requestedKeys completionHandler:
-         ^{
-             dispatch_async( dispatch_get_main_queue(),
-                           ^{
-#if defined(Q_OS_IOS)
-                                 if (isAccessing)
-                                    [m_URL stopAccessingSecurityScopedResource];
-#endif
-                                 [blockSelf prepareToPlayAsset:asset withKeys:requestedKeys];
-                                 [asset release];
-                                 [requestedKeys release];
-                                 [blockSelf release];
-                            });
-         }];
+        [asset loadValuesAsynchronouslyForKeys:requestedKeys
+                             completionHandler:^{
+                                 dispatch_async(dispatch_get_main_queue(), ^{
+                                     if (isAccessing)
+                                         [m_URL stopAccessingSecurityScopedResource];
+                                     [blockSelf prepareToPlayAsset:asset withKeys:requestedKeys];
+                                     [asset release];
+                                     [requestedKeys release];
+                                     [blockSelf release];
+                                 });
+                             }];
     }
 }
 
@@ -182,28 +213,44 @@ static QMutex sessionMutex;
         [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:AVPlayerItemDidPlayToEndTimeNotification
                                                     object:m_playerItem];
-        m_playerItem = 0;
+        m_playerItem = nullptr;
     }
     if (m_player) {
         [m_player setRate:0.0];
         [m_player removeObserver:self forKeyPath:AVF_CURRENT_ITEM_DURATION_KEY];
         [m_player removeObserver:self forKeyPath:AVF_CURRENT_ITEM_KEY];
         [m_player removeObserver:self forKeyPath:AVF_RATE_KEY];
-        [m_player release];
-        m_player = 0;
+        [m_player replaceCurrentItemWithPlayerItem:nil];
+
+        // Defer the release of AVPlayer to allow CoreMedia/VideoToolbox
+        // dispatch queues to finish pending operations. Releasing the
+        // player synchronously can cause sporadic crashes on macOS 14
+        // when background threads still reference internal resources.
+        AVPlayer *player = m_player;
+        m_player = nullptr;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [player release];
+        });
     }
     if (m_playerLayer)
         m_playerLayer.player = nil;
-#if defined(Q_OS_IOS)
-    [self setSessionActive:NO];
+#if defined(Q_OS_IOS) || defined(Q_OS_VISIONOS) || defined(Q_OS_TVOS)
+    m_sessionActivation.reset();
 #endif
 }
 
 - (void) prepareToPlayAsset:(AVURLAsset *)asset
                    withKeys:(NSArray *)requestedKeys
 {
-    if (!m_session)
+    if (!m_platformPlayer)
         return;
+
+#if defined(Q_OS_IOS) || defined(Q_OS_VISIONOS) || defined(Q_OS_TVOS)
+    auto sessionActivation = QtMultimediaPrivate::QAVAudioSessionManager::instance()->activate({
+            false,
+            AVAudioSessionCategoryOptionMixWithOthers,
+    });
+#endif
 
     //Make sure that the value of each key has loaded successfully.
     for (NSString *thisKey in requestedKeys)
@@ -242,10 +289,10 @@ static QMutex sessionMutex;
         //Generate an error describing the failure.
         NSString *localizedDescription = NSLocalizedString(@"Item cannot be played", @"Item cannot be played description");
         NSString *localizedFailureReason = NSLocalizedString(@"The assets tracks were loaded, but couldn't create player item.", @"Item cannot be played failure reason");
-        NSDictionary *errorDict = [NSDictionary dictionaryWithObjectsAndKeys:
-                localizedDescription, NSLocalizedDescriptionKey,
-                localizedFailureReason, NSLocalizedFailureReasonErrorKey,
-                nil];
+        NSDictionary *errorDict = @{
+            NSLocalizedDescriptionKey : localizedDescription,
+            NSLocalizedFailureReasonErrorKey : localizedFailureReason,
+        };
         NSError *assetCannotBePlayedError = [NSError errorWithDomain:@"StitchedStreamPlayer" code:0 userInfo:errorDict];
 
         [self assetFailedToPrepareForPlayback:assetCannotBePlayedError];
@@ -285,11 +332,13 @@ static QMutex sessionMutex;
     [m_player retain];
 
     //Set the initial audio ouptut settings on new player object
-    if (self.session) {
-        auto *audioOutput = m_session->m_audioOutput;
-        m_player.volume = (audioOutput ? audioOutput->volume : 1.);
-        m_player.muted = (audioOutput ? audioOutput->muted : true);
-        m_session->updateAudioOutputDevice();
+    {
+        m_platformPlayer.withPlatformPlayer([&](AVFMediaPlayer *player) {
+            auto *audioOutput = player->m_audioOutput;
+            m_player.volume = (audioOutput ? audioOutput->volume : 1.);
+            m_player.muted = (audioOutput ? audioOutput->muted : true);
+            player->updateAudioOutputDevice();
+        });
     }
 
     //Assign the output layer to the new player
@@ -314,16 +363,23 @@ static QMutex sessionMutex;
                           forKeyPath:AVF_CURRENT_ITEM_DURATION_KEY
                           options:0
                           context:AVFMediaPlayerObserverCurrentItemDurationObservationContext];
-#if defined(Q_OS_IOS)
-    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:nil];
-    [self setSessionActive:YES];
+#if defined(Q_OS_IOS) || defined(Q_OS_VISIONOS) || defined(Q_OS_TVOS)
+    m_sessionActivation = std::move(sessionActivation);
 #endif
 }
 
 -(void) assetFailedToPrepareForPlayback:(NSError *)error
 {
-    Q_UNUSED(error);
-    QMetaObject::invokeMethod(m_session, "processMediaLoadError", Qt::AutoConnection);
+    QMediaPlayer::Error errorCode = QMediaPlayer::FormatError;
+    if (error) {
+        NSError *underlyingError = error.userInfo[NSUnderlyingErrorKey];
+        if (underlyingError && ![underlyingError.domain isEqualToString:AVFoundationErrorDomain])
+            errorCode = QMediaPlayer::ResourceError;
+    }
+    m_platformPlayer.invokeWithPlatformPlayer([errorCode](AVFMediaPlayer *platformPlayer) {
+        platformPlayer->processMediaLoadError(errorCode);
+    });
+
 #ifdef QT_DEBUG_AVF
     qDebug() << Q_FUNC_INFO;
     qDebug() << [[error localizedDescription] UTF8String];
@@ -335,8 +391,10 @@ static QMutex sessionMutex;
 - (void) playerItemDidReachEnd:(NSNotification *)notification
 {
     Q_UNUSED(notification);
-    if (self.session)
-        QMetaObject::invokeMethod(m_session, "processEOS", Qt::AutoConnection);
+
+    m_platformPlayer.invokeWithPlatformPlayer([](AVFMediaPlayer *platformPlayer) {
+        platformPlayer->processEOS();
+    });
 }
 
 - (void) observeValueForKeyPath:(NSString*) path
@@ -363,8 +421,10 @@ static QMutex sessionMutex;
                 //Once the AVPlayerItem becomes ready to play, i.e.
                 //[playerItem status] == AVPlayerItemStatusReadyToPlay,
                 //its duration can be fetched from the item.
-                if (self.session)
-                    QMetaObject::invokeMethod(m_session, "processLoadStateChange", Qt::AutoConnection);
+
+                m_platformPlayer.invokeWithPlatformPlayer([](AVFMediaPlayer *platformPlayer) {
+                    platformPlayer->processLoadStateChange();
+                });
             }
             break;
 
@@ -373,68 +433,82 @@ static QMutex sessionMutex;
                 AVPlayerItem *playerItem = static_cast<AVPlayerItem*>(object);
                 [self assetFailedToPrepareForPlayback:playerItem.error];
 
-                if (self.session)
-                    QMetaObject::invokeMethod(m_session, "processLoadStateFailure", Qt::AutoConnection);
+                m_platformPlayer.invokeWithPlatformPlayer([](AVFMediaPlayer *platformPlayer) {
+                    platformPlayer->processLoadStateChange();
+                });
             }
             break;
         }
     } else if (context == AVFMediaPlayerObserverPresentationSizeContext) {
         QSize size(m_playerItem.presentationSize.width, m_playerItem.presentationSize.height);
-        QMetaObject::invokeMethod(m_session, "nativeSizeChanged", Qt::AutoConnection, Q_ARG(QSize, size));
+        m_platformPlayer.invokeWithPlatformPlayer([size](AVFMediaPlayer *platformPlayer) {
+            platformPlayer->nativeSizeChanged(size);
+        });
     } else if (context == AVFMediaPlayerObserverBufferLikelyToKeepUpContext)
     {
         const bool isPlaybackLikelyToKeepUp = [m_playerItem isPlaybackLikelyToKeepUp];
         if (isPlaybackLikelyToKeepUp != m_bufferIsLikelyToKeepUp) {
             m_bufferIsLikelyToKeepUp = isPlaybackLikelyToKeepUp;
-            QMetaObject::invokeMethod(m_session, "processBufferStateChange", Qt::AutoConnection,
-                                      Q_ARG(int, isPlaybackLikelyToKeepUp ? 100 : 0));
+            int bufferProgress = isPlaybackLikelyToKeepUp ? 100 : 0;
+
+            m_platformPlayer.invokeWithPlatformPlayer(
+                    [bufferProgress](AVFMediaPlayer *platformPlayer) {
+                platformPlayer->processBufferStateChange(bufferProgress);
+            });
         }
     }
     else if (context == AVFMediaPlayerObserverTracksContext)
     {
-        QMetaObject::invokeMethod(m_session, "updateTracks", Qt::AutoConnection);
+        m_platformPlayer.invokeWithPlatformPlayer([](AVFMediaPlayer *platformPlayer) {
+            platformPlayer->updateTracks();
+        });
     }
     //AVPlayer "rate" property value observer.
-    else if (context == AVFMediaPlayerObserverRateObservationContext)
-    {
+    else if (context == AVFMediaPlayerObserverRateObservationContext) {
         //QMetaObject::invokeMethod(m_session, "setPlaybackRate",  Qt::AutoConnection, Q_ARG(qreal, [m_player rate]));
     }
     //AVPlayer "currentItem" property observer.
     //Called when the AVPlayer replaceCurrentItemWithPlayerItem:
     //replacement will/did occur.
-    else if (context == AVFMediaPlayerObserverCurrentItemObservationContext)
-    {
+    else if (context == AVFMediaPlayerObserverCurrentItemObservationContext) {
         AVPlayerItem *newPlayerItem = [change objectForKey:NSKeyValueChangeNewKey];
         if (m_playerItem != newPlayerItem)
             m_playerItem = newPlayerItem;
-    }
-    else if (context == AVFMediaPlayerObserverCurrentItemDurationObservationContext)
-    {
+    } else if (context == AVFMediaPlayerObserverCurrentItemDurationObservationContext) {
         const CMTime time = [m_playerItem duration];
-        const qint64 duration =  static_cast<qint64>(float(time.value) / float(time.timescale) * 1000.0f);
-        if (self.session)
-            QMetaObject::invokeMethod(m_session, "processDurationChange",  Qt::AutoConnection, Q_ARG(qint64, duration));
-    }
-    else
-    {
+        const qint64 dur =  static_cast<qint64>(float(time.value) / float(time.timescale) * 1000.0f);
+
+        m_platformPlayer.invokeWithPlatformPlayer([dur](AVFMediaPlayer *platformPlayer) {
+            platformPlayer->processDurationChange(dur);
+        });
+    } else {
         [super observeValueForKeyPath:path ofObject:object change:change context:context];
     }
 }
 
-- (void) detatchSession
+- (void)clearSession
 {
 #ifdef QT_DEBUG_AVF
-        qDebug() << Q_FUNC_INFO;
+    qDebug() << Q_FUNC_INFO;
 #endif
-        m_session = 0;
+    m_platformPlayer.clear();
+}
+
+- (void)notifySeekComplete
+{
+    m_platformPlayer.withPlatformPlayer([](AVFMediaPlayer *player) {
+        player->seekCompleted();
+    });
 }
 
 - (void) dealloc
 {
 #ifdef QT_DEBUG_AVF
-        qDebug() << Q_FUNC_INFO;
+    qDebug() << Q_FUNC_INFO;
 #endif
     [self unloadMedia];
+
+    m_platformPlayer.clear();
 
     if (m_URL) {
         [m_URL release];
@@ -455,52 +529,53 @@ static QMutex sessionMutex;
     if (![loadingRequest.request.URL.scheme isEqualToString:@"iodevice"])
         return NO;
 
-    QIODevice *device = m_session->mediaStream();
-    if (!device)
-        return NO;
+    auto result = m_platformPlayer.withPlatformPlayer([&](AVFMediaPlayer *platformPlayer) {
+        QIODevice *device = platformPlayer->mediaStream();
+        if (!device)
+            return NO;
 
-    device->seek(loadingRequest.dataRequest.requestedOffset);
-    if (loadingRequest.contentInformationRequest) {
-        loadingRequest.contentInformationRequest.contentType = m_mimeType;
-        loadingRequest.contentInformationRequest.contentLength = device->size();
-        loadingRequest.contentInformationRequest.byteRangeAccessSupported = YES;
-    }
-
-    if (loadingRequest.dataRequest) {
-        NSInteger requestedLength = loadingRequest.dataRequest.requestedLength;
-        int maxBytes = qMin(32 * 1064, int(requestedLength));
-        char buffer[maxBytes];
-        NSInteger submitted = 0;
-        while (submitted < requestedLength) {
-            qint64 len = device->read(buffer, maxBytes);
-            if (len < 1)
-                break;
-
-            [loadingRequest.dataRequest respondWithData:[NSData dataWithBytes:buffer length:len]];
-            submitted += len;
+        device->seek(loadingRequest.dataRequest.requestedOffset);
+        if (loadingRequest.contentInformationRequest) {
+            loadingRequest.contentInformationRequest.contentType = m_mimeType;
+            loadingRequest.contentInformationRequest.contentLength = device->size();
+            loadingRequest.contentInformationRequest.byteRangeAccessSupported = YES;
         }
 
-        // Finish loading even if not all bytes submitted.
-        [loadingRequest finishLoading];
-    }
+        if (loadingRequest.dataRequest) {
+            NSInteger requestedLength = loadingRequest.dataRequest.requestedLength;
+            int maxBytes = qMin(32 * 1024, int(requestedLength));
+            QByteArray buffer;
+            buffer.resize(maxBytes);
 
-    return YES;
+            NSInteger submitted = 0;
+            while (submitted < requestedLength) {
+                qint64 len = device->read(buffer.data(), maxBytes);
+                if (len < 1)
+                    break;
+
+                [loadingRequest.dataRequest respondWithData:buffer.toNSData()];
+                submitted += len;
+            }
+
+            // Finish loading even if not all bytes submitted.
+            [loadingRequest finishLoading];
+        }
+
+        return YES;
+    });
+
+    return result.value_or(NO);
 }
 @end
 
 AVFMediaPlayer::AVFMediaPlayer(QMediaPlayer *player)
     : QObject(player),
       QPlatformMediaPlayer(player),
-      m_state(QMediaPlayer::StoppedState),
-      m_mediaStatus(QMediaPlayer::NoMedia),
       m_mediaStream(nullptr),
       m_rate(1.0),
       m_requestedPosition(-1),
       m_duration(0),
-      m_bufferProgress(0),
-      m_videoAvailable(false),
-      m_audioAvailable(false),
-      m_seekable(false)
+      m_bufferProgress(0)
 {
     m_observer = [[AVFMediaPlayerObserver alloc] initWithMediaPlayerSession:this];
     connect(&m_playbackTimer, &QTimer::timeout, this, &AVFMediaPlayer::processPositionChange);
@@ -512,9 +587,14 @@ AVFMediaPlayer::~AVFMediaPlayer()
 #ifdef QT_DEBUG_AVF
     qDebug() << Q_FUNC_INFO;
 #endif
+
+    // Unload media before the C++ side is torn down, so that
+    // CoreMedia/VideoToolbox threads don't outlive our objects.
+    [m_observer unloadMedia];
+
     //Detatch the session from the sessionObserver (which could still be alive trying to communicate with this session).
-    [m_observer detatchSession];
-    [static_cast<AVFMediaPlayerObserver*>(m_observer) release];
+    [m_observer clearSession];
+    [m_observer release];
 }
 
 void AVFMediaPlayer::setVideoSink(QVideoSink *sink)
@@ -539,8 +619,8 @@ void AVFMediaPlayer::setVideoOutput(AVFVideoRendererControl *output)
 
     m_videoOutput = output;
 
-    if (m_videoOutput && m_state != QMediaPlayer::StoppedState)
-        m_videoOutput->setLayer([static_cast<AVFMediaPlayerObserver*>(m_observer) playerLayer]);
+    if (m_videoOutput && state() != QMediaPlayer::StoppedState)
+        m_videoOutput->setLayer([m_observer playerLayer]);
 }
 
 AVAsset *AVFMediaPlayer::currentAssetHandle()
@@ -548,18 +628,8 @@ AVAsset *AVFMediaPlayer::currentAssetHandle()
 #ifdef QT_DEBUG_AVF
     qDebug() << Q_FUNC_INFO;
 #endif
-    AVAsset *currentAsset = [[static_cast<AVFMediaPlayerObserver*>(m_observer) playerItem] asset];
+    AVAsset *currentAsset = [[m_observer playerItem] asset];
     return currentAsset;
-}
-
-QMediaPlayer::PlaybackState AVFMediaPlayer::state() const
-{
-    return m_state;
-}
-
-QMediaPlayer::MediaStatus AVFMediaPlayer::mediaStatus() const
-{
-    return m_mediaStatus;
 }
 
 QUrl AVFMediaPlayer::media() const
@@ -572,17 +642,16 @@ QIODevice *AVFMediaPlayer::mediaStream() const
     return m_mediaStream;
 }
 
-static void setURL(AVFMediaPlayerObserver *observer, const QByteArray &url, const QString &mimeType = QString())
+static void setURL(AVFMediaPlayerObserver *observer, const QUrl &url, const QString &mimeType = QString())
 {
-    NSString *urlString = [NSString stringWithUTF8String:url.constData()];
-    NSURL *nsurl = [NSURL URLWithString:urlString];
+    QUrl resolvedUrl = url;
+    // AVFoundation cannot handle file URLs with a relative path
+    if (url.isLocalFile() && !QDir::isAbsolutePath(url.path()))
+        resolvedUrl = QUrl::fromLocalFile(QFileInfo(url.path()).absoluteFilePath());
+    NSURL *nsurl = resolvedUrl.toNSURL();
     [observer setURL:nsurl mimeType:[NSString stringWithUTF8String:mimeType.toLatin1().constData()]];
 }
 
-static void setStreamURL(AVFMediaPlayerObserver *observer, const QByteArray &url)
-{
-    setURL(observer, QByteArrayLiteral("iodevice://") + url, QFileInfo(QString::fromUtf8(url)).suffix());
-}
 
 void AVFMediaPlayer::setMedia(const QUrl &content, QIODevice *stream)
 {
@@ -590,14 +659,11 @@ void AVFMediaPlayer::setMedia(const QUrl &content, QIODevice *stream)
     qDebug() << Q_FUNC_INFO << content.request().url();
 #endif
 
-    [static_cast<AVFMediaPlayerObserver*>(m_observer) unloadMedia];
+    [m_observer unloadMedia];
 
     m_resources = content;
     resetStream(stream);
 
-    setAudioAvailable(false);
-    setVideoAvailable(false);
-    setSeekable(false);
     m_requestedPosition = -1;
     orientationChanged(QtVideo::Rotation::None, false);
     positionChanged(position());
@@ -609,50 +675,43 @@ void AVFMediaPlayer::setMedia(const QUrl &content, QIODevice *stream)
         m_metaData.clear();
         metaDataChanged();
     }
+    resetBufferProgress();
     for (int i = 0; i < QPlatformMediaPlayer::NTrackTypes; ++i) {
         tracks[i].clear();
         nativeTracks[i].clear();
     }
     tracksChanged();
 
-    const QMediaPlayer::MediaStatus oldMediaStatus = m_mediaStatus;
-    const QMediaPlayer::PlaybackState oldState = m_state;
-
     if (!m_mediaStream && content.isEmpty()) {
-        m_mediaStatus = QMediaPlayer::NoMedia;
-        if (m_mediaStatus != oldMediaStatus)
-            mediaStatusChanged(m_mediaStatus);
+        seekableChanged(false);
+        audioAvailableChanged(false);
+        videoAvailableChanged(false);
 
-        m_state = QMediaPlayer::StoppedState;
-        if (m_state != oldState)
-            stateChanged(m_state);
+        mediaStatusChanged(QMediaPlayer::NoMedia);
+        stateChanged(QMediaPlayer::StoppedState);
 
         return;
     }
 
-    m_mediaStatus = QMediaPlayer::LoadingMedia;
-    if (m_mediaStatus != oldMediaStatus)
-        mediaStatusChanged(m_mediaStatus);
+    mediaStatusChanged(QMediaPlayer::LoadingMedia);
 
     if (m_mediaStream) {
         // If there is a data, try to load it,
         // otherwise wait for readyRead.
         if (m_mediaStream->size())
-            setStreamURL(m_observer, m_resources.toEncoded());
+            loadMediaStream();
     } else {
         //Load AVURLAsset
         //initialize asset using content's URL
-        setURL(m_observer, m_resources.toEncoded());
+        setURL(m_observer, m_resources);
     }
 
-    m_state = QMediaPlayer::StoppedState;
-    if (m_state != oldState)
-        stateChanged(m_state);
+    stateChanged(QMediaPlayer::StoppedState);
 }
 
 qint64 AVFMediaPlayer::position() const
 {
-    AVPlayerItem *playerItem = [static_cast<AVFMediaPlayerObserver*>(m_observer) playerItem];
+    AVPlayerItem *playerItem = [m_observer playerItem];
 
     if (m_requestedPosition != -1)
         return m_requestedPosition;
@@ -680,65 +739,25 @@ float AVFMediaPlayer::bufferProgress() const
     return m_bufferProgress/100.;
 }
 
-void AVFMediaPlayer::setAudioAvailable(bool available)
-{
-    if (m_audioAvailable == available)
-        return;
-
-    m_audioAvailable = available;
-    audioAvailableChanged(available);
-}
-
-bool AVFMediaPlayer::isAudioAvailable() const
-{
-    return m_audioAvailable;
-}
-
-void AVFMediaPlayer::setVideoAvailable(bool available)
-{
-    if (m_videoAvailable == available)
-        return;
-
-    m_videoAvailable = available;
-    videoAvailableChanged(available);
-}
-
-bool AVFMediaPlayer::isVideoAvailable() const
-{
-    return m_videoAvailable;
-}
-
-bool AVFMediaPlayer::isSeekable() const
-{
-    return m_seekable;
-}
-
-void AVFMediaPlayer::setSeekable(bool seekable)
-{
-    if (m_seekable == seekable)
-        return;
-
-    m_seekable = seekable;
-    Q_EMIT seekableChanged(seekable);
-}
-
 QMediaTimeRange AVFMediaPlayer::availablePlaybackRanges() const
 {
-    AVPlayerItem *playerItem = [static_cast<AVFMediaPlayerObserver*>(m_observer) playerItem];
+    AVPlayerItem *playerItem = [m_observer playerItem];
 
-    if (playerItem) {
-        QMediaTimeRange timeRanges;
+    if (!playerItem)
+        return {};
 
-        NSArray *ranges = [playerItem loadedTimeRanges];
-        for (NSValue *timeRange in ranges) {
-            CMTimeRange currentTimeRange = [timeRange CMTimeRangeValue];
-            qint64 startTime = qint64(float(currentTimeRange.start.value) / currentTimeRange.start.timescale * 1000.0);
-            timeRanges.addInterval(startTime, startTime + qint64(float(currentTimeRange.duration.value) / currentTimeRange.duration.timescale * 1000.0));
-        }
-        if (!timeRanges.isEmpty())
-            return timeRanges;
+    if (state() == QMediaPlayer::StoppedState)
+        return {};
+
+    QMediaTimeRange timeRanges;
+
+    NSArray *ranges = [playerItem loadedTimeRanges];
+    for (NSValue *timeRange in ranges) {
+        CMTimeRange currentTimeRange = [timeRange CMTimeRangeValue];
+        qint64 startTime = qint64(float(currentTimeRange.start.value) / currentTimeRange.start.timescale * 1000.0);
+        timeRanges.addInterval(startTime, startTime + qint64(float(currentTimeRange.duration.value) / currentTimeRange.duration.timescale * 1000.0));
     }
-    return QMediaTimeRange(0, duration());
+    return timeRanges;
 }
 
 qreal AVFMediaPlayer::playbackRate() const
@@ -775,13 +794,13 @@ void AVFMediaPlayer::setPlaybackRate(qreal rate)
     qDebug() << Q_FUNC_INFO << rate;
 #endif
 
-    if (qFuzzyCompare(m_rate, rate))
+    if (QtPrivate::fuzzyCompare(m_rate, rate))
         return;
 
     m_rate = rate;
 
-    AVPlayer *player = [static_cast<AVFMediaPlayerObserver*>(m_observer) player];
-    if (player && m_state == QMediaPlayer::PlayingState)
+    AVPlayer *player = [m_observer player];
+    if (player && state() == QMediaPlayer::PlayingState)
         [player setRate:m_rate];
 
     playbackRateChanged(m_rate);
@@ -796,7 +815,7 @@ void AVFMediaPlayer::setPosition(qint64 pos)
     if (pos == position())
         return;
 
-    AVPlayerItem *playerItem = [static_cast<AVFMediaPlayerObserver*>(m_observer) playerItem];
+    AVPlayerItem *playerItem = [m_observer playerItem];
     if (!playerItem) {
         m_requestedPosition = pos;
         positionChanged(m_requestedPosition);
@@ -818,103 +837,107 @@ void AVFMediaPlayer::setPosition(qint64 pos)
 
     CMTime newTime = [playerItem currentTime];
     newTime.value = (pos / 1000.0f) * newTime.timescale;
+    AVFMediaPlayerObserver *observer = m_observer;
     [playerItem seekToTime:newTime toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero
                            completionHandler:^(BOOL finished) {
                                 if (finished)
-                                    m_requestedPosition = -1;
+                                    [observer notifySeekComplete];
                            }];
 
     positionChanged(pos);
 
     // Reset media status if the current status is EndOfMedia
-    if (m_mediaStatus == QMediaPlayer::EndOfMedia) {
-        QMediaPlayer::MediaStatus newMediaStatus = (m_state == QMediaPlayer::PausedState) ? QMediaPlayer::BufferedMedia
-                                                                                          : QMediaPlayer::LoadedMedia;
-        mediaStatusChanged((m_mediaStatus = newMediaStatus));
+    if (mediaStatus() == QMediaPlayer::EndOfMedia) {
+        QMediaPlayer::MediaStatus newMediaStatus = (state() == QMediaPlayer::PausedState)
+                ? QMediaPlayer::BufferedMedia
+                : QMediaPlayer::LoadedMedia;
+        mediaStatusChanged(newMediaStatus);
     }
 }
 
 void AVFMediaPlayer::play()
 {
 #ifdef QT_DEBUG_AVF
-    qDebug() << Q_FUNC_INFO << "currently: " << m_state;
+    qDebug() << Q_FUNC_INFO << "currently: " << state();
 #endif
 
-    if (m_mediaStatus == QMediaPlayer::NoMedia || m_mediaStatus == QMediaPlayer::InvalidMedia)
+    if (mediaStatus() == QMediaPlayer::NoMedia || mediaStatus() == QMediaPlayer::InvalidMedia)
         return;
 
-    if (m_state == QMediaPlayer::PlayingState)
+    if (state() == QMediaPlayer::PlayingState)
         return;
 
-    resetCurrentLoop();
+    if (state() != QMediaPlayer::PausedState)
+        resetCurrentLoop();
 
     if (m_videoOutput && m_videoSink)
-        m_videoOutput->setLayer([static_cast<AVFMediaPlayerObserver*>(m_observer) playerLayer]);
+        m_videoOutput->setLayer([m_observer playerLayer]);
 
     // Reset media status if the current status is EndOfMedia
-    if (m_mediaStatus == QMediaPlayer::EndOfMedia)
+    if (mediaStatus() == QMediaPlayer::EndOfMedia)
         setPosition(0);
 
-    if (m_mediaStatus == QMediaPlayer::LoadedMedia || m_mediaStatus == QMediaPlayer::BufferedMedia) {
+    if (mediaStatus() == QMediaPlayer::LoadedMedia
+        || mediaStatus() == QMediaPlayer::BufferedMedia) {
         // Setting the rate starts playback
-        [[static_cast<AVFMediaPlayerObserver*>(m_observer) player] setRate:m_rate];
+        [[m_observer player] setRate:m_rate];
     }
 
-    m_state = QMediaPlayer::PlayingState;
-    processLoadStateChange();
+    processLoadStateChange(QMediaPlayer::PlayingState);
 
-    stateChanged(m_state);
+    stateChanged(QMediaPlayer::PlayingState);
     m_playbackTimer.start(100);
 }
 
 void AVFMediaPlayer::pause()
 {
 #ifdef QT_DEBUG_AVF
-    qDebug() << Q_FUNC_INFO << "currently: " << m_state;
+    qDebug() << Q_FUNC_INFO << "currently: " << state();
 #endif
 
-    if (m_mediaStatus == QMediaPlayer::NoMedia)
+    if (mediaStatus() == QMediaPlayer::NoMedia || mediaStatus() == QMediaPlayer::InvalidMedia)
         return;
 
-    if (m_state == QMediaPlayer::PausedState)
+    if (state() == QMediaPlayer::PausedState)
         return;
 
-    m_state = QMediaPlayer::PausedState;
+    stateChanged(QMediaPlayer::PausedState);
 
     if (m_videoOutput && m_videoSink)
-        m_videoOutput->setLayer([static_cast<AVFMediaPlayerObserver*>(m_observer) playerLayer]);
+        m_videoOutput->setLayer([m_observer playerLayer]);
 
-    [[static_cast<AVFMediaPlayerObserver*>(m_observer) player] pause];
+    [[m_observer player] pause];
 
     // Reset media status if the current status is EndOfMedia
-    if (m_mediaStatus == QMediaPlayer::EndOfMedia)
+    if (mediaStatus() == QMediaPlayer::EndOfMedia)
         setPosition(0);
 
     positionChanged(position());
-    stateChanged(m_state);
     m_playbackTimer.stop();
 }
 
 void AVFMediaPlayer::stop()
 {
 #ifdef QT_DEBUG_AVF
-    qDebug() << Q_FUNC_INFO << "currently: " << m_state;
+    qDebug() << Q_FUNC_INFO << "currently: " << state();
 #endif
 
-    if (m_state == QMediaPlayer::StoppedState)
+    if (state() == QMediaPlayer::StoppedState && mediaStatus() != QMediaPlayer::EndOfMedia)
         return;
 
     // AVPlayer doesn't have stop(), only pause() and play().
-    [[static_cast<AVFMediaPlayerObserver*>(m_observer) player] pause];
+    [[m_observer player] pause];
     setPosition(0);
 
     if (m_videoOutput)
         m_videoOutput->setLayer(nullptr);
 
-    if (m_mediaStatus == QMediaPlayer::BufferedMedia)
-        mediaStatusChanged((m_mediaStatus = QMediaPlayer::LoadedMedia));
+    resetBufferProgress();
 
-    stateChanged((m_state = QMediaPlayer::StoppedState));
+    if (mediaStatus() == QMediaPlayer::BufferedMedia || mediaStatus() == QMediaPlayer::EndOfMedia)
+        mediaStatusChanged(QMediaPlayer::LoadedMedia);
+
+    stateChanged(QMediaPlayer::StoppedState);
     m_playbackTimer.stop();
 }
 
@@ -924,7 +947,7 @@ void AVFMediaPlayer::setVolume(float volume)
     qDebug() << Q_FUNC_INFO << volume;
 #endif
 
-    AVPlayer *player = [static_cast<AVFMediaPlayerObserver*>(m_observer) player];
+    AVPlayer *player = [m_observer player];
     if (player)
         player.volume = volume;
 }
@@ -935,7 +958,7 @@ void AVFMediaPlayer::setMuted(bool muted)
     qDebug() << Q_FUNC_INFO << muted;
 #endif
 
-    AVPlayer *player = [static_cast<AVFMediaPlayerObserver*>(m_observer) player];
+    AVPlayer *player = [m_observer player];
     if (player)
         player.muted = muted;
 }
@@ -943,7 +966,7 @@ void AVFMediaPlayer::setMuted(bool muted)
 void AVFMediaPlayer::updateAudioOutputDevice()
 {
 #ifdef Q_OS_MACOS
-    AVPlayer *player = [static_cast<AVFMediaPlayerObserver*>(m_observer) player];
+    AVPlayer *player = [m_observer player];
     if (!player)
         return;
 
@@ -961,8 +984,9 @@ void AVFMediaPlayer::updateAudioOutputDevice()
 void AVFMediaPlayer::processEOS()
 {
     if (doLoop()) {
+        positionChanged(duration());
         setPosition(0);
-        [[static_cast<AVFMediaPlayerObserver*>(m_observer) player] setRate:m_rate];
+        [[m_observer player] setRate:m_rate];
         return;
     }
 
@@ -971,32 +995,32 @@ void AVFMediaPlayer::processEOS()
     qDebug() << Q_FUNC_INFO;
 #endif
     positionChanged(position());
-    m_mediaStatus = QMediaPlayer::EndOfMedia;
-    m_state = QMediaPlayer::StoppedState;
 
     if (m_videoOutput)
         m_videoOutput->setLayer(nullptr);
 
-    mediaStatusChanged(m_mediaStatus);
-    stateChanged(m_state);
+    resetBufferProgress();
+
+    stateChanged(QMediaPlayer::StoppedState);
+    mediaStatusChanged(QMediaPlayer::EndOfMedia);
 }
 
 void AVFMediaPlayer::processLoadStateChange(QMediaPlayer::PlaybackState newState)
 {
-    AVPlayerStatus currentStatus = [[static_cast<AVFMediaPlayerObserver*>(m_observer) player] status];
+    AVPlayerStatus currentStatus = [[m_observer player] status];
 
 #ifdef QT_DEBUG_AVF
-    qDebug() << Q_FUNC_INFO << currentStatus << ", " << m_mediaStatus << ", " << newState;
+    qDebug() << Q_FUNC_INFO << currentStatus << ", " << mediaStatus() << ", " << newState;
 #endif
 
-    if (m_mediaStatus == QMediaPlayer::NoMedia)
+    if (mediaStatus() == QMediaPlayer::NoMedia)
         return;
 
     if (currentStatus == AVPlayerStatusReadyToPlay) {
 
-        QMediaPlayer::MediaStatus newStatus = m_mediaStatus;
-
         AVPlayerItem *playerItem = [m_observer playerItem];
+
+        applyPitchCompensation(m_pitchCompensationEnabled);
 
         // get the meta data
         m_metaData = AVFMetaData::fromAsset(playerItem.asset);
@@ -1004,7 +1028,7 @@ void AVFMediaPlayer::processLoadStateChange(QMediaPlayer::PlaybackState newState
         updateTracks();
 
         if (playerItem) {
-            setSeekable([[playerItem seekableTimeRanges] count] > 0);
+            seekableChanged([[playerItem seekableTimeRanges] count] > 0);
 
             // Get the native size of the video, and reset the bounds of the player layer
             AVPlayerLayer *playerLayer = [m_observer playerLayer];
@@ -1016,22 +1040,31 @@ void AVFMediaPlayer::processLoadStateChange(QMediaPlayer::PlaybackState newState
                 }
             }
 
-            if (m_requestedPosition != -1) {
+            if (m_requestedPosition != -1)
                 setPosition(m_requestedPosition);
-                m_requestedPosition = -1;
-            }
         }
 
-        newStatus = (newState != QMediaPlayer::StoppedState) ? QMediaPlayer::BufferedMedia
-                                                             : QMediaPlayer::LoadedMedia;
+        QMediaPlayer::MediaStatus newStatus = (newState != QMediaPlayer::StoppedState)
+                ? QMediaPlayer::BufferedMedia
+                : QMediaPlayer::LoadedMedia;
 
-        if (newStatus != m_mediaStatus)
-            mediaStatusChanged((m_mediaStatus = newStatus));
+        if (newStatus != mediaStatus()) {
+            if (newStatus == QMediaPlayer::BufferedMedia
+                && mediaStatus() == QMediaPlayer::LoadingMedia) {
+                // Emit intermediate transitions to match expected signal sequence
+                mediaStatusChanged(QMediaPlayer::LoadedMedia);
+                mediaStatusChanged(QMediaPlayer::BufferingMedia);
+            } else if (newStatus == QMediaPlayer::BufferedMedia
+                       && mediaStatus() == QMediaPlayer::LoadedMedia) {
+                mediaStatusChanged(QMediaPlayer::BufferingMedia);
+            }
+            mediaStatusChanged(newStatus);
+        }
     }
 
-    if (newState == QMediaPlayer::PlayingState && [static_cast<AVFMediaPlayerObserver*>(m_observer) player]) {
+    if (newState == QMediaPlayer::PlayingState && [m_observer player]) {
         // Setting the rate is enough to start playback, no need to call play()
-        [[static_cast<AVFMediaPlayerObserver*>(m_observer) player] setRate:m_rate];
+        [[m_observer player] setRate:m_rate];
         m_playbackTimer.start();
     }
 }
@@ -1039,35 +1072,37 @@ void AVFMediaPlayer::processLoadStateChange(QMediaPlayer::PlaybackState newState
 
 void AVFMediaPlayer::processLoadStateChange()
 {
-    processLoadStateChange(m_state);
+    processLoadStateChange(state());
 }
 
 
 void AVFMediaPlayer::processLoadStateFailure()
 {
-    stateChanged((m_state = QMediaPlayer::StoppedState));
+    stateChanged(QMediaPlayer::StoppedState);
 }
 
 void AVFMediaPlayer::processBufferStateChange(int bufferProgress)
 {
+    if (state() == QMediaPlayer::StoppedState)
+        return;
+
     if (bufferProgress == m_bufferProgress)
         return;
 
-    auto status = m_mediaStatus;
+    auto status = mediaStatus();
     // Buffered -> unbuffered.
     if (!bufferProgress) {
         status = QMediaPlayer::StalledMedia;
     } else if (status == QMediaPlayer::StalledMedia) {
         status = QMediaPlayer::BufferedMedia;
         // Resume playback.
-        if (m_state == QMediaPlayer::PlayingState) {
-            [[static_cast<AVFMediaPlayerObserver*>(m_observer) player] setRate:m_rate];
+        if (state() == QMediaPlayer::PlayingState) {
+            [[m_observer player] setRate:m_rate];
             m_playbackTimer.start();
         }
     }
 
-    if (m_mediaStatus != status)
-        mediaStatusChanged(m_mediaStatus = status);
+    mediaStatusChanged(status);
 
     m_bufferProgress = bufferProgress;
     bufferProgressChanged(bufferProgress / 100.);
@@ -1084,27 +1119,41 @@ void AVFMediaPlayer::processDurationChange(qint64 duration)
 
 void AVFMediaPlayer::processPositionChange()
 {
-    if (m_state == QMediaPlayer::StoppedState)
+    if (state() == QMediaPlayer::StoppedState)
         return;
 
     positionChanged(position());
 }
 
-void AVFMediaPlayer::processMediaLoadError()
+void AVFMediaPlayer::processMediaLoadError(QMediaPlayer::Error errorCode)
 {
     if (m_requestedPosition != -1) {
         m_requestedPosition = -1;
         positionChanged(position());
     }
 
-    mediaStatusChanged((m_mediaStatus = QMediaPlayer::InvalidMedia));
+    setInvalidMediaWithError(errorCode, tr("Failed to load media"));
+}
 
-    error(QMediaPlayer::FormatError, tr("Failed to load media"));
+void AVFMediaPlayer::seekCompleted()
+{
+    m_requestedPosition = -1;
 }
 
 void AVFMediaPlayer::streamReady()
 {
-    setStreamURL(m_observer, m_resources.toEncoded());
+    loadMediaStream();
+}
+
+void AVFMediaPlayer::loadMediaStream()
+{
+    QString suffix;
+    if (!m_resources.isEmpty())
+        suffix = QFileInfo(m_resources.path()).suffix();
+    if (suffix.isEmpty() && m_mediaStream)
+        suffix = QMimeDatabase().mimeTypeForData(m_mediaStream).preferredSuffix();
+    const QString url = QStringLiteral("iodevice:///iodevice.") + suffix;
+    setURL(m_observer, QUrl(url), suffix);
 }
 
 void AVFMediaPlayer::streamDestroyed()
@@ -1121,6 +1170,8 @@ void AVFMediaPlayer::updateTracks()
         tracks[i].clear();
         nativeTracks[i].clear();
     }
+    bool hasAudio = false;
+    bool hasVideo = false;
     AVPlayerItem *playerItem = [m_observer playerItem];
     if (playerItem) {
         // Check each track for audio and video content
@@ -1131,10 +1182,10 @@ void AVFMediaPlayer::updateTracks()
                 int qtTrack = -1;
                 if ([assetTrack.mediaType isEqualToString:AVMediaTypeAudio]) {
                     qtTrack = QPlatformMediaPlayer::AudioStream;
-                    setAudioAvailable(true);
+                    hasAudio = true;
                 } else if ([assetTrack.mediaType isEqualToString:AVMediaTypeVideo]) {
                     qtTrack = QPlatformMediaPlayer::VideoStream;
-                    setVideoAvailable(true);
+                    hasVideo = true;
                     if (m_observer.videoTrack != track) {
                         m_observer.videoTrack = track;
                         bool isMirrored = false;
@@ -1157,6 +1208,8 @@ void AVFMediaPlayer::updateTracks()
         if (firstLoad)
             setActiveTrack(SubtitleStream, -1);
     }
+    audioAvailableChanged(hasAudio);
+    videoAvailableChanged(hasVideo);
     tracksChanged();
 }
 
@@ -1171,12 +1224,15 @@ void AVFMediaPlayer::setActiveTrack(QPlatformMediaPlayer::TrackType type, int in
             AVAsset *asset = playerItem.asset;
             if (!asset)
                 return;
-            AVMediaSelectionGroup *group = [asset mediaSelectionGroupForMediaCharacteristic:AVMediaCharacteristicLegible];
-            if (!group)
-                return;
-            auto *options = group.options;
-            if (options.count)
-                [playerItem selectMediaOption:options.firstObject inMediaSelectionGroup:group];
+            [asset loadMediaSelectionGroupForMediaCharacteristic:AVMediaCharacteristicLegible
+                                               completionHandler:[=](AVMediaSelectionGroup *group,
+                                                                     NSError *error) {
+                if (error)
+                    return; // FIXME: handle error
+                auto *options = group.options;
+                if (options.count)
+                    [playerItem selectMediaOption:options.firstObject inMediaSelectionGroup:group];
+            }];
         }
     }
     for (int i = 0; i < t.count(); ++i)
@@ -1221,6 +1277,25 @@ void AVFMediaPlayer::resetStream(QIODevice *stream)
     }
 }
 
+void AVFMediaPlayer::applyPitchCompensation(bool enabled)
+{
+    AVPlayerItem *playerItem = [m_observer playerItem];
+    if (playerItem) {
+        if (enabled)
+            playerItem.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmSpectral;
+        else
+            playerItem.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmVarispeed;
+    }
+}
+
+void AVFMediaPlayer::resetBufferProgress()
+{
+    if (m_bufferProgress != 0) {
+        m_bufferProgress = 0;
+        bufferProgressChanged(0);
+    }
+}
+
 void AVFMediaPlayer::nativeSizeChanged(QSize size)
 {
     if (!m_videoSink)
@@ -1242,35 +1317,58 @@ void AVFMediaPlayer::videoOrientationForAssetTrack(AVAssetTrack *videoTrack,
                                                    bool &mirrored)
 {
     angle = QtVideo::Rotation::None;
+    mirrored = false;
     if (videoTrack) {
         CGAffineTransform transform = videoTrack.preferredTransform;
         if (CGAffineTransformIsIdentity(transform))
             return;
-        qreal delta = transform.a * transform.d - transform.b * transform.c;
-        qreal radians = qAtan2(transform.b, transform.a);
-        qreal degrees = qRadiansToDegrees(radians);
-        qreal scaleX = (transform.a/qAbs(transform.a)) * qSqrt(qPow(transform.a, 2) + qPow(transform.c, 2));
-        qreal scaleY = (transform.d/abs(transform.d)) * qSqrt(qPow(transform.b, 2) + qPow(transform.d, 2));
 
-        if (delta < 0.0) { // flipped
-            if (scaleX < 0.0) {
-                // vertical flip
-                degrees = -degrees;
-            } else if (scaleY < 0.0) {
-                // horizontal flip
-                degrees = (180 + (int)degrees) % 360;
-            }
-            mirrored = true;
-        }
+        // determinant < 0 means the transform includes a reflection (mirror)
+        qreal det = transform.a * transform.d - transform.b * transform.c;
+        mirrored = (det < 0.0);
 
-        if (qFuzzyCompare(degrees, qreal(90)) || qFuzzyCompare(degrees, qreal(-270))) {
+        // Factor out mirror before computing rotation angle.
+        // Negating the first column of a mirrored matrix yields a pure rotation.
+        qreal ra = mirrored ? -transform.a : transform.a;
+        qreal rb = mirrored ? -transform.b : transform.b;
+
+        qreal degrees = qRadiansToDegrees(qAtan2(rb, ra));
+        if (degrees < 0)
+            degrees += 360.0;
+
+        if (QtPrivate::fuzzyCompare(degrees, qreal(90))
+            || QtPrivate::fuzzyCompare(degrees, qreal(-270))) {
             angle = QtVideo::Rotation::Clockwise90;
-        } else if (qFuzzyCompare(degrees, qreal(-90)) || qFuzzyCompare(degrees, qreal(270))) {
+        } else if (QtPrivate::fuzzyCompare(degrees, qreal(-90))
+                   || QtPrivate::fuzzyCompare(degrees, qreal(270))) {
             angle = QtVideo::Rotation::Clockwise270;
-        } else if (qFuzzyCompare(degrees, qreal(180)) || qFuzzyCompare(degrees, qreal(-180))) {
+        } else if (QtPrivate::fuzzyCompare(degrees, qreal(180))
+                   || QtPrivate::fuzzyCompare(degrees, qreal(-180))) {
             angle = QtVideo::Rotation::Clockwise180;
         }
     }
+}
+
+void AVFMediaPlayer::setPitchCompensation(bool enabled)
+{
+    if (m_pitchCompensationEnabled == enabled)
+        return;
+
+    applyPitchCompensation(enabled);
+
+    m_pitchCompensationEnabled = enabled;
+    pitchCompensationChanged(enabled);
+}
+
+bool AVFMediaPlayer::pitchCompensation() const
+{
+    return m_pitchCompensationEnabled;
+}
+
+QPlatformMediaPlayer::PitchCompensationAvailability
+AVFMediaPlayer::pitchCompensationAvailability() const
+{
+    return QPlatformMediaPlayer::PitchCompensationAvailability::Available;
 }
 
 #include "moc_avfmediaplayer_p.cpp"

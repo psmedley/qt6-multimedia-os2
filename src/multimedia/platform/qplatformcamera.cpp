@@ -2,12 +2,20 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qplatformcamera_p.h"
-#include "private/qcameradevice_p.h"
+
+#include <QtMultimedia/private/qcameradevice_p.h>
+#include <QtMultimedia/private/qmultimedia_ranges_p.h>
 
 QT_BEGIN_NAMESPACE
 
-QPlatformCamera::QPlatformCamera(QCamera *parent) : QPlatformVideoSource(parent), m_camera(parent)
+namespace ranges = QtMultimediaPrivate::ranges;
+
+QPlatformCamera::QPlatformCamera(QObject *parent)
+    : QPlatformVideoSource(parent), m_camera(qobject_cast<QCamera *>(parent))
 {
+    // TODO: create QPlatformGStreamerElement and use it instead of QPlatformCamera
+    // Then, uncomment the assert
+    Q_ASSERT(parent);
     qRegisterMetaType<QVideoFrame>();
 }
 
@@ -35,13 +43,15 @@ QCameraFormat QPlatformCamera::findBestCameraFormat(const QCameraDevice &camera)
     };
 
     const auto formats = camera.videoFormats();
-    const auto found =
-            std::max_element(formats.begin(), formats.end(),
-                             [makeCriteria](const QCameraFormat &fmtA, const QCameraFormat &fmtB) {
-                                 return makeCriteria(fmtA) < makeCriteria(fmtB);
-                             });
+    if (formats.empty())
+        return QCameraFormat{};
 
-    return found == formats.end() ? QCameraFormat{} : *found;
+    const auto found =
+            ranges::max(formats, [&](const QCameraFormat &fmtA, const QCameraFormat &fmtB) {
+                return makeCriteria(fmtA) < makeCriteria(fmtB);
+            });
+
+    return found;
 }
 
 QVideoFrameFormat QPlatformCamera::frameFormat() const

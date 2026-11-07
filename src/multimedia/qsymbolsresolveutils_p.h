@@ -1,5 +1,6 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:execute-external-code
 
 #ifndef Q_SYMBOLSRESOLVEUTILS
 #define Q_SYMBOLSRESOLVEUTILS
@@ -8,6 +9,7 @@
 #include <QtMultimedia/qtmultimediaexports.h>
 #include <tuple>
 #include <memory>
+#include <string_view>
 
 //
 //  W A R N I N G
@@ -24,11 +26,7 @@ QT_BEGIN_NAMESPACE
 
 constexpr bool areVersionsEqual(const char lhs[], const char rhs[])
 {
-    int i = 0;
-    for (; lhs[i] && rhs[i]; ++i)
-        if (lhs[i] != rhs[i])
-            return false;
-    return lhs[i] == rhs[i];
+    return std::string_view(lhs) == std::string_view(rhs);
 }
 
 constexpr bool areVersionsEqual(const char lhs[], int rhsInt)
@@ -106,7 +104,6 @@ QT_END_NAMESPACE
                  "Configuartion error: misleading " Name " versions!")
 
 #define BEGIN_INIT_FUNCS(...) \
-    QT_USE_NAMESPACE \
     namespace { \
         class SymbolsResolverImpl : public SymbolsResolver { \
         public: \

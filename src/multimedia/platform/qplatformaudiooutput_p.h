@@ -14,8 +14,8 @@
 // We mean it.
 //
 
-#include <private/qtmultimediaglobal_p.h>
-#include <qaudiodevice.h>
+#include <QtMultimedia/private/qtmultimediaglobal_p.h>
+#include <QtMultimedia/qaudiodevice.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -31,7 +31,7 @@ public:
     virtual void setMuted(bool /*muted*/) {}
     virtual void setVolume(float /*volume*/) {}
 
-    QAudioOutput *q = nullptr;
+    QAudioOutput *const q;
     QAudioDevice device;
     float volume = 1.;
     bool muted = false;

@@ -15,30 +15,46 @@
 // We mean it.
 //
 
-#include <private/qtmultimediaglobal_p.h>
-#include <private/qplatformmediaformatinfo_p.h>
-#include <qvideoframeformat.h>
+#include <QtMultimedia/qmediaformat.h>
+#include <QtMultimedia/qvideoframeformat.h>
+#include <QtMultimedia/private/qtmultimediaglobal_p.h>
+
 #include <guiddef.h>
-#include <qstring.h>
+
+#include <optional>
+
+struct IMFMediaType;
 
 QT_BEGIN_NAMESPACE
 
-namespace QWindowsMultimediaUtils {
+class QCameraFormat;
 
-    Q_MULTIMEDIA_EXPORT QVideoFrameFormat::PixelFormat pixelFormatFromMediaSubtype(const GUID &subtype);
+namespace QWMF {
 
-    Q_MULTIMEDIA_EXPORT GUID videoFormatForCodec(QMediaFormat::VideoCodec codec);
+Q_MULTIMEDIA_EXPORT QVideoFrameFormat::PixelFormat pixelFormatFromMediaSubtype(const GUID &subtype);
 
-    Q_MULTIMEDIA_EXPORT QMediaFormat::VideoCodec codecForVideoFormat(GUID format);
+[[nodiscard]] Q_MULTIMEDIA_EXPORT std::optional<QCameraFormat>
+cameraFormatFromMediaType(IMFMediaType *mediaFormat);
 
-    Q_MULTIMEDIA_EXPORT GUID audioFormatForCodec(QMediaFormat::AudioCodec codec);
+[[nodiscard]] Q_MULTIMEDIA_EXPORT QVideoFrameFormat::ColorRange
+colorRangeFromNominalRange(uint32_t nominalRange);
 
-    Q_MULTIMEDIA_EXPORT QMediaFormat::AudioCodec codecForAudioFormat(GUID format);
+[[nodiscard]] Q_MULTIMEDIA_EXPORT QVideoFrameFormat::ColorSpace
+colorSpaceFromMatrix(uint32_t yuvMatrix);
 
-    Q_MULTIMEDIA_EXPORT GUID containerForVideoFileFormat(QMediaFormat::FileFormat format);
+Q_MULTIMEDIA_EXPORT GUID videoFormatForCodec(QMediaFormat::VideoCodec codec);
+Q_MULTIMEDIA_EXPORT QMediaFormat::VideoCodec codecForVideoFormat(GUID format);
 
-    Q_MULTIMEDIA_EXPORT GUID containerForAudioFileFormat(QMediaFormat::FileFormat format);
-}
+Q_MULTIMEDIA_EXPORT GUID audioFormatForCodec(QMediaFormat::AudioCodec codec);
+Q_MULTIMEDIA_EXPORT QMediaFormat::AudioCodec codecForAudioFormat(GUID format);
+
+[[nodiscard]] Q_MULTIMEDIA_EXPORT std::optional<GUID>
+containerForVideoFileFormat(QMediaFormat::FileFormat format);
+
+[[nodiscard]] Q_MULTIMEDIA_EXPORT std::optional<GUID>
+containerForAudioFileFormat(QMediaFormat::FileFormat format);
+
+} // namespace QWMF
 
 QT_END_NAMESPACE
 

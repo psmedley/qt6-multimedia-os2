@@ -22,7 +22,7 @@
 #include <gst/video/video.h>
 #include <gst/pbutils/encoding-profile.h>
 
-static Q_LOGGING_CATEGORY(qLcMediaRecorder, "qt.multimedia.encoder")
+Q_STATIC_LOGGING_CATEGORY(qLcMediaRecorder, "qt.multimedia.recorder");
 
 QT_BEGIN_NAMESPACE
 
@@ -211,7 +211,7 @@ void QGstreamerMediaRecorder::PauseControl::installOn(QGstPad pad)
                                                                         GST_PAD_PROBE_TYPE_BUFFER);
 }
 
-GstPadProbeReturn QGstreamerMediaRecorder::PauseControl::processBuffer(QGstPad,
+GstPadProbeReturn QGstreamerMediaRecorder::PauseControl::processBuffer(const QGstPad &,
                                                                        GstPadProbeInfo *info)
 {
     auto buffer = GST_PAD_PROBE_INFO_BUFFER(info);
@@ -268,7 +268,7 @@ void QGstreamerMediaRecorder::record(QMediaEncoderSettings &settings)
     auto container = settings.preferredSuffix();
     auto location = QMediaStorageLocation::generateFileName(outputLocation().toLocalFile(), primaryLocation, container);
 
-    QUrl actualSink = QUrl::fromLocalFile(QDir::currentPath()).resolved(location);
+    QUrl actualSink = QUrl::fromLocalFile(QDir::currentPath()).resolved(QUrl{location});
     qCDebug(qLcMediaRecorder) << "recording new video to" << actualSink;
 
     Q_ASSERT(!actualSink.isEmpty());

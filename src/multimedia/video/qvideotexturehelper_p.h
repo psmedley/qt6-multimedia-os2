@@ -51,7 +51,14 @@ struct Q_MULTIMEDIA_EXPORT TextureDescription
         RG_16,
     };
 
-    QRhiTexture::Format rhiTextureFormat(int plane, QRhi *rhi) const;
+    enum class FallbackPolicy {
+        Disable,
+        Enable
+    };
+
+    QRhiTexture::Format rhiTextureFormat(int plane,
+                                         QRhi *rhi,
+                                         FallbackPolicy policy = FallbackPolicy::Enable) const;
 
     inline int strideForWidth(int width) const { return (width*strideFactor + 15) & ~15; }
     inline int bytesForSize(QSize s) const { return bytesRequired(strideForWidth(s.width()), s.height()); }
@@ -79,7 +86,8 @@ struct Q_MULTIMEDIA_EXPORT TextureDescription
         // where width gets cut in half.
         // Another option would be to compare QRhiImplementation::TextureFormatInfo to expected
         // based on TextureDescription::Format.
-        if (textureFormat[plane] == TextureDescription::RG_8
+        if ((textureFormat[plane] == TextureDescription::RG_8
+             || textureFormat[plane] == TextureDescription::Red_16)
             && rhiTextureFormat(plane, rhi) == QRhiTexture::RGBA8)
             return { sizeScale[plane].x * 2, sizeScale[plane].y };
 
@@ -135,10 +143,21 @@ createTexturesFromHandles(QVideoFrameTexturesHandlesUPtr handles, QRhi &rhi,
  */
 Q_MULTIMEDIA_EXPORT QVideoFrameTexturesUPtr createTextures(const QVideoFrame &frame, QRhi &rhi,
                                                            QRhiResourceUpdateBatch &rub,
-                                                           QVideoFrameTexturesUPtr oldTextures);
+                                                           QVideoFrameTexturesUPtr &oldTextures);
+
+/**
+ * @brief Returns a QRhiTexture::Format taking into account rhi capabilities and explicitly excluded
+ *        formats using a chain of pre-defined fallback texture formats. If no valid fallback is
+ *        determined, will return the format argument.
+ */
+Q_MULTIMEDIA_EXPORT QRhiTexture::Format
+resolvedRhiTextureFormat(QRhiTexture::Format format, QRhi *rhi);
 
 Q_MULTIMEDIA_EXPORT void
 setExcludedRhiTextureFormats(QList<QRhiTexture::Format> formats); // for tests only
+
+Q_MULTIMEDIA_EXPORT bool
+forceGlTextureExternalOesIsSet();
 
 struct UniformData {
     float transformMatrix[4][4];

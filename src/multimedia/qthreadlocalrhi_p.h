@@ -15,13 +15,20 @@
 // We mean it.
 //
 
-#include <qtmultimediaexports.h>
+#include <QtMultimedia/qtmultimediaexports.h>
+
+#include <QtGui/rhi/qrhi.h>
 
 QT_BEGIN_NAMESPACE
 
-class QRhi;
+// backends priority (from top):
+// - the parameter-specified backend
+// - the test-only preferred backend (see qSetPreferredThreadLocalRhiBackend)
+// - the default backend according to the platfrom
+Q_MULTIMEDIA_EXPORT QRhi *qEnsureThreadLocalRhi(QRhi::Implementation backend = QRhi::Implementation::Null);
 
-Q_MULTIMEDIA_EXPORT QRhi* ensureThreadLocalRhi(QRhi* referenceRhi = nullptr);
+// Used only for testing
+Q_MULTIMEDIA_EXPORT void qSetPreferredThreadLocalRhiBackend(QRhi::Implementation backend);
 
 QT_END_NAMESPACE
 

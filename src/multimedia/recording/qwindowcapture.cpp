@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qwindowcapture.h"
-#include "qplatformmediaintegration_p.h"
-#include "qmediacapturesession.h"
-#include "private/qobject_p.h"
-#include "private/qplatformsurfacecapture_p.h"
+
+#include <QtMultimedia/qmediacapturesession.h>
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+#include <QtMultimedia/private/qplatformsurfacecapture_p.h>
+#include <QtMultimedia/private/qwindowcapture_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -13,13 +14,6 @@ static QWindowCapture::Error toWindowCaptureError(QPlatformSurfaceCapture::Error
 {
     return static_cast<QWindowCapture::Error>(error);
 }
-
-class QWindowCapturePrivate : public QObjectPrivate
-{
-public:
-    QMediaCaptureSession *captureSession = nullptr;
-    std::unique_ptr<QPlatformSurfaceCapture> platformWindowCapture;
-};
 
 /*!
     \class QWindowCapture
@@ -31,8 +25,13 @@ public:
     \brief This class is used for capturing a window.
 
     The class captures a window. It is managed by
-    the QMediaCaptureSession class where the captured window can be displayed
+    the \l QMediaCaptureSession class where the captured window can be displayed
     in a video preview object or recorded to a file.
+
+    The following snippet shows how to select one of the capturable windows and
+    display the result in a \l QVideoWidget:
+
+    \snippet multimedia-snippets/windowcapturesnippets.cpp Basic setup
 
     \include qwindowcapture-limitations.qdocinc {content} {Q}
 
@@ -49,8 +48,15 @@ public:
     \brief This type is used for capturing a window.
 
     WindowCapture captures a window. It is managed by
-    MediaCaptureSession where the captured window can be displayed
-    in a video preview object or recorded to a file.
+    \l {QtMultimedia::CaptureSession}{CaptureSession} where the
+    captured window can be displayed in a video preview object or
+    recorded to a file.
+
+    The code below shows a simple capture session that captures one of the
+    available windows with WindowCapture and plays it back in a
+    \l {QtMultimedia::VideoOutput}{VideoOutput}.
+
+    \snippet multimedia-snippets/windowcapturesnippets.qml Basic setup
 
     \include qwindowcapture-limitations.qdocinc {content} {}
 
@@ -87,12 +93,15 @@ QWindowCapture::QWindowCapture(QObject *parent) : QObject(*new QWindowCapturePri
         connect(platformCapture, &QPlatformSurfaceCapture::errorChanged, this,
                 &QWindowCapture::errorChanged);
         connect(platformCapture, &QPlatformSurfaceCapture::errorOccurred, this,
-                [this](QPlatformSurfaceCapture::Error error, QString errorString) {
-                    emit errorOccurred(toWindowCaptureError(error), errorString);
-                });
+                [this](QPlatformSurfaceCapture::Error error, const QString &errorString) {
+            emit errorOccurred(toWindowCaptureError(error), errorString);
+        });
         connect(platformCapture,
                 qOverload<QCapturableWindow>(&QPlatformSurfaceCapture::sourceChanged), this,
                 &QWindowCapture::windowChanged);
+
+        connect(platformCapture, &QPlatformSurfaceCapture::frameRateChanged, this,
+                &QWindowCapture::maximumFrameRateChanged);
 
         d->platformWindowCapture.reset(platformCapture);
     }
@@ -114,18 +123,34 @@ QWindowCapture::~QWindowCapture()
 /*!
     \qmlmethod list<CapturableWindow> QtMultimedia::WindowCapture::capturableWindows()
 
-    Returns a list of CapturableWindow objects that is available for capturing.
+    Returns a list of \l{QtMultimedia::CapturableWindow}{CapturableWindow}
+    objects that are currently available for capturing.
+
+    \note On macOS, invoking this method will trigger the "Screen Recording" permission
+    dialog. If permissions have not yet been granted, this method will return an empty list.
+    Invoking it multiple times will bring this dialog to the foreground.
 */
 /*!
     \fn QList<QCapturableWindow> QWindowCapture::capturableWindows()
 
-    Returns a list of QCapturableWindow objects that is available for capturing.
+    Returns a list of \l QCapturableWindow objects that are currently
+    available for capturing.
+
+    \note On macOS, invoking this method will trigger the "Screen Recording" permission
+    dialog. If permissions have not yet been granted, this method will return an empty list.
+    Invoking it multiple times will bring this dialog to the foreground.
  */
 QList<QCapturableWindow> QWindowCapture::capturableWindows()
 {
     return QPlatformMediaIntegration::instance()->capturableWindowsList();
 }
 
+/*!
+    Returns the capture session this QWindowCapture is connected to.
+
+    Use \l QMediaCaptureSession::setWindowCapture() to connect the window capture
+    to a session.
+*/
 QMediaCaptureSession *QWindowCapture::captureSession() const
 {
     Q_D(const QWindowCapture);
@@ -137,12 +162,20 @@ QMediaCaptureSession *QWindowCapture::captureSession() const
     \qmlproperty Window QtMultimedia::WindowCapture::window
     Describes the window for capturing.
 
-    \sa QtMultimedia::WindowCapture::capturableWindows
+    Setting this property to an invalid window on an active
+    WindowCapture will cause it to go inactive and emit
+    an error.
+
+    \sa capturableWindows
 */
 
 /*!
     \property QWindowCapture::window
     \brief the window for capturing.
+
+    Setting this property to an invalid window on an active
+    QWindowCapture will cause it to go inactive and emit
+    an error.
 
     \sa QWindowCapture::capturableWindows
 */
@@ -165,6 +198,8 @@ void QWindowCapture::setWindow(QCapturableWindow window)
 /*!
     \qmlproperty bool QtMultimedia::WindowCapture::active
     Describes whether the capturing is currently active.
+
+    \sa start(), stop()
 */
 
 /*!
@@ -189,7 +224,39 @@ void QWindowCapture::setActive(bool active)
 }
 
 /*!
-    \qmlmethod QtMultimedia::WindowCapture::start
+    \since 6.12
+    \property QWindowCapture::maximumFrameRate
+    \brief The window capture frame rate upper limit.
+
+    This can be set to override the capture frame rate used by default based on
+    e.g. display refresh rate, but only as an upper limit since window capture
+    produces frames at a variable rate. Setting this higher than the display
+    refresh rate is not recommended and can cause errors.
+
+    Any changes to this property are applied the next time the QWindowCapture
+    goes active.
+*/
+void QWindowCapture::setMaximumFrameRate(std::optional<qreal> frameRate)
+{
+    Q_D(QWindowCapture);
+
+    if (d->platformWindowCapture)
+        d->platformWindowCapture->setFrameRate(frameRate);
+}
+
+std::optional<qreal> QWindowCapture::maximumFrameRate() const
+{
+    Q_D(const QWindowCapture);
+
+    return d->platformWindowCapture ? d->platformWindowCapture->frameRate() : std::nullopt;
+}
+
+/*!
+    \qmlmethod void QtMultimedia::WindowCapture::start()
+
+    Starts capturing the \l window.
+
+    This is equivalent to setting the \l active property to \c true.
 */
 
 /*!
@@ -201,7 +268,11 @@ void QWindowCapture::setActive(bool active)
 */
 
 /*!
-    \qmlmethod QtMultimedia::WindowCapture::stop
+    \qmlmethod void QtMultimedia::WindowCapture::stop()
+
+    Stops capturing.
+
+    This is equivalent to setting the \l active property to \c false.
 */
 
 /*!
@@ -212,10 +283,29 @@ void QWindowCapture::setActive(bool active)
     This is equivalent to setting the \l active property to false.
 */
 
+/*!
+    \qmlsignal QtMultimedia::WindowCapture::errorChanged()
+
+    This signal is emitted when the \l{error} or \l{errorString} properties are changed.
+
+    This signal is not emitted whenever multiple identical errors are raised. To track such
+    errors, use the signal \l errorOccurred.
+*/
+
+/*!
+    \fn void QWindowCapture::errorChanged()
+
+    This signal is emitted when the \l{error} or \l{errorString} properties are changed.
+
+    This signal is not emitted whenever multiple identical errors are raised. To track such
+    errors, use the signal \l errorOccurred.
+*/
 
 /*!
     \qmlproperty enumeration QtMultimedia::WindowCapture::error
     Returns a code of the last error.
+
+    \qmlenumeratorsfrom QWindowCapture::Error
 */
 
 /*!
@@ -230,6 +320,17 @@ QWindowCapture::Error QWindowCapture::error() const
                                     : CapturingNotSupported;
 }
 
+/*!
+    \qmlsignal QtMultimedia::WindowCapture::errorOccurred(int error, string errorString)
+
+    Signals when an \a error occurs, along with the \a errorString.
+
+    For the error parameter, see the enumeration table in
+    \l {QtMultimedia::WindowCapture::error}{error} for what values may
+    be passed.
+
+    \sa {QtMultimedia::WindowCapture::error}{error}
+*/
 /*!
     \fn void QWindowCapture::errorOccurred(QWindowCapture::Error error, const QString &errorString)
 
@@ -250,7 +351,7 @@ QString QWindowCapture::errorString() const
 
     return d->platformWindowCapture
             ? d->platformWindowCapture->errorString()
-            : QLatin1StringView("Capturing is not support on this platform");
+            : QLatin1StringView("Capturing is not supported on this platform");
 }
 
 void QWindowCapture::setCaptureSession(QMediaCaptureSession *captureSession)
@@ -265,6 +366,20 @@ QPlatformSurfaceCapture *QWindowCapture::platformWindowCapture() const
     Q_D(const QWindowCapture);
 
     return d->platformWindowCapture.get();
+}
+
+void QWindowCapturePrivate::setIgnoreCursor(bool ignore)
+{
+    if (!platformWindowCapture)
+        return;
+    platformWindowCapture->setIgnoreCursor(ignore);
+}
+
+void QWindowCapturePrivate::setIgnoreDropShadow(bool ignore)
+{
+    if (!platformWindowCapture)
+        return;
+    platformWindowCapture->setIgnoreDropShadow(ignore);
 }
 
 QT_END_NAMESPACE

@@ -22,6 +22,16 @@
 #include <QDebug>
 #include <QTextStream>
 
+#include <array>
+
+namespace {
+constexpr int defaultSampleRate = 48'000;
+constexpr std::array allSupportedSampleRates{
+    8'000,  11'025, 12'000, 16'000, 22'050,  24'000,  32'000,  44'100,
+    48'000, 64'000, 88'200, 96'000, 128'000, 176'400, 192'000,
+};
+}
+
 static QString toFormattedString(const QCameraFormat &cameraFormat)
 {
     QString string;
@@ -41,8 +51,11 @@ VideoSettings::VideoSettings(QMediaRecorder *mediaRecorder, QWidget *parent)
 
     // sample rate:
     auto audioDevice = mediaRecorder->captureSession()->audioInput()->device();
-    ui->audioSampleRateBox->setRange(audioDevice.minimumSampleRate(),
-                                     audioDevice.maximumSampleRate());
+    for (int rate : allSupportedSampleRates) {
+        if (rate < audioDevice.minimumSampleRate() || rate > audioDevice.maximumSampleRate())
+            continue;
+        ui->audioSampleRateBox->addItem(QString::number(rate), rate);
+    }
 
     // camera format
     ui->videoFormatBox->addItem(tr("Default camera format"));
@@ -53,7 +66,7 @@ VideoSettings::VideoSettings(QMediaRecorder *mediaRecorder, QWidget *parent)
     for (const QCameraFormat &format : videoFormats)
         ui->videoFormatBox->addItem(toFormattedString(format), QVariant::fromValue(format));
 
-    connect(ui->videoFormatBox, &QComboBox::currentIndexChanged, [this](int /*index*/) {
+    connect(ui->videoFormatBox, &QComboBox::currentIndexChanged, this, [this](int /*index*/) {
         this->setFpsRange(boxValue(ui->videoFormatBox).value<QCameraFormat>());
     });
 
@@ -78,7 +91,10 @@ VideoSettings::VideoSettings(QMediaRecorder *mediaRecorder, QWidget *parent)
     selectComboBoxItem(ui->videoCodecBox, QVariant::fromValue(format.videoCodec()));
 
     ui->qualitySlider->setValue(mediaRecorder->quality());
-    ui->audioSampleRateBox->setValue(mediaRecorder->audioSampleRate());
+    const int sampleRate =
+            mediaRecorder->audioSampleRate() > 0 ? mediaRecorder->audioSampleRate()
+                                                  : defaultSampleRate;
+    selectComboBoxItem(ui->audioSampleRateBox, QVariant(sampleRate));
     selectComboBoxItem(ui->videoFormatBox,
                        QVariant::fromValue(camera->cameraFormat()));
 
@@ -118,7 +134,7 @@ void VideoSettings::applySettings()
 
     mediaRecorder->setMediaFormat(format);
     mediaRecorder->setQuality(QMediaRecorder::Quality(ui->qualitySlider->value()));
-    mediaRecorder->setAudioSampleRate(ui->audioSampleRateBox->value());
+    mediaRecorder->setAudioSampleRate(boxValue(ui->audioSampleRateBox).toInt());
 
     const auto &cameraFormat = boxValue(ui->videoFormatBox).value<QCameraFormat>();
     mediaRecorder->setVideoResolution(cameraFormat.resolution());
@@ -145,7 +161,9 @@ void VideoSettings::updateFormatsAndCodecs()
     ui->audioCodecBox->clear();
     ui->audioCodecBox->addItem(tr("Default audio codec"),
                                QVariant::fromValue(QMediaFormat::AudioCodec::Unspecified));
-    for (auto codec : format.supportedAudioCodecs(QMediaFormat::Encode)) {
+
+    const QList<QMediaFormat::AudioCodec> supportedAudioCodecs = format.supportedAudioCodecs(QMediaFormat::Encode);
+    for (auto codec : std::as_const(supportedAudioCodecs)) {
         if (codec == format.audioCodec())
             currentIndex = ui->audioCodecBox->count();
         ui->audioCodecBox->addItem(QMediaFormat::audioCodecDescription(codec),
@@ -157,7 +175,9 @@ void VideoSettings::updateFormatsAndCodecs()
     ui->videoCodecBox->clear();
     ui->videoCodecBox->addItem(tr("Default video codec"),
                                QVariant::fromValue(QMediaFormat::VideoCodec::Unspecified));
-    for (auto codec : format.supportedVideoCodecs(QMediaFormat::Encode)) {
+
+    const QList<QMediaFormat::VideoCodec> supportedVideoCodecs = format.supportedVideoCodecs(QMediaFormat::Encode);
+    for (auto codec : std::as_const(supportedVideoCodecs)) {
         if (codec == format.videoCodec())
             currentIndex = ui->videoCodecBox->count();
         ui->videoCodecBox->addItem(QMediaFormat::videoCodecDescription(codec),
@@ -169,7 +189,9 @@ void VideoSettings::updateFormatsAndCodecs()
     ui->containerFormatBox->clear();
     ui->containerFormatBox->addItem(tr("Default file format"),
                                     QVariant::fromValue(QMediaFormat::UnspecifiedFormat));
-    for (auto container : format.supportedFileFormats(QMediaFormat::Encode)) {
+
+    const QList<QMediaFormat::FileFormat> supportedFileFormats = format.supportedFileFormats(QMediaFormat::Encode);
+    for (auto container : std::as_const(supportedFileFormats)) {
         if (container == format.fileFormat())
             currentIndex = ui->containerFormatBox->count();
         ui->containerFormatBox->addItem(QMediaFormat::fileFormatDescription(container),

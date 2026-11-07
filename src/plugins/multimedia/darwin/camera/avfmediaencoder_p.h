@@ -15,18 +15,17 @@
 // We mean it.
 //
 
-#include "avfmediaassetwriter_p.h"
-#include "avfcamerautility_p.h"
-#include "qaudiodevice.h"
-
-#include <private/qplatformmediarecorder_p.h>
-#include <private/qplatformmediacapture_p.h>
+#include <QtMultimedia/qaudiodevice.h>
 #include <QtMultimedia/qmediametadata.h>
-
+#include <QtMultimedia/private/qavfcamerautility_p.h>
+#include <QtMultimedia/private/qplatformmediacapture_p.h>
+#include <QtMultimedia/private/qplatformmediarecorder_p.h>
 #include <QtCore/qglobal.h>
 #include <QtCore/qurl.h>
 
-#include <AVFoundation/AVFoundation.h>
+#include <camera/avfmediaassetwriter_p.h>
+
+#import <AVFoundation/AVFoundation.h>
 
 QT_BEGIN_NAMESPACE
 

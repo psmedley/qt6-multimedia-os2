@@ -7,17 +7,17 @@
 #include <QFileInfo>
 #include <QUrl>
 
-PlaylistModel::PlaylistModel(QObject *parent) : QAbstractItemModel(parent)
+PlaylistModel::PlaylistModel(QObject *parent) :
+    QAbstractItemModel(parent),
+    m_playlist(std::make_unique<QMediaPlaylist>())
 {
-    m_playlist.reset(new QMediaPlaylist);
-    connect(m_playlist.data(), &QMediaPlaylist::mediaAboutToBeInserted, this,
+    connect(m_playlist.get(), &QMediaPlaylist::mediaAboutToBeInserted, this,
             &PlaylistModel::beginInsertItems);
-    connect(m_playlist.data(), &QMediaPlaylist::mediaInserted, this,
-            &PlaylistModel::endInsertItems);
-    connect(m_playlist.data(), &QMediaPlaylist::mediaAboutToBeRemoved, this,
+    connect(m_playlist.get(), &QMediaPlaylist::mediaInserted, this, &PlaylistModel::endInsertItems);
+    connect(m_playlist.get(), &QMediaPlaylist::mediaAboutToBeRemoved, this,
             &PlaylistModel::beginRemoveItems);
-    connect(m_playlist.data(), &QMediaPlaylist::mediaRemoved, this, &PlaylistModel::endRemoveItems);
-    connect(m_playlist.data(), &QMediaPlaylist::mediaChanged, this, &PlaylistModel::changeItems);
+    connect(m_playlist.get(), &QMediaPlaylist::mediaRemoved, this, &PlaylistModel::endRemoveItems);
+    connect(m_playlist.get(), &QMediaPlaylist::mediaChanged, this, &PlaylistModel::changeItems);
 }
 
 PlaylistModel::~PlaylistModel() = default;
@@ -44,7 +44,7 @@ QModelIndex PlaylistModel::parent(const QModelIndex &child) const
 {
     Q_UNUSED(child);
 
-    return QModelIndex();
+    return {};
 }
 
 QVariant PlaylistModel::data(const QModelIndex &index, int role) const
@@ -58,12 +58,12 @@ QVariant PlaylistModel::data(const QModelIndex &index, int role) const
 
         return value;
     }
-    return QVariant();
+    return {};
 }
 
 QMediaPlaylist *PlaylistModel::playlist() const
 {
-    return m_playlist.data();
+    return m_playlist.get();
 }
 
 bool PlaylistModel::setData(const QModelIndex &index, const QVariant &value, int role)

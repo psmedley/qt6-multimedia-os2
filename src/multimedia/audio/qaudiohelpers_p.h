@@ -15,10 +15,12 @@
 // We mean it.
 //
 
-#include <QtCore/qspan.h>
-#include <QtMultimedia/qaudioformat.h>
 #include <QtMultimedia/private/qtmultimediaglobal_p.h>
-#include <QtMultimedia/private/qaudio_rtsan_support_p.h>
+#include <QtMultimedia/qaudioformat.h>
+#include <QtCore/qspan.h>
+#include <QtCore/qmath.h>
+
+#include <vector>
 
 QT_BEGIN_NAMESPACE
 
@@ -27,15 +29,133 @@ Q_MULTIMEDIA_EXPORT void qMultiplySamples(float factor,
                                           const QAudioFormat &format,
                                           const void *src,
                                           void *dest,
-                                          int len) QT_MM_NONBLOCKING;
+                                          int len) noexcept Q_DECL_NONBLOCKING_FUNCTION;
 
 Q_MULTIMEDIA_EXPORT
 void applyVolume(float volume,
                  const QAudioFormat &,
                  QSpan<const std::byte> source,
-                 QSpan<std::byte> destination) QT_MM_NONBLOCKING;
+                 QSpan<std::byte> destination) noexcept Q_DECL_NONBLOCKING_FUNCTION;
+
+enum class NativeSampleFormat : uint8_t {
+    uint8_t,
+    int16_t,
+    int32_t,
+    int24_t_3b, // 3 byte lsb
+    int24_t_4b_low, // 4 byte
+    float32_t,
+};
+
+Q_MULTIMEDIA_EXPORT
+void convertSampleFormat(QSpan<const std::byte> source, NativeSampleFormat sourceFormat,
+                         QSpan<std::byte> destination,
+                         NativeSampleFormat destinationFormat) noexcept Q_DECL_NONBLOCKING_FUNCTION;
+
+Q_MULTIMEDIA_EXPORT
+NativeSampleFormat bestNativeSampleFormat(const QAudioFormat &fmt,
+                                          QSpan<const NativeSampleFormat> supportedNativeFormats);
+Q_MULTIMEDIA_EXPORT
+QAudioFormat::SampleFormat bestSampleFormat(NativeSampleFormat);
+
+Q_MULTIMEDIA_EXPORT
+NativeSampleFormat toNativeSampleFormat(QAudioFormat::SampleFormat);
+
+constexpr size_t bytesPerSample(NativeSampleFormat fmt) noexcept Q_DECL_NONBLOCKING_FUNCTION
+{
+    switch (fmt) {
+    case NativeSampleFormat::uint8_t:
+        return 1;
+    case NativeSampleFormat::int16_t:
+        return 2;
+    case NativeSampleFormat::int24_t_3b:
+        return 3;
+    case NativeSampleFormat::int24_t_4b_low:
+    case NativeSampleFormat::float32_t:
+    case NativeSampleFormat::int32_t:
+        return 4;
+    default:
+        Q_UNREACHABLE_RETURN(0);
+    }
+}
+
+Q_MULTIMEDIA_EXPORT
+std::optional<float> sanitizeVolume(float volume, float lastVolume);
+
+Q_MULTIMEDIA_EXPORT
+void fillSilence(QSpan<std::byte>, NativeSampleFormat) noexcept Q_DECL_NONBLOCKING_FUNCTION;
+Q_MULTIMEDIA_EXPORT
+void fillSilence(QSpan<std::byte>, QAudioFormat) noexcept Q_DECL_NONBLOCKING_FUNCTION;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Resample interleaved float32 PCM using Catmull-Rom interpolation.
+Q_MULTIMEDIA_EXPORT
+QByteArray resampleAudioCatmullRom(QSpan<const float> input, int nChannels,
+                                   int inputRate, int outputRate);
+
+class Q_MULTIMEDIA_EXPORT CatmullRomInterpolator
+{
+public:
+    CatmullRomInterpolator(int nChannels, int inputRate, int outputRate);
+    ~CatmullRomInterpolator() = default;
+
+    CatmullRomInterpolator(const CatmullRomInterpolator &) = delete;
+    CatmullRomInterpolator &operator=(const CatmullRomInterpolator &) = delete;
+
+    void reset();
+
+    struct ResampleResult
+    {
+        QSpan<const float> remainingInput;
+        QSpan<float> output;
+    };
+
+    ResampleResult process(QSpan<const float> input,
+                           QSpan<float> output) noexcept Q_DECL_NONBLOCKING_FUNCTION;
+
+private:
+    void advancePosition();
+
+    int m_nChannels = 0;
+    float m_ratio = 1.0f;
+    qsizetype m_iPos = 0;          // integer frame index in absolute frame space
+    float m_fPos = 0.0f;           // fractional phase [0, 1) within current frame
+    qsizetype m_inputFramesConsumed = 0;
+    std::vector<float> m_history; // history of 3 frames
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+enum class UpmixScaling {
+    Duplicate, // mono → L=R=src[0]
+    EqualPower, // mono → L=R=0.707*src[0]
+};
+
+Q_MULTIMEDIA_EXPORT
+QByteArray upmixMonoToStereo(QSpan<const float>, UpmixScaling scaling = UpmixScaling::Duplicate);
+Q_MULTIMEDIA_EXPORT
+void upmixMonoToStereo(QSpan<float> out, QSpan<const float> in,
+                       UpmixScaling scaling = UpmixScaling::Duplicate) noexcept
+        Q_DECL_NONBLOCKING_FUNCTION;
+
+enum class DownmixScaling {
+    Average, // L+R → 0.5*L + 0.5*R
+    KeepPower, // L+R → 0.707*L + 0.707*R
+};
+Q_MULTIMEDIA_EXPORT
+QByteArray downmixStereoToMono(QSpan<const float> input,
+                               DownmixScaling scaling = DownmixScaling::Average);
+Q_MULTIMEDIA_EXPORT
+void downmixStereoToMono(QSpan<float> out, QSpan<const float> in,
+                         DownmixScaling scaling = DownmixScaling::Average) noexcept
+        Q_DECL_NONBLOCKING_FUNCTION;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 } // namespace QAudioHelperInternal
+
+Q_MULTIMEDIA_EXPORT
+QDebug operator<<(QDebug dbg, QAudioHelperInternal::NativeSampleFormat);
 
 QT_END_NAMESPACE
 

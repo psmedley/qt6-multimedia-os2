@@ -15,11 +15,12 @@
 // We mean it.
 //
 
-#include <QtCore/qobject.h>
 #include <QtMultimedia/qvideoframe.h>
+#include <QtMultimedia/private/qvideooutputorientationhandler_p.h>
 #include <QtCore/qmutex.h>
+#include <QtCore/qobject.h>
+
 #include <avfvideosink_p.h>
-#include <private/qvideooutputorientationhandler_p.h>
 
 #include <CoreVideo/CVBase.h>
 #include <CoreVideo/CVPixelBuffer.h>
@@ -29,10 +30,10 @@
 #include <CoreVideo/CVOpenGLESTextureCache.h>
 #endif
 
-#include <dispatch/dispatch.h>
+#import <dispatch/dispatch.h>
+#import <AVFoundation/AVFoundation.h>
 
-Q_FORWARD_DECLARE_OBJC_CLASS(AVFCaptureFramesDelegate);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVCaptureVideoDataOutput);
+@class AVFCaptureFramesDelegate;
 
 QT_BEGIN_NAMESPACE
 
@@ -46,7 +47,7 @@ class AVFCameraRenderer : public QObject, public AVFVideoSinkInterface
 Q_OBJECT
 public:
     AVFCameraRenderer(QObject *parent = nullptr);
-    ~AVFCameraRenderer();
+    ~AVFCameraRenderer() override;
 
     void reconfigure() override;
     void setOutputSettings() override;
@@ -77,10 +78,6 @@ private:
     AVCaptureVideoDataOutput *m_videoDataOutput = nullptr;
 
     bool m_needsHorizontalMirroring = false;
-
-#ifdef Q_OS_IOS
-    CVOpenGLESTextureCacheRef m_textureCache = nullptr;
-#endif
 
     QVideoFrame m_lastViewfinderFrame;
     QMutex m_vfMutex;

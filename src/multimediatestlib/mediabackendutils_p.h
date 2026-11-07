@@ -44,20 +44,57 @@ inline bool isAndroidPlatform()
     return QPlatformMediaIntegration::instance()->name() == "android"_L1;
 }
 
+inline bool isOhosPlatform()
+{
+    return QPlatformMediaIntegration::instance()->name() == "ohos"_L1;
+}
+
 inline bool isFFMPEGPlatform()
 {
     return QPlatformMediaIntegration::instance()->name() == "ffmpeg"_L1;
 }
 
-inline bool isWindowsPlatform()
+inline bool isWMFPlatform()
 {
     return QPlatformMediaIntegration::instance()->name() == "windows"_L1;
+}
+
+[[nodiscard]] inline bool isMediaBackendPluginLoaded()
+{
+    return QPlatformMediaIntegration::instance()->name() != "fallback"_L1;
+}
+
+inline void initIntegrationTestMain()
+{
+    QString backend = qEnvironmentVariable("QT_MEDIA_BACKEND");
+    if (backend.isEmpty())
+        backend = QPlatformMediaIntegration::defaultBackend();
+    QPlatformMediaIntegration::setBackend(backend);
+}
+
+// Returns true if initialization is successful
+[[nodiscard]] inline bool initIntegrationTestCase()
+{
+    // VERIFY must be inside a void-returning function.
+    []() {
+        QVERIFY2(
+            isMediaBackendPluginLoaded(),
+            "No media backend plugin was loaded; the fallback integration was used. "
+            "Integration tests require a real backend plugin.");
+    }();
+    return !QTest::currentTestFailed();
 }
 
 inline bool isRhiRenderingSupported()
 {
     return QGuiApplicationPrivate::platformIntegration()->hasCapability(
             QPlatformIntegration::RhiBasedRendering);
+}
+
+inline bool isOpenGLSupported()
+{
+    return QGuiApplicationPrivate::platformIntegration()->hasCapability(
+            QPlatformIntegration::OpenGL);
 }
 
 inline bool isCI()
@@ -83,6 +120,15 @@ using namespace BackendUtilsImpl;
 
 #define QSKIP_FFMPEG(/*messageOpt*/...) \
     QSKIP_IF(isFFMPEGPlatform(), "The feature is not supported on FFmpeg", __VA_ARGS__)
+
+#define QSKIP_DARWIN(/*messageOpt*/...) \
+    QSKIP_IF(isDarwinPlatform(), "The feature is not supported on Darwin", __VA_ARGS__)
+
+#define QSKIP_OHOS(/*messageOpt*/...) \
+    QSKIP_IF(isOhosPlatform(), "The feature is not supported on HarmonyOS", __VA_ARGS__)
+
+#define QSKIP_WMF(/*messageOpt*/...) \
+    QSKIP_IF(isWMFPlatform(), "The feature is not supported on Windows MediaEngine", __VA_ARGS__)
 
 #define QEXPECT_FAIL_GSTREAMER(dataIndex, comment, mode) \
   do {                                                   \

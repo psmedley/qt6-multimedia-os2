@@ -12,6 +12,7 @@
     \meta {tag} {quick}
 
     \image qmlrecorder.jpg
+           {Media recorder interface with live preview and recording controls}
 
     \e{QML Recorder} demonstrates a simple application that can record
     audio and video separate or together, using a microphone, a camera, or
@@ -21,10 +22,11 @@
 
     \section1 Overview
     At its core, this is a QML application, see
-    \l{Getting Started Programming with Qt Quick}. This documentation is focused
-    on how this example uses the \l{Qt Multimedia QML Types}.
+    \l{Getting started with Qt Quick applications}. This documentation is
+    focused on how this example uses the \l{Qt Multimedia QML Types}.
 
-    \image qml-recorder-overview.gif "Animation cycling through qml objects declared in main.qml"
+    \image qml-recorder-overview.gif
+           {Animation cycling through QML objects declared in Main.qml}
 
     The example uses the QML \l Camera and \l AudioInput types connected to a
     \l CaptureSession. A \l MediaRecorder object is then used to record the
@@ -49,29 +51,30 @@
 
     \section2 captureSession
 
-    In \c main.qml, \c captureSession is declared like so:
+    In \c Main.qml, \c captureSession is declared like so:
 
-    \quotefromfile video/recorder/main.qml
+    \quotefromfile video/recorder/Main.qml
     \skipto CaptureSession
     \printto MediaRecorder
 
     \section2 recorder
 
-    In \c main.qml, the \l MediaRecorder \c recorder handles recording media
+    In \c Main.qml, the \l MediaRecorder \c recorder handles recording media
     as well as capturing a thumbnail for the file and appending it to a ListModel,
     \c mediaList.
     \printto Playback
 
     \c mediaList is declared in the \l Frame \c mediaListFrame
-    \quotefromfile video/recorder/main.qml
+    \quotefromfile video/recorder/Main.qml
     \skipto Frame
     \printuntil playback: playback
 
     \section2 controls
 
     \image qml-recorder-control-bar-overview.gif
+           {Animation cycling through column layouts in control panel}
 
-    These are defined in \c Controls.qml and declared in main.qml.
+    These are defined in \c Controls.qml and declared in Main.qml.
 
     Its root is a \l Row that contains the \l{Column}{Columns} \c inputControls,
     \c recordButton, \c optionButtons, each defined in their own .qml files.

@@ -1,15 +1,15 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
+#include <QtTest/qtest.h>
 
 #include <qvideoframeformat.h>
 
 // Adds an enum, and the stringized version
-#define ADD_ENUM_TEST(x) \
-    QTest::newRow(#x) \
-        << QVideoFrameFormat::x \
-    << QString(QLatin1String(#x));
+#define ADD_ENUM_TEST(VALUE)            \
+    QTest::newRow(QT_STRINGIFY(VALUE))  \
+            << QVideoFrameFormat::VALUE \
+            << QString(QLatin1String(QT_STRINGIFY(QVideoFrameFormat::) QT_STRINGIFY(VALUE)));
 
 class tst_QVideoFrameFormat : public QObject
 {

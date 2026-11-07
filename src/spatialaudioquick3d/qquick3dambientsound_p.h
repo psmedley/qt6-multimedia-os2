@@ -14,9 +14,9 @@
 // We mean it.
 //
 
-#include <private/qquick3dnode_p.h>
-#include <QUrl>
-#include <qvector3d.h>
+#include <QtQuick3D/private/qquick3dnode_p.h>
+#include <QtCore/qurl.h>
+#include <QtGui/qvector3d.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -35,7 +35,7 @@ public:
     QQuick3DAmbientSound();
     ~QQuick3DAmbientSound() override;
 
-    void setSource(QUrl source);
+    void setSource(const QUrl &source);
     QUrl source() const;
 
     void setVolume(float volume);

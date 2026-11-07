@@ -7,8 +7,10 @@
 #include <private/qplatformvideosink_p.h>
 #include <private/qplatformvideodevices_p.h>
 #include <private/qmemoryvideobuffer_p.h>
+#include <private/qcameradevice_p.h>
 #include <private/qvideotexturehelper_p.h>
 #include <private/qwasmmediadevices_p.h>
+#include <QtMultimedia/private/qmultimedia_ranges_p.h>
 
 #include "qwasmmediacapturesession_p.h"
 #include <common/qwasmvideooutput_p.h>
@@ -23,25 +25,13 @@
 
 Q_LOGGING_CATEGORY(qWasmCamera, "qt.multimedia.wasm.camera")
 
+namespace ranges = QtMultimediaPrivate::ranges;
+
 QWasmCamera::QWasmCamera(QCamera *camera)
     : QPlatformCamera(camera),
       m_cameraOutput(new QWasmVideoOutput),
       m_cameraIsReady(false)
 {
-    QPlatformVideoDevices *videoDevices = QPlatformMediaIntegration::instance()->videoDevices();
-
-    connect(videoDevices, &QPlatformVideoDevices::videoInputsChanged, this, [&]() {
-        const QList<QCameraDevice> cameras = videoDevices->videoInputs();
-
-        if (!cameras.isEmpty()) {
-            if (m_cameraDev.id().isEmpty())
-                setCamera(cameras.at(0)); // default camera
-            else
-                setCamera(m_cameraDev);
-            return;
-        }
-    });
-
     connect(this, &QWasmCamera::cameraIsReady, this, [this]() {
         m_cameraIsReady = true;
         if (m_cameraShouldStartActive) {
@@ -61,6 +51,8 @@ bool QWasmCamera::isActive() const
 
 void QWasmCamera::setActive(bool active)
 {
+    if (m_cameraActive == active)
+        return;
     if (!m_CaptureSession) {
         updateError(QCamera::CameraError, QStringLiteral("video surface error"));
         m_shouldBeActive = true;
@@ -86,7 +78,8 @@ void QWasmCamera::setActive(bool active)
     m_cameraActive = active;
     m_shouldBeActive = false;
 
-    updateCameraFeatures();
+    if (active)
+        updateCameraFeatures();
     emit activeChanged(active);
     if (m_CaptureSession->imageCapture()) {
          if (active) {
@@ -109,21 +102,28 @@ void QWasmCamera::setCamera(const QCameraDevice &camera)
         return;
     }
 
+    const bool wasActive = m_cameraActive;
+    if (wasActive)
+        m_cameraOutput->stop();
+
     m_cameraOutput->setVideoMode(QWasmVideoOutput::Camera);
 
     constexpr QSize initialSize(0, 0);
     constexpr QRect initialRect(QPoint(0, 0), initialSize);
-    m_cameraOutput->createVideoElement(camera.id().toStdString()); // videoElementId
+    m_cameraOutput->createVideoElement(
+        QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString()); // videoElementId
     m_cameraOutput->doElementCallbacks();
     m_cameraOutput->createOffscreenElement(initialSize);
     m_cameraOutput->updateVideoElementGeometry(initialRect);
 
     const auto cameras = QMediaDevices::videoInputs();
 
-    if (std::find(cameras.begin(), cameras.end(), camera) != cameras.end()) {
+    if (ranges::contains(cameras, camera)) {
         m_cameraDev = camera;
         createCamera(m_cameraDev);
         emit cameraIsReady();
+        if (wasActive)
+            m_cameraOutput->start();
         return;
     }
 
@@ -131,6 +131,8 @@ void QWasmCamera::setCamera(const QCameraDevice &camera)
         m_cameraDev = camera;
         createCamera(m_cameraDev);
         emit cameraIsReady();
+        if (wasActive)
+            m_cameraOutput->start();
     } else {
         updateError(QCamera::CameraError, QStringLiteral("Failed to find a camera"));
     }
@@ -139,7 +141,7 @@ void QWasmCamera::setCamera(const QCameraDevice &camera)
 bool QWasmCamera::setCameraFormat(const QCameraFormat &format)
 {
     m_cameraFormat = format;
-
+    m_cameraOutput->setVideoConstraints(format.resolution(), format.minFrameRate(), format.maxFrameRate());
     return true;
 }
 
@@ -190,16 +192,15 @@ bool QWasmCamera::isFocusModeSupported(QCamera::FocusMode mode) const
     bool found = false;
     switch (mode) {
     case QCamera::FocusModeAuto:
-        return std::find(focalModes.begin(), focalModes.end(), "continuous") != focalModes.end()
-                || std::find(focalModes.begin(), focalModes.end(), "single-shot")
-                        != focalModes.end();
+        return ranges::contains(focalModes, "continuous")
+                || ranges::contains(focalModes, "single-shot");
     case QCamera::FocusModeAutoNear:
     case QCamera::FocusModeAutoFar:
     case QCamera::FocusModeHyperfocal:
     case QCamera::FocusModeInfinity:
         break;
     case QCamera::FocusModeManual:
-        found = std::find(focalModes.begin(), focalModes.end(), "manual") != focalModes.end();
+        found = ranges::contains(focalModes, "manual");
     };
     return found;
 }
@@ -298,12 +299,10 @@ bool QWasmCamera::isExposureModeSupported(QCamera::ExposureMode mode) const
     bool found = false;
     switch (mode) {
     case QCamera::ExposureAuto:
-        found = std::find(exposureModes.begin(), exposureModes.end(), "continuous")
-                != exposureModes.end();
+        found = ranges::contains(exposureModes, "continuous");
         break;
     case QCamera::ExposureManual:
-        found = std::find(exposureModes.begin(), exposureModes.end(), "manual")
-                != exposureModes.end();
+        found = ranges::contains(exposureModes, "manual");
         break;
     default:
         break;
@@ -488,4 +487,59 @@ void QWasmCamera::updateCameraFeatures()
         cameraFeatures |= QCamera::Feature::FocusDistance;
 
     supportedFeaturesChanged(cameraFeatures);
+    updateVideoFormats(caps);
 }
+
+void QWasmCamera::updateVideoFormats(const emscripten::val &cababilities)
+{
+    // Use synthetic standard res and framerates. Webaudio
+    // only allows real camera format from a live camera stream
+    // camera constraints are only a suggestion anyway
+    emscripten::val widthCapabilities = cababilities["width"];
+    emscripten::val heightCapabilities = cababilities["height"];
+    emscripten::val frameRateCapabilities = cababilities["frameRate"];
+
+    if (widthCapabilities.isUndefined() || heightCapabilities.isUndefined()
+        || frameRateCapabilities.isUndefined())
+        return;
+
+    const int maxWidth = widthCapabilities["max"].as<int>();
+    const int maxHeight = heightCapabilities["max"].as<int>();
+    const float minFrameRate = frameRateCapabilities["min"].as<double>();
+    const float maxFrameRate = frameRateCapabilities["max"].as<double>();
+
+    static const QSize standardResolutions[] = {
+        { 3840, 2160 }, // 4k
+        { 2560, 1440 }, // 1440p
+        { 2048, 1080 }, // 2k
+        { 1920, 1080 }, // FHD
+        { 1280, 720 }, // HD
+        { 640, 480 }, // SD
+    };
+    static const float standardFrameRates[] = { 15.f, 24.f, 25.f, 29.97f, 30.f,
+                                                60.f, 100.f, 120.f };
+
+    QList<QCameraFormat> formats;
+    for (const QSize &resolution : standardResolutions) {
+        if (resolution.width() > maxWidth || resolution.height() > maxHeight)
+            continue;
+        for (float rate : standardFrameRates) {
+            if (rate < minFrameRate || rate > maxFrameRate + 0.5f)
+                continue;
+            auto *oneFormat = new QCameraFormatPrivate{
+                QSharedData(),
+                QVideoFrameFormat::Format_RGBA8888,
+                resolution,
+                rate, rate
+            };
+            formats << oneFormat->create();
+        }
+    }
+
+    if (formats.isEmpty())
+        return;
+
+    QCameraDevicePrivate *devicePrivate = QCameraDevicePrivate::handle(m_cameraDev);
+    devicePrivate->videoFormats = formats;
+}
+

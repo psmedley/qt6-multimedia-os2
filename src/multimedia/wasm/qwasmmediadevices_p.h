@@ -18,6 +18,7 @@
 #include <private/qplatformaudiodevices_p.h>
 
 #include <private/qplatformvideodevices_p.h>
+#include "qwasmjs_p.h"
 
 #include <QtCore/private/qstdweb_p.h>
 #include <qaudio.h>
@@ -29,7 +30,9 @@
 #include <emscripten.h>
 #include <emscripten/val.h>
 #include <emscripten/bind.h>
-#include <QMapIterator>
+
+#include <string_view>
+
 QT_BEGIN_NAMESPACE
 
 Q_DECLARE_LOGGING_CATEGORY(qWasmMediaDevices)
@@ -47,43 +50,61 @@ public:
 
 protected:
     QList<QCameraDevice> findVideoInputs() const override;
+    void connectNotify(const QMetaMethod &signal) override;
 
 private:
     // weak
     QWasmMediaDevices *m_mediaDevices;
 };
 
-// TODO: get rid of the inheritance. Instead, we should create QWasmAudioDevices,
-// and use QWasmMediaDevices in both, QWasmAudioDevices and QWasmVideoDevices.
-class QWasmMediaDevices : public QPlatformAudioDevices
+class QWasmAudioDevices : public QPlatformAudioDevices
 {
 public:
-    QWasmMediaDevices();
-
-    QList<QCameraDevice> videoInputs() const;
+    QWasmAudioDevices();
 
     QPlatformAudioSource *createAudioSource(const QAudioDevice &, const QAudioFormat &,
                                             QObject *parent) override;
     QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
                                         QObject *parent) override;
-    void initDevices();
 
     QLatin1String backendName() const override { return QLatin1String{ "WebAssembly" }; }
+    using QPlatformAudioDevices::onAudioInputsChanged;
+    using QPlatformAudioDevices::onAudioOutputsChanged;
 
 protected:
     QList<QAudioDevice> findAudioInputs() const override;
     QList<QAudioDevice> findAudioOutputs() const override;
+    void connectNotify(const QMetaMethod &signal) override;
+
+};
+
+class QWasmMediaDevices
+{
+public:
+    QWasmMediaDevices();
+    static QWasmMediaDevices *instance();
+    QList<QCameraDevice> videoInputs() const;
+
+    QList<QAudioDevice> audioInputs() const;
+    QList<QAudioDevice> audioOutputs() const;
+
+    void initDevices();
+    void getMediaDevices();
 
 private:
     void updateCameraDevices();
-    void getMediaDevices();
-    void getOpenALAudioDevices();
     void parseDevices(emscripten::val devices);
+    void insertFallbackAudioOutput();
+    QByteArray findDefaultDeviceId(emscripten::val devices, std::string_view deviceKind) const;
+    static void applyDefaultDevice(QList<QAudioDevice> &audioDevices,
+                                   const QByteArray &defaultDeviceId);
+    static void applyDefaultDevice(QList<QCameraDevice> &cameraDevices,
+                                   const QByteArray &defaultDeviceId);
 
-    QMap <std::string, QAudioDevice> m_audioOutputs;
-    QMap <std::string, QAudioDevice> m_audioInputs;
-    QMap <std::string, QCameraDevice> m_cameraDevices;
-
+    // insertion order, stable across hot-plug
+    QList<QAudioDevice> m_audioOutputs;
+    QList<QAudioDevice> m_audioInputs;
+    QList<QCameraDevice> m_cameraDevices;
 
     std::unique_ptr<qstdweb::EventCallback> m_deviceChangedCallback;
 
@@ -92,7 +113,7 @@ private:
     bool m_audioOutputsAdded = false;
     emscripten::val m_jsMediaDevicesInterface = emscripten::val::undefined();
     bool m_initDone = false;
-    bool m_firstInit = false;
+    emscripten::val devicesList;
 };
 
 QT_END_NAMESPACE

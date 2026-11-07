@@ -1,22 +1,27 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
-# Generated from integration.pro.
-
-# special case begin
 add_subdirectory(qaudiodecoderbackend)
 add_subdirectory(qaudiodevicebackend)
 add_subdirectory(qaudiosource)
 add_subdirectory(qaudiosink)
+if(IOS OR TVOS OR VISIONOS)
+    add_subdirectory(qaudiosessionrecovery)
+    add_subdirectory(qavaudiosessionmanager)
+endif()
 add_subdirectory(qmediaformatbackend)
-add_subdirectory(qmediaplayerbackend)
-if (QT_FEATURE_wmf)
+if(QT_FEATURE_multimedia_quick)
+    add_subdirectory(qmediaplayerbackend)
+endif()
+if (WIN32)
     add_subdirectory(qmediaplayer_concurrent)
 endif()
 add_subdirectory(qmediaplayerformatsupport)
 add_subdirectory(qmediarecorderbackend)
+add_subdirectory(qrtaudioengine)
+add_subdirectory(qsamplecachebackend)
 add_subdirectory(qsoundeffect)
-if (QT_FEATURE_wmf)
+if(QT_FEATURE_thread)
     add_subdirectory(qsoundeffect_concurrent)
 endif()
 add_subdirectory(qvideoframebackend)
@@ -28,13 +33,33 @@ add_subdirectory(qmediaframeinputsbackend)
 if(TARGET Qt::Widgets)
     add_subdirectory(qmediacapturesession)
     add_subdirectory(qcamerabackend)
-    add_subdirectory(qscreencapturebackend)
-    if(QT_FEATURE_process)
-        add_subdirectory(qwindowcapturebackend)
+    if(NOT OHOS)
+        # Screen/window capture not yet implemented on HarmonyOS; these tests
+        # hang waiting for a system-permission prompt that never arrives.
+        add_subdirectory(qscreencapturebackend)
+        if(QT_FEATURE_process)
+            add_subdirectory(qwindowcapturebackend)
+        endif()
     endif()
 endif()
-if(TARGET Qt::Quick)
+if(QT_FEATURE_multimedia_quick)
     add_subdirectory(qquickvideooutput)
     add_subdirectory(qquickvideooutput_window)
+
+    if(NOT UIKIT AND NOT ANDROID AND NOT QNX AND NOT VXWORKS AND NOT OHOS) # FIXME: Add support for cross-compiled platforms by adding qml files as resources
+        add_subdirectory(qml)
+        if (QT_FEATURE_spatialaudio_quick3d)
+            add_subdirectory(spatialaudio_qml)
+        endif()
+    endif()
+
 endif()
-# special case end
+if(QT_FEATURE_spatialaudio)
+    add_subdirectory(qspatialaudio)
+endif()
+
+add_subdirectory(shutdown)
+
+if(QT_FEATURE_static)
+    add_subdirectory(static_linking)
+endif()

@@ -2,12 +2,43 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qx11capturablewindows_p.h"
-#include "private/qcapturablewindow_p.h"
-#include <qdebug.h>
+
+#include <QtCore/qdebug.h>
+#include <QtGui/qwindow.h>
+#include <QtMultimedia/private/qcapturablewindow_p.h>
 
 #include <X11/Xlib.h>
 
+#include <optional>
+
 QT_BEGIN_NAMESPACE
+
+namespace { // Anonymous namespace start
+
+[[nodiscard]] bool qIsX11WindowValid(Display *display, Window window)
+{
+    XWindowAttributes windowAttributes = {};
+    return display
+        && XGetWindowAttributes(display, window, &windowAttributes) != 0
+        && windowAttributes.depth > 0;
+}
+
+[[nodiscard]] std::optional<QString> qGetX11WindowTitle(Display *display, Window window)
+{
+    if (!display)
+        return std::nullopt;
+
+    char *windowTitle = nullptr;
+    if (XFetchName(display, window, &windowTitle) && windowTitle) {
+        QString out = QString::fromUtf8(windowTitle);
+        XFree(windowTitle);
+        return out;
+    }
+
+    return std::nullopt;
+}
+
+} // Anonymous namespace end
 
 QX11CapturableWindows::~QX11CapturableWindows()
 {
@@ -40,17 +71,13 @@ QList<QCapturableWindow> QX11CapturableWindows::windows() const
     auto freeDataGuard = qScopeGuard([data]() { XFree(data); });
     auto windows = reinterpret_cast<XID *>(data);
     for (unsigned long i = 0; i < windowsCount; i++) {
-        auto windowData = std::make_unique<QCapturableWindowPrivate>();
-        windowData->id = static_cast<QCapturableWindowPrivate::Id>(windows[i]);
+        XID windowId = windows[i];
+        if (!qIsX11WindowValid(display, windowId))
+            continue;
 
-        char *windowTitle = nullptr;
-        if (XFetchName(display, windows[i], &windowTitle) && windowTitle) {
-            windowData->description = QString::fromUtf8(windowTitle);
-            XFree(windowTitle);
-        }
-
-        if (isWindowValid(*windowData))
-            result.push_back(windowData.release()->create());
+        result.push_back(QCapturableWindowPrivate::create(
+            static_cast<QCapturableWindowPrivate::Id>(windowId),
+            qGetX11WindowTitle(display, windowId).value_or(QString())));
     }
 
     return result;
@@ -58,17 +85,21 @@ QList<QCapturableWindow> QX11CapturableWindows::windows() const
 
 bool QX11CapturableWindows::isWindowValid(const QCapturableWindowPrivate &window) const
 {
-    auto display = this->display();
-    XWindowAttributes windowAttributes = {};
-    return display
-            && XGetWindowAttributes(display, static_cast<Window>(window.id), &windowAttributes) != 0
-            && windowAttributes.depth > 0;
+    return qIsX11WindowValid(this->display(), static_cast<Window>(window.id));
 }
 
 Display *QX11CapturableWindows::display() const
 {
     std::call_once(m_displayOnceFlag, [this]() { m_display = XOpenDisplay(nullptr); });
     return m_display;
+}
+
+q23::expected<QCapturableWindow, QString> QX11CapturableWindows::fromQWindow(QWindow *window) const
+{
+    const auto xId = static_cast<XID>(window->winId());
+    return QCapturableWindowPrivate::create(
+        static_cast<QCapturableWindowPrivate::Id>(xId),
+        window->title());
 }
 
 QT_END_NAMESPACE

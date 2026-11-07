@@ -15,13 +15,12 @@
 // We mean it.
 //
 
-#include "qplatformvideosource_p.h"
-#include "qscreen.h"
-#include "qcapturablewindow.h"
-#include "qpointer.h"
-#include "private/qerrorinfo_p.h"
+#include <QtMultimedia/private/qerrorinfo_p.h>
+#include <QtMultimedia/private/qplatformvideosource_p.h>
+#include <QtMultimedia/qcapturablewindow.h>
+#include <QtGui/qscreen.h>
+#include <QtCore/qpointer.h>
 
-#include <optional>
 #include <variant>
 
 QT_BEGIN_NAMESPACE
@@ -33,7 +32,7 @@ class Q_MULTIMEDIA_EXPORT QPlatformSurfaceCapture : public QPlatformVideoSource
     Q_OBJECT
 
 public:
-    enum Error {
+    enum class Error {
         NoError = 0,
         InternalError = 1,
         CapturingNotSupported = 2,
@@ -55,13 +54,25 @@ public:
 
     template<typename Type>
     Type source() const {
-        return *q_check_ptr(std::get_if<Type>(&m_source));
+        Q_ASSERT(std::holds_alternative<Type>(m_source));
+        return *std::get_if<Type>(&m_source);
     }
 
     Source source() const { return m_source; }
 
     Error error() const;
     QString errorString() const final;
+
+    void setFrameRate(std::optional<qreal>);
+    [[nodiscard]] std::optional<qreal> frameRate() const;
+
+    void setIgnoreCursor(bool);
+    // Applied on next stream start.
+    [[nodiscard]] bool ignoreCursor() const;
+
+    void setIgnoreDropShadow(bool);
+    // Applied on next stream start.
+    [[nodiscard]] bool ignoreDropShadow() const;
 
 protected:
     virtual bool setActiveInternal(bool) = 0;
@@ -75,11 +86,18 @@ Q_SIGNALS:
     void sourceChanged(WindowSource);
     void sourceChanged(ScreenSource);
     void errorOccurred(Error error, QString errorString);
+    void frameRateChanged(std::optional<qreal>);
 
 private:
+    std::optional<qreal> m_frameRate;
     QErrorInfo<Error> m_error;
     Source m_source;
     bool m_active = false;
+
+    // While not part of public API, these settings tend to impact
+    // integration tests.
+    bool m_ignoreCursor = false;
+    bool m_ignoreDropShadow = false;
 };
 
 QT_END_NAMESPACE

@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideoframeformat.h"
-#include "qvideotexturehelper_p.h"
-#include "qvideotransformation_p.h"
+
+#include <QtMultimedia/private/qvideotexturehelper_p.h>
+#include <QtMultimedia/private/qvideotransformation_p.h>
+#include <QtMultimedia/private/qmultimedia_enum_to_string_converter_p.h>
 
 #include <qdebug.h>
 #include <qlist.h>
 #include <qmetatype.h>
-#include <qpair.h>
 #include <qvariant.h>
 #include <qmatrix4x4.h>
 
@@ -667,7 +668,7 @@ void QVideoFrameFormat::setColorRange(ColorRange range)
  */
 bool QVideoFrameFormat::isMirrored() const
 {
-    return d->transformation.mirrorredHorizontallyAfterRotation;
+    return d->transformation.mirroredHorizontallyAfterRotation;
 }
 
 /*!
@@ -690,7 +691,7 @@ bool QVideoFrameFormat::isMirrored() const
 void QVideoFrameFormat::setMirrored(bool mirrored)
 {
     detach();
-    d->transformation.mirrorredHorizontallyAfterRotation = mirrored;
+    d->transformation.mirroredHorizontallyAfterRotation = mirrored;
 }
 
 /*!
@@ -887,152 +888,56 @@ QImage::Format QVideoFrameFormat::imageFormatFromPixelFormat(QVideoFrameFormat::
     return QImage::Format_Invalid;
 }
 
+// clang-format off
+
+QT_MM_MAKE_STRING_RESOLVER(QVideoFrameFormat::PixelFormat, QtMultimediaPrivate::EnumName,
+    (QVideoFrameFormat::Format_Invalid,                 "Invalid")
+    (QVideoFrameFormat::Format_ARGB8888,                "ARGB8888")
+    (QVideoFrameFormat::Format_ARGB8888_Premultiplied,  "ARGB8888 Premultiplied")
+    (QVideoFrameFormat::Format_XRGB8888,                "XRGB8888")
+    (QVideoFrameFormat::Format_BGRA8888,                "BGRA8888")
+    (QVideoFrameFormat::Format_BGRX8888,                "BGRX8888")
+    (QVideoFrameFormat::Format_BGRA8888_Premultiplied,  "BGRA8888 Premultiplied")
+    (QVideoFrameFormat::Format_RGBA8888,                "RGBA8888")
+    (QVideoFrameFormat::Format_RGBX8888,                "RGBX8888")
+    (QVideoFrameFormat::Format_ABGR8888,                "ABGR8888")
+    (QVideoFrameFormat::Format_XBGR8888,                "XBGR8888")
+    (QVideoFrameFormat::Format_AYUV,                    "AYUV")
+    (QVideoFrameFormat::Format_AYUV_Premultiplied,      "AYUV Premultiplied")
+    (QVideoFrameFormat::Format_YUV420P,                 "YUV420P")
+    (QVideoFrameFormat::Format_YUV420P10,               "YUV420P10")
+    (QVideoFrameFormat::Format_YUV422P,                 "YUV422P")
+    (QVideoFrameFormat::Format_YV12,                    "YV12")
+    (QVideoFrameFormat::Format_UYVY,                    "UYVY")
+    (QVideoFrameFormat::Format_YUYV,                    "YUYV")
+    (QVideoFrameFormat::Format_NV12,                    "NV12")
+    (QVideoFrameFormat::Format_NV21,                    "NV21")
+    (QVideoFrameFormat::Format_IMC1,                    "IMC1")
+    (QVideoFrameFormat::Format_IMC2,                    "IMC2")
+    (QVideoFrameFormat::Format_IMC3,                    "IMC3")
+    (QVideoFrameFormat::Format_IMC4,                    "IMC4")
+    (QVideoFrameFormat::Format_Y8,                      "Y8")
+    (QVideoFrameFormat::Format_Y16,                     "Y16")
+    (QVideoFrameFormat::Format_P010,                    "P010")
+    (QVideoFrameFormat::Format_P016,                    "P016")
+    (QVideoFrameFormat::Format_SamplerExternalOES,      "SamplerExternalOES")
+    (QVideoFrameFormat::Format_Jpeg,                    "Jpeg")
+    (QVideoFrameFormat::Format_SamplerRect,             "SamplerRect")
+);
+
+// clang-format off
+
 /*!
     Returns a string representation of the given \a pixelFormat.
 */
-QString QVideoFrameFormat::pixelFormatToString(QVideoFrameFormat::PixelFormat pixelFormat)
-{
-    switch (pixelFormat) {
-    case QVideoFrameFormat::Format_Invalid:
-        return QStringLiteral("Invalid");
-    case QVideoFrameFormat::Format_ARGB8888:
-        return QStringLiteral("ARGB8888");
-    case QVideoFrameFormat::Format_ARGB8888_Premultiplied:
-        return QStringLiteral("ARGB8888 Premultiplied");
-    case QVideoFrameFormat::Format_XRGB8888:
-        return QStringLiteral("XRGB8888");
-    case QVideoFrameFormat::Format_BGRA8888:
-        return QStringLiteral("BGRA8888");
-    case QVideoFrameFormat::Format_BGRX8888:
-        return QStringLiteral("BGRX8888");
-    case QVideoFrameFormat::Format_BGRA8888_Premultiplied:
-        return QStringLiteral("BGRA8888 Premultiplied");
-    case QVideoFrameFormat::Format_RGBA8888:
-        return QStringLiteral("RGBA8888");
-    case QVideoFrameFormat::Format_RGBX8888:
-        return QStringLiteral("RGBX8888");
-    case QVideoFrameFormat::Format_ABGR8888:
-        return QStringLiteral("ABGR8888");
-    case QVideoFrameFormat::Format_XBGR8888:
-        return QStringLiteral("XBGR8888");
-    case QVideoFrameFormat::Format_AYUV:
-        return QStringLiteral("AYUV");
-    case QVideoFrameFormat::Format_AYUV_Premultiplied:
-        return QStringLiteral("AYUV Premultiplied");
-    case QVideoFrameFormat::Format_YUV420P:
-        return QStringLiteral("YUV420P");
-    case QVideoFrameFormat::Format_YUV420P10:
-        return QStringLiteral("YUV420P10");
-    case QVideoFrameFormat::Format_YUV422P:
-        return QStringLiteral("YUV422P");
-    case QVideoFrameFormat::Format_YV12:
-        return QStringLiteral("YV12");
-    case QVideoFrameFormat::Format_UYVY:
-        return QStringLiteral("UYVY");
-    case QVideoFrameFormat::Format_YUYV:
-        return QStringLiteral("YUYV");
-    case QVideoFrameFormat::Format_NV12:
-        return QStringLiteral("NV12");
-    case QVideoFrameFormat::Format_NV21:
-        return QStringLiteral("NV21");
-    case QVideoFrameFormat::Format_IMC1:
-        return QStringLiteral("IMC1");
-    case QVideoFrameFormat::Format_IMC2:
-        return QStringLiteral("IMC2");
-    case QVideoFrameFormat::Format_IMC3:
-        return QStringLiteral("IMC3");
-    case QVideoFrameFormat::Format_IMC4:
-        return QStringLiteral("IMC4");
-    case QVideoFrameFormat::Format_Y8:
-        return QStringLiteral("Y8");
-    case QVideoFrameFormat::Format_Y16:
-        return QStringLiteral("Y16");
-    case QVideoFrameFormat::Format_P010:
-        return QStringLiteral("P010");
-    case QVideoFrameFormat::Format_P016:
-        return QStringLiteral("P016");
-    case QVideoFrameFormat::Format_SamplerExternalOES:
-        return QStringLiteral("SamplerExternalOES");
-    case QVideoFrameFormat::Format_Jpeg:
-        return QStringLiteral("Jpeg");
-    case QVideoFrameFormat::Format_SamplerRect:
-        return QStringLiteral("SamplerRect");
-    }
 
-    return QStringLiteral("");
+Q_MULTIMEDIA_EXPORT QString QVideoFrameFormat::pixelFormatToString(QVideoFrameFormat::PixelFormat pixelFormat)
+{
+    auto str = QtMultimediaPrivate::StringResolver<QVideoFrameFormat::PixelFormat>::toQString(pixelFormat);
+    return str.value_or(QString());
 }
 
 #ifndef QT_NO_DEBUG_STREAM
-# if QT_DEPRECATED_SINCE(6, 4)
-QDebug operator<<(QDebug dbg, QVideoFrameFormat::YCbCrColorSpace cs)
-{
-    QDebugStateSaver saver(dbg);
-    dbg.nospace();
-    switch (cs) {
-        case QVideoFrameFormat::YCbCr_BT601:
-            dbg << "YCbCr_BT601";
-            break;
-        case QVideoFrameFormat::YCbCr_BT709:
-            dbg << "YCbCr_BT709";
-            break;
-        case QVideoFrameFormat::YCbCr_JPEG:
-            dbg << "YCbCr_JPEG";
-            break;
-        case QVideoFrameFormat::YCbCr_xvYCC601:
-            dbg << "YCbCr_xvYCC601";
-            break;
-        case QVideoFrameFormat::YCbCr_xvYCC709:
-            dbg << "YCbCr_xvYCC709";
-            break;
-        case QVideoFrameFormat::YCbCr_BT2020:
-            dbg << "YCbCr_BT2020";
-            break;
-        default:
-            dbg << "YCbCr_Undefined";
-            break;
-    }
-    return dbg;
-}
-# endif // QT_DEPRECATED_SINCE(6, 4)
-
-QDebug operator<<(QDebug dbg, QVideoFrameFormat::ColorSpace cs)
-{
-    QDebugStateSaver saver(dbg);
-    dbg.nospace();
-    switch (cs) {
-        case QVideoFrameFormat::ColorSpace_BT601:
-            dbg << "ColorSpace_BT601";
-            break;
-        case QVideoFrameFormat::ColorSpace_BT709:
-            dbg << "ColorSpace_BT709";
-            break;
-        case QVideoFrameFormat::ColorSpace_AdobeRgb:
-            dbg << "ColorSpace_AdobeRgb";
-            break;
-        case QVideoFrameFormat::ColorSpace_BT2020:
-            dbg << "ColorSpace_BT2020";
-            break;
-        default:
-            dbg << "ColorSpace_Undefined";
-            break;
-    }
-    return dbg;
-}
-
-QDebug operator<<(QDebug dbg, QVideoFrameFormat::Direction dir)
-{
-    QDebugStateSaver saver(dbg);
-    dbg.nospace();
-    switch (dir) {
-        case QVideoFrameFormat::BottomToTop:
-            dbg << "BottomToTop";
-            break;
-        case QVideoFrameFormat::TopToBottom:
-            dbg << "TopToBottom";
-            break;
-    }
-    return dbg;
-}
 
 QDebug operator<<(QDebug dbg, const QVideoFrameFormat &f)
 {
@@ -1047,23 +952,13 @@ QDebug operator<<(QDebug dbg, const QVideoFrameFormat &f)
         << "\n    viewport=" << f.viewport()
         << "\n    colorSpace=" << f.colorSpace()
         << "\n    frameRate=" << f.streamFrameRate()
-        << "\n    mirrored=" << f.isMirrored();
+        << "\n    mirrored=" << f.isMirrored()
+        << "\n    range=" << f.colorRange()
+        << "\n    colorTransfer=" << f.colorTransfer();
 
     return dbg;
 }
 
-QDebug operator<<(QDebug dbg, QVideoFrameFormat::PixelFormat pf)
-{
-    QDebugStateSaver saver(dbg);
-    dbg.nospace();
-
-    auto format = QVideoFrameFormat::pixelFormatToString(pf);
-    if (format.isEmpty())
-        return dbg;
-
-    dbg.noquote() << QStringLiteral("Format_") << format;
-    return dbg;
-}
-#endif
+#endif // QT_NO_DEBUG_STREAM
 
 QT_END_NAMESPACE

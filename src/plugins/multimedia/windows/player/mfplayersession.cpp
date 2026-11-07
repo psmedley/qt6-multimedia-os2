@@ -17,8 +17,8 @@
 #include "mfplayercontrol_p.h"
 #include "mfvideorenderercontrol_p.h"
 #include <mfmetadata_p.h>
-#include <private/qwindowsmfdefs_p.h>
 #include <private/qwindowsaudioutils_p.h>
+#include <private/qwindows_scopedpropvariant_p.h>
 
 #include "mfplayersession_p.h"
 #include <mferror.h>
@@ -27,8 +27,10 @@
 #include "sourceresolver_p.h"
 #include <wmcodecdsp.h>
 
+#include <mfidl.h>
 #include <mmdeviceapi.h>
 #include <propvarutil.h>
+#include <wininet.h>
 #include <functiondiscoverykeys_devpkey.h>
 
 //#define DEBUG_MEDIAFOUNDATION
@@ -42,8 +44,7 @@ MFPlayerSession::MFPlayerSession(MFPlayerControl *playerControl)
       m_restoreRate(1),
       m_closing(false),
       m_mediaTypes(0),
-      m_pendingRate(1),
-      m_status(QMediaPlayer::NoMedia)
+      m_pendingRate(1)
 
 {
     connect(this, &MFPlayerSession::sessionEvent, this, &MFPlayerSession::handleSessionEvent);
@@ -138,7 +139,7 @@ void MFPlayerSession::load(const QUrl &url, QIODevice *stream)
 #endif
     clear();
 
-    if (m_status == QMediaPlayer::LoadingMedia && m_sourceResolver)
+    if (status() == QMediaPlayer::LoadingMedia && m_sourceResolver)
         m_sourceResolver->cancel();
 
     if (url.isEmpty() && !stream) {
@@ -180,7 +181,7 @@ void MFPlayerSession::handleSourceError(long hr)
         errorCode = QMediaPlayer::ResourceError;
         errorString = tr("Unsupported URL scheme.");
         break;
-    case QMM_WININET_E_CANNOT_CONNECT:
+    case INET_E_CANNOT_CONNECT:
         errorCode = QMediaPlayer::NetworkError;
         errorString = tr("Connection to server could not be established.");
         break;
@@ -196,14 +197,14 @@ void MFPlayerSession::handleSourceError(long hr)
 
 void MFPlayerSession::handleMediaSourceReady()
 {
-    if (QMediaPlayer::LoadingMedia != m_status || !m_sourceResolver
+    if (QMediaPlayer::LoadingMedia != status() || !m_sourceResolver
         || m_sourceResolver.Get() != sender())
         return;
 #ifdef DEBUG_MEDIAFOUNDATION
     qDebug() << "handleMediaSourceReady";
 #endif
     HRESULT hr = S_OK;
-    IMFMediaSource* mediaSource = m_sourceResolver->mediaSource();
+    ComPtr<IMFMediaSource> mediaSource = m_sourceResolver->mediaSource();
 
     DWORD dwCharacteristics = 0;
     mediaSource->GetCharacteristics(&dwCharacteristics);
@@ -213,12 +214,12 @@ void MFPlayerSession::handleMediaSourceReady()
     hr = mediaSource->CreatePresentationDescriptor(&sourcePD);
     if (SUCCEEDED(hr)) {
         m_duration = 0;
-        m_metaData = MFMetaData::fromNative(mediaSource);
+        m_metaData = MFMetaData::fromNative(mediaSource.Get());
         metaDataChanged();
         sourcePD->GetUINT64(MF_PD_DURATION, &m_duration);
         //convert from 100 nanosecond to milisecond
         durationUpdate(qint64(m_duration / 10000));
-        setupPlaybackTopology(mediaSource, sourcePD.Get());
+        setupPlaybackTopology(mediaSource.Get(), sourcePD.Get());
         tracksChanged();
     } else {
         changeStatus(QMediaPlayer::InvalidMedia);
@@ -244,16 +245,16 @@ bool MFPlayerSession::getStreamInfo(IMFStreamDescriptor *stream,
     if (SUCCEEDED(stream->GetMediaTypeHandler(&typeHandler))) {
 
         UINT32 len = 0;
-        if (SUCCEEDED(stream->GetStringLength(QMM_MF_SD_STREAM_NAME, &len)) && len > 0) {
+        if (SUCCEEDED(stream->GetStringLength(MF_SD_STREAM_NAME, &len)) && len > 0) {
             WCHAR *wstr = new WCHAR[len+1];
-            if (SUCCEEDED(stream->GetString(QMM_MF_SD_STREAM_NAME, wstr, len+1, &len))) {
+            if (SUCCEEDED(stream->GetString(MF_SD_STREAM_NAME, wstr, len + 1, &len))) {
                 *name = QString::fromUtf16(reinterpret_cast<const char16_t *>(wstr));
             }
             delete []wstr;
         }
-        if (SUCCEEDED(stream->GetStringLength(QMM_MF_SD_LANGUAGE, &len)) && len > 0) {
+        if (SUCCEEDED(stream->GetStringLength(MF_SD_LANGUAGE, &len)) && len > 0) {
             WCHAR *wstr = new WCHAR[len+1];
-            if (SUCCEEDED(stream->GetString(QMM_MF_SD_LANGUAGE, wstr, len+1, &len))) {
+            if (SUCCEEDED(stream->GetString(MF_SD_LANGUAGE, wstr, len + 1, &len))) {
                 *language = QString::fromUtf16(reinterpret_cast<const char16_t *>(wstr));
             }
             delete []wstr;
@@ -745,7 +746,7 @@ void MFPlayerSession::stop(bool immediate)
 
             m_state.setCommand(CmdStop);
             m_pendingState = CmdPending;
-            if (m_status != QMediaPlayer::EndOfMedia) {
+            if (status() != QMediaPlayer::EndOfMedia) {
                 m_position = 0;
                 positionChanged(0);
             }
@@ -762,7 +763,7 @@ void MFPlayerSession::start()
         updateOutputRouting();
     }
 
-    if (m_status == QMediaPlayer::EndOfMedia) {
+    if (status() == QMediaPlayer::EndOfMedia) {
         m_position = 0; // restart from the beginning
         positionChanged(0);
     }
@@ -788,16 +789,15 @@ void MFPlayerSession::start()
                 m_restorePosition = -1;
         }
 
-        PROPVARIANT varStart;
-        InitPropVariantFromInt64(m_position, &varStart);
+        QtMultimediaPrivate::ScopedPropVariant varStart;
+        InitPropVariantFromInt64(m_position, varStart.get());
 
-        if (SUCCEEDED(m_session->Start(&GUID_NULL, &varStart))) {
+        if (SUCCEEDED(m_session->Start(&GUID_NULL, varStart.get()))) {
             m_state.setCommand(CmdStart);
             m_pendingState = CmdPending;
         } else {
             error(QMediaPlayer::ResourceError, tr("failed to start playback"), true);
         }
-        PropVariantClear(&varStart);
     }
 }
 
@@ -806,6 +806,16 @@ void MFPlayerSession::pause()
 #ifdef DEBUG_MEDIAFOUNDATION
     qDebug() << "pause";
 #endif
+
+    // Pause() may technically succeed during loading, but the session
+    // is not yet fully initialized (no topology/clock), so the pause
+    // has no real effect. Defer it until the topology is fully resolved
+    // (MF_TOPOSTATUS_READY), when the session is in a stable stopped state.
+    if (status() == QMediaPlayer::LoadingMedia) {
+        m_deferredPause = true;
+        return;
+    }
+
     if (m_pendingState != NoPending) {
         m_request.setCommand(CmdPause);
     } else {
@@ -818,7 +828,7 @@ void MFPlayerSession::pause()
         } else {
             error(QMediaPlayer::ResourceError, tr("Failed to pause."), false);
         }
-        if (m_status == QMediaPlayer::EndOfMedia) {
+        if (status() == QMediaPlayer::EndOfMedia) {
             setPosition(0);
             positionChanged(0);
         }
@@ -827,18 +837,20 @@ void MFPlayerSession::pause()
 
 void MFPlayerSession::changeStatus(QMediaPlayer::MediaStatus newStatus)
 {
-    if (m_status == newStatus)
+    if (!m_playerControl)
         return;
 #ifdef DEBUG_MEDIAFOUNDATION
     qDebug() << "MFPlayerSession::changeStatus" << newStatus;
 #endif
-    m_status = newStatus;
-    statusChanged();
+    // notify the control to run its session-specific handling
+    statusChanged(newStatus);
 }
 
 QMediaPlayer::MediaStatus MFPlayerSession::status() const
 {
-    return m_status;
+    if (!m_playerControl)
+        return QMediaPlayer::NoMedia;
+    return m_playerControl->mediaStatus();
 }
 
 bool MFPlayerSession::createSession()
@@ -909,7 +921,7 @@ void MFPlayerSession::setPosition(qint64 position)
 
 void MFPlayerSession::setPositionInternal(qint64 position, Command requestCmd)
 {
-    if (m_status == QMediaPlayer::EndOfMedia)
+    if (status() == QMediaPlayer::EndOfMedia)
         changeStatus(QMediaPlayer::LoadedMedia);
     if (m_state.command == CmdStop && requestCmd != CmdSeekResume) {
         m_position = position * 10000;
@@ -926,11 +938,10 @@ void MFPlayerSession::setPositionInternal(qint64 position, Command requestCmd)
     qDebug() << "setPositionInternal";
 #endif
 
-    PROPVARIANT varStart;
-    varStart.vt = VT_I8;
-    varStart.hVal.QuadPart = LONGLONG(position * 10000);
-    if (SUCCEEDED(m_session->Start(NULL, &varStart))) {
-        PropVariantClear(&varStart);
+    QtMultimediaPrivate::ScopedPropVariant varStart;
+    varStart->vt = VT_I8;
+    varStart->hVal.QuadPart = LONGLONG(position * 10000);
+    if (SUCCEEDED(m_session->Start(NULL, varStart.get()))) {
         // Store the pending state.
         m_state.setCommand(CmdStart);
         m_state.start = position;
@@ -1172,18 +1183,16 @@ float MFPlayerSession::bufferProgress()
 {
     if (!m_netsourceStatistics)
         return 0;
-    PROPVARIANT var;
-    PropVariantInit(&var);
+
     PROPERTYKEY key;
     key.fmtid = MFNETSOURCE_STATISTICS;
     key.pid = MFNETSOURCE_BUFFERPROGRESS_ID;
     int progress = -1;
     // GetValue returns S_FALSE if the property is not available, which has
     // a value > 0. We therefore can't use the SUCCEEDED macro here.
-    if (m_netsourceStatistics->GetValue(key, &var) == S_OK) {
-        progress = var.lVal;
-        PropVariantClear(&var);
-    }
+    QtMultimediaPrivate::ScopedPropVariant var;
+    if (m_netsourceStatistics->GetValue(key, var.get()) == S_OK)
+        progress = var->lVal;
 
 #ifdef DEBUG_MEDIAFOUNDATION
     qDebug() << "bufferProgress: progress = " << progress;
@@ -1199,22 +1208,18 @@ QMediaTimeRange MFPlayerSession::availablePlaybackRanges()
     qint64 end = qint64(m_duration / 10000);
 
     if (m_netsourceStatistics) {
-        PROPVARIANT var;
-        PropVariantInit(&var);
         PROPERTYKEY key;
         key.fmtid = MFNETSOURCE_STATISTICS;
         key.pid = MFNETSOURCE_SEEKRANGESTART_ID;
         // GetValue returns S_FALSE if the property is not available, which has
         // a value > 0. We therefore can't use the SUCCEEDED macro here.
-        if (m_netsourceStatistics->GetValue(key, &var) == S_OK) {
-            start = qint64(var.uhVal.QuadPart / 10000);
-            PropVariantClear(&var);
-            PropVariantInit(&var);
+        QtMultimediaPrivate::ScopedPropVariant startVar;
+        if (m_netsourceStatistics->GetValue(key, startVar.get()) == S_OK) {
+            start = qint64(startVar->uhVal.QuadPart / 10000);
             key.pid = MFNETSOURCE_SEEKRANGEEND_ID;
-            if (m_netsourceStatistics->GetValue(key, &var) == S_OK) {
-                end = qint64(var.uhVal.QuadPart / 10000);
-                PropVariantClear(&var);
-            }
+            QtMultimediaPrivate::ScopedPropVariant endVar;
+            if (m_netsourceStatistics->GetValue(key, endVar.get()) == S_OK)
+                end = qint64(endVar->uhVal.QuadPart / 10000);
         }
     }
 
@@ -1307,11 +1312,9 @@ void MFPlayerSession::handleSessionEvent(const ComPtr<IMFMediaEvent> &sessionEve
 
     switch (meType) {
     case MENonFatalError: {
-            PROPVARIANT var;
-            PropVariantInit(&var);
-            sessionEvent->GetValue(&var);
-            qWarning() << "handleSessionEvent: non fatal error = " << var.ulVal;
-            PropVariantClear(&var);
+            QtMultimediaPrivate::ScopedPropVariant var;
+            sessionEvent->GetValue(var.get());
+            qWarning() << "handleSessionEvent: non fatal error = " << var->ulVal;
             error(QMediaPlayer::ResourceError, tr("Media session non-fatal error."), false);
         }
         break;
@@ -1355,11 +1358,9 @@ void MFPlayerSession::handleSessionEvent(const ComPtr<IMFMediaEvent> &sessionEve
         // If the rate change succeeded, we've already got the rate
         // cached. If it failed, try to get the actual rate.
         if (FAILED(hrStatus)) {
-            PROPVARIANT var;
-            PropVariantInit(&var);
-            if (SUCCEEDED(sessionEvent->GetValue(&var)) && (var.vt == VT_R4))    {
-                m_state.rate = var.fltVal;
-            }
+            QtMultimediaPrivate::ScopedPropVariant var;
+            if (SUCCEEDED(sessionEvent->GetValue(var.get())) && (var->vt == VT_R4))
+                m_state.rate = var->fltVal;
             playbackRateChanged(playbackRate());
         }
         break;
@@ -1368,8 +1369,8 @@ void MFPlayerSession::handleSessionEvent(const ComPtr<IMFMediaEvent> &sessionEve
             updatePendingCommands(CmdStart);
         break;
     case MESessionStarted:
-        if (m_status == QMediaPlayer::EndOfMedia
-                || m_status == QMediaPlayer::LoadedMedia) {
+        if (status() == QMediaPlayer::EndOfMedia
+                || status() == QMediaPlayer::LoadedMedia) {
             // If the session started, then enough data is buffered to play
             changeStatus(QMediaPlayer::BufferedMedia);
         }
@@ -1383,12 +1384,12 @@ void MFPlayerSession::handleSessionEvent(const ComPtr<IMFMediaEvent> &sessionEve
         m_signalPositionChangeTimer.start();
         break;
     case MESessionStopped:
-        if (m_status != QMediaPlayer::EndOfMedia) {
+        if (status() != QMediaPlayer::EndOfMedia) {
             m_position = 0;
 
             // Reset to Loaded status unless we are loading a new media
             // or changing the playback rate to negative values (stop required)
-            if (m_status != QMediaPlayer::LoadingMedia && m_request.command != CmdSeekResume)
+            if (status() != QMediaPlayer::LoadingMedia && m_request.command != CmdSeekResume)
                 changeStatus(QMediaPlayer::LoadedMedia);
         }
         updatePendingCommands(CmdStop);
@@ -1398,7 +1399,7 @@ void MFPlayerSession::handleSessionEvent(const ComPtr<IMFMediaEvent> &sessionEve
         m_position = position() * 10000;
         updatePendingCommands(CmdPause);
         m_signalPositionChangeTimer.stop();
-        if (m_status == QMediaPlayer::LoadedMedia)
+        if (status() == QMediaPlayer::LoadedMedia)
             setPosition(position());
         break;
     case MEReconnectStart:
@@ -1488,6 +1489,11 @@ void MFPlayerSession::handleSessionEvent(const ComPtr<IMFMediaEvent> &sessionEve
 
                     m_updatingTopology = false;
                     stop();
+
+                    if (m_deferredPause) {
+                        m_deferredPause = false;
+                        pause();
+                    }
                 }
             }
         }
@@ -1563,6 +1569,7 @@ void MFPlayerSession::clear()
 #endif
     m_mediaTypes = 0;
     m_canScrub = false;
+    m_deferredPause = false;
 
     m_pendingState = NoPending;
     m_state.command = CmdStop;
@@ -1643,7 +1650,7 @@ void MFPlayerSession::setActiveTrack(QPlatformMediaPlayer::TrackType type, int i
 
     ComPtr<IMFTopology> topology;
 
-    if (SUCCEEDED(m_session->GetFullTopology(QMM_MFSESSION_GETFULLTOPOLOGY_CURRENT, 0, &topology))) {
+    if (SUCCEEDED(m_session->GetFullTopology(MFSESSION_GETFULLTOPOLOGY_CURRENT, 0, &topology))) {
 
         m_restorePosition = position() * 10000;
 
@@ -1665,7 +1672,7 @@ void MFPlayerSession::setActiveTrack(QPlatformMediaPlayer::TrackType type, int i
             }
         }
 
-        IMFMediaSource *mediaSource = m_sourceResolver->mediaSource();
+        ComPtr<IMFMediaSource> mediaSource = m_sourceResolver->mediaSource();
 
         ComPtr<IMFPresentationDescriptor> sourcePD;
         if (SUCCEEDED(mediaSource->CreatePresentationDescriptor(&sourcePD))) {
@@ -1686,7 +1693,7 @@ void MFPlayerSession::setActiveTrack(QPlatformMediaPlayer::TrackType type, int i
 
                 if (SUCCEEDED(sourcePD->GetStreamDescriptorByIndex(nativeIndex, &selected, &streamDesc))) {
                     ComPtr<IMFTopologyNode> sourceNode = addSourceNode(
-                            topology.Get(), mediaSource, sourcePD.Get(), streamDesc.Get());
+                            topology.Get(), mediaSource.Get(), sourcePD.Get(), streamDesc.Get());
                     if (sourceNode) {
                         ComPtr<IMFTopologyNode> outputNode =
                                 addOutputNode(MFPlayerSession::Audio, topology.Get(), 0);

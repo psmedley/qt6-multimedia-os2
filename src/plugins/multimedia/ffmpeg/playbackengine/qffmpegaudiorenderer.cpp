@@ -2,18 +2,22 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "playbackengine/qffmpegaudiorenderer_p.h"
-#include "qaudiosink.h"
-#include "qaudiooutput.h"
-#include "qaudiobufferoutput.h"
-#include "private/qplatformaudiooutput_p.h"
+
+#include <QtMultimedia/qaudiosink.h>
+#include <QtMultimedia/qaudiooutput.h>
+#include <QtMultimedia/qaudiobufferoutput.h>
+#include <QtMultimedia/private/qaudiobuffer_support_p.h>
+#include <QtMultimedia/private/qplatformaudiooutput_p.h>
+
 #include <QtCore/qloggingcategory.h>
 
-#include "qffmpegresampler_p.h"
+#include "qffmpegaudioframeconverter_p.h"
 #include "qffmpegmediaformatinfo_p.h"
+#include "qffmpegresampler_p.h"
 
 QT_BEGIN_NAMESPACE
 
-static Q_LOGGING_CATEGORY(qLcAudioRenderer, "qt.multimedia.ffmpeg.audiorenderer");
+Q_STATIC_LOGGING_CATEGORY(qLcAudioRenderer, "qt.multimedia.ffmpeg.audiorenderer");
 
 namespace QFFmpeg {
 
@@ -32,50 +36,21 @@ constexpr auto BufferLoadingMeasureTime = 400ms;
 
 constexpr auto DurationBias = 2ms; // avoids extra timer events
 
-qreal sampleRateFactor() {
-    // Test purposes:
-    //
-    // The env var describes a factor for the sample rate of
-    // audio data that we feed to the audio sink.
-    //
-    // In some cases  audio sink might consume data slightly slower or faster than expected;
-    // even though the synchronization in the audio renderer is supposed to handle it,
-    // it makes sense to experiment with QT_MEDIA_PLAYER_AUDIO_SAMPLE_RATE_FACTOR != 1.
-    //
-    // Set QT_MEDIA_PLAYER_AUDIO_SAMPLE_RATE_FACTOR > 1 (e.g. 1.01 - 1.1) to test high buffer loading
-    //     or try compensating too fast data consumption by the audio sink.
-    // Set QT_MEDIA_PLAYER_AUDIO_SAMPLE_RATE_FACTOR < 1 to test low buffer loading
-    //     or try compensating too slow data consumption by the audio sink.
-
-
-    static const qreal result = []() {
-        const auto sampleRateFactorStr = qEnvironmentVariable("QT_MEDIA_PLAYER_AUDIO_SAMPLE_RATE_FACTOR");
-        bool ok = false;
-        const auto result = sampleRateFactorStr.toDouble(&ok);
-        return ok ? result : 1.;
-    }();
-
-    return result;
-}
-
 QAudioFormat audioFormatFromFrame(const Frame &frame)
 {
     return QFFmpegMediaFormatInfo::audioFormatFromCodecParameters(
             *frame.codecContext()->stream()->codecpar);
 }
 
-std::unique_ptr<QFFmpegResampler> createResampler(const Frame &frame,
-                                                  const QAudioFormat &outputFormat)
-{
-    return std::make_unique<QFFmpegResampler>(frame.codecContext(), outputFormat,
-                                              frame.startTime().get());
-}
-
 } // namespace
 
-AudioRenderer::AudioRenderer(const TimeController &tc, QAudioOutput *output,
-                             QAudioBufferOutput *bufferOutput)
-    : Renderer(tc), m_output(output), m_bufferOutput(bufferOutput)
+AudioRenderer::AudioRenderer(const PlaybackEngineObjectID &id, const TimeController &tc,
+                             QAudioOutput *output, QAudioBufferOutput *bufferOutput,
+                             bool pitchCompensation)
+    : Renderer(id, tc),
+      m_output(output),
+      m_bufferOutput(bufferOutput),
+      m_pitchCompensation(pitchCompensation)
 {
     if (output) {
         // TODO: implement the signals in QPlatformAudioOutput and connect to them, QTBUG-112294
@@ -96,6 +71,17 @@ void AudioRenderer::setOutput(QAudioBufferOutput *bufferOutput)
                       [this](QAudioBufferOutput *) { m_bufferOutputChanged = true; });
 }
 
+void AudioRenderer::setPitchCompensation(bool enabled)
+{
+    invokePriorityMethod([this, enabled] {
+        if (m_pitchCompensation == enabled)
+            return;
+
+        m_pitchCompensation = enabled;
+        m_audioFrameConverter.reset();
+    });
+}
+
 AudioRenderer::~AudioRenderer()
 {
     freeOutput();
@@ -112,6 +98,31 @@ void AudioRenderer::onDeviceChanged()
     m_deviceChanged = true;
 }
 
+void AudioRenderer::seekInternal()
+{
+    // TODO: play with what to clean: we may find better config.
+    // If we reset sink and converters, move m_ioDevice, m_ioDevice,
+    // m_audioFrameConverter, m_bufferOutputResampler to m_sessionCtx.
+    constexpr bool shouldResetSink = true;
+    constexpr bool shouldResetConverters = true;
+
+    if constexpr (shouldResetSink) {
+        if (m_sink)
+            m_sink->reset();
+        m_ioDevice = nullptr;
+        m_bufferLoadingInfo = {};
+    }
+
+    if constexpr (shouldResetConverters) {
+        m_audioFrameConverter.reset();
+        m_bufferOutputResampler.reset();
+    }
+
+    // change AudioRenderer caches
+    m_sessionCtx = {};
+    //  don't touch m_deviceChanged here
+}
+
 Renderer::RenderingResult AudioRenderer::renderInternal(Frame frame)
 {
     if (frame.isValid())
@@ -121,18 +132,18 @@ Renderer::RenderingResult AudioRenderer::renderInternal(Frame frame)
     // for QAudioBufferOutput
     const RenderingResult result = pushFrameToOutput(frame);
 
-    if (m_lastFramePushDone)
+    if (m_sessionCtx.lastFramePushDone)
         pushFrameToBufferOutput(frame);
     // else // skip pushing the same data to QAudioBufferOutput
 
-    m_lastFramePushDone = result.done;
+    m_sessionCtx.lastFramePushDone = result.done;
 
     return result;
 }
 
 AudioRenderer::RenderingResult AudioRenderer::pushFrameToOutput(const Frame &frame)
 {
-    if (!m_ioDevice || !m_resampler)
+    if (!m_ioDevice || !m_audioFrameConverter)
         return {};
 
     Q_ASSERT(m_sink);
@@ -140,11 +151,11 @@ AudioRenderer::RenderingResult AudioRenderer::pushFrameToOutput(const Frame &fra
     auto firstFrameFlagGuard = qScopeGuard([&]() { m_firstFrameToSink = false; });
 
     const SynchronizationStamp syncStamp{ m_sink->state(), m_sink->bytesFree(),
-                                          m_bufferedData.offset, RealClock::now() };
+                                          m_sessionCtx.bufferedData.offset, SteadyClock::now() };
 
-    if (!m_bufferedData.isValid()) {
+    if (!m_sessionCtx.bufferedData.isValid()) {
         if (!frame.isValid()) {
-            if (std::exchange(m_drained, true))
+            if (std::exchange(m_sessionCtx.drained, true))
                 return {};
 
             const auto time = bufferLoadingTime(syncStamp);
@@ -154,24 +165,27 @@ AudioRenderer::RenderingResult AudioRenderer::pushFrameToOutput(const Frame &fra
             return { time.count() == 0, time };
         }
 
-        m_bufferedData = { m_resampler->resample(frame.avFrame()) };
+        m_sessionCtx.bufferedData = {
+            m_audioFrameConverter->convert(frame.avFrame()),
+        };
     }
 
-    if (m_bufferedData.isValid()) {
+    if (m_sessionCtx.bufferedData.isValid()) {
         // synchronize after "QIODevice::write" to deliver audio data to the sink ASAP.
         auto syncGuard = qScopeGuard([&]() { updateSynchronization(syncStamp, frame); });
 
-        const auto bytesWritten = m_ioDevice->write(m_bufferedData.data(), m_bufferedData.size());
+        const auto bytesWritten = m_ioDevice->write(m_sessionCtx.bufferedData.data(),
+                                                    m_sessionCtx.bufferedData.size());
 
-        m_bufferedData.offset += bytesWritten;
+        m_sessionCtx.bufferedData.offset += bytesWritten;
 
-        if (m_bufferedData.size() <= 0) {
-            m_bufferedData = {};
+        if (m_sessionCtx.bufferedData.size() <= 0) {
+            m_sessionCtx.bufferedData = {};
 
             return {};
         }
 
-        const auto remainingDuration = durationForBytes(m_bufferedData.size());
+        const auto remainingDuration = durationForBytes(m_sessionCtx.bufferedData.size());
 
         return { false,
                  std::min(remainingDuration + DurationBias, m_timings.actualBufferDuration / 2) };
@@ -198,20 +212,29 @@ void AudioRenderer::pushFrameToBufferOutput(const Frame &frame)
 
 void AudioRenderer::onPlaybackRateChanged()
 {
-    m_resampler.reset();
+    m_audioFrameConverter.reset();
 }
 
-std::chrono::milliseconds AudioRenderer::timerInterval() const
+AudioRenderer::TimePoint AudioRenderer::nextTimePoint() const
 {
+    const TimePoint timePoint = Renderer::nextTimePoint();
+
+    // if the first frame is expected, don't force the immediate job
+    if (m_firstFrameToSink)
+        return timePoint;
+
+    // if the sink is active, don't force the immediate job
+    if (!m_sink || m_sink->state() != QAudio::IdleState)
+        return timePoint;
+
+    // if the waiting interval is out of a heuristic fixable range,
+    // don't force the immediate job.
     constexpr auto MaxFixableInterval = 50ms;
+    if (timePoint == TimePoint::min() ||
+        timePoint - std::chrono::steady_clock::now() > MaxFixableInterval)
+        return timePoint;
 
-    const auto interval = Renderer::timerInterval();
-
-    if (m_firstFrameToSink || !m_sink || m_sink->state() != QAudio::IdleState
-        || interval > MaxFixableInterval)
-        return interval;
-
-    return 0ms;
+    return TimePoint::min(); // do the job now
 }
 
 void AudioRenderer::onPauseChanged()
@@ -220,14 +243,15 @@ void AudioRenderer::onPauseChanged()
     Renderer::onPauseChanged();
 }
 
-void AudioRenderer::initResampler(const Frame &frame)
+void AudioRenderer::initAudioFrameConverter(const Frame &frame)
 {
-    // We recreate resampler whenever format is changed
-
-    auto resamplerFormat = m_sinkFormat;
-    resamplerFormat.setSampleRate(
-            qRound(m_sinkFormat.sampleRate() / playbackRate() * sampleRateFactor()));
-    m_resampler = createResampler(frame, resamplerFormat);
+    // We recreate the frame converter whenever format or playback rate is changed
+    if (!m_pitchCompensation || QtPrivate::fuzzyCompare(playbackRate(), 1.0f)) {
+        m_audioFrameConverter = makeTrivialAudioFrameConverter(frame, m_sinkFormat, playbackRate());
+    } else {
+        m_audioFrameConverter =
+                makePitchShiftingAudioFrameConverter(frame, m_sinkFormat, playbackRate());
+    }
 }
 
 void AudioRenderer::freeOutput()
@@ -242,7 +266,7 @@ void AudioRenderer::freeOutput()
 
     m_ioDevice = nullptr;
 
-    m_bufferedData = {};
+    m_sessionCtx.bufferedData = {};
     m_deviceChanged = false;
     m_sinkFormat = {};
     m_timings = {};
@@ -253,7 +277,7 @@ void AudioRenderer::updateOutputs(const Frame &frame)
 {
     if (m_deviceChanged) {
         freeOutput();
-        m_resampler.reset();
+        m_audioFrameConverter.reset();
     }
 
     if (m_bufferOutput) {
@@ -283,8 +307,6 @@ void AudioRenderer::updateOutputs(const Frame &frame)
         m_sink = std::make_unique<QAudioSink>(m_output->device(), m_sinkFormat);
         updateVolume();
         m_sink->setBufferSize(m_sinkFormat.bytesForDuration(DesiredBufferTime.count()));
-        m_ioDevice = m_sink->start();
-        m_firstFrameToSink = true;
 
         connect(m_sink.get(), &QAudioSink::stateChanged, this,
                 &AudioRenderer::onAudioSinkStateChanged);
@@ -298,8 +320,13 @@ void AudioRenderer::updateOutputs(const Frame &frame)
                  && m_timings.maxSoundDelay < m_timings.actualBufferDuration);
     }
 
-    if (!m_resampler)
-        initResampler(frame);
+    if (!m_ioDevice) {
+        m_ioDevice = m_sink->start();
+        m_firstFrameToSink = true;
+    }
+
+    if (!m_audioFrameConverter)
+        initAudioFrameConverter(frame);
 }
 
 void AudioRenderer::updateSynchronization(const SynchronizationStamp &stamp, const Frame &frame)
@@ -378,15 +405,6 @@ microseconds AudioRenderer::bufferLoadingTime(const SynchronizationStamp &syncSt
         return microseconds(0);
 
     const auto bytes = qMax(m_sink->bufferSize() - syncStamp.audioSinkBytesFree, 0);
-
-#ifdef Q_OS_ANDROID
-    // The hack has been added due to QAndroidAudioSink issues (QTBUG-118609).
-    // The method QAndroidAudioSink::bytesFree returns 0 or bufferSize, intermediate values are not
-    // available now; to be fixed.
-    if (bytes == 0)
-        return m_timings.minSoundDelay + MinDesiredBufferTime;
-#endif
-
     return durationForBytes(bytes);
 }
 

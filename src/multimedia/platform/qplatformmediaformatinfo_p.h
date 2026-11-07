@@ -15,11 +15,13 @@
 // We mean it.
 //
 
-#include <private/qtmultimediaglobal_p.h>
-#include <qimagecapture.h>
-#include <qmediaformat.h>
+#include <QtMultimedia/private/qtmultimediaglobal_p.h>
+#include <QtMultimedia/qimagecapture.h>
+#include <QtMultimedia/qmediaformat.h>
 
 QT_BEGIN_NAMESPACE
+
+class QDebug;
 
 class Q_MULTIMEDIA_EXPORT QPlatformMediaFormatInfo
 {
@@ -33,10 +35,14 @@ public:
 
     bool isSupported(const QMediaFormat &format, QMediaFormat::ConversionMode m) const;
 
+    void fixupCodecMaps();
+
     struct CodecMap {
         QMediaFormat::FileFormat format;
         QList<QMediaFormat::AudioCodec> audio;
         QList<QMediaFormat::VideoCodec> video;
+
+        Q_MULTIMEDIA_EXPORT friend QDebug operator<<(QDebug dbg, const CodecMap &m);
     };
     QList<CodecMap> encoders;
     QList<CodecMap> decoders;

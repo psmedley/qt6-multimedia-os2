@@ -6,9 +6,14 @@
 #include "qwasmmediacapturesession_p.h"
 #include "qwasmcamera_p.h"
 #include "qwasmvideosink_p.h"
+#include <private/qstdweb_p.h>
 #include <QDir>
 
+#include <emscripten/val.h>
+
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::Literals;
 
 Q_LOGGING_CATEGORY(qWasmImageCapture, "qt.multimedia.wasm.imagecapture")
 /* TODO
@@ -28,7 +33,7 @@ int QWasmImageCapture::capture(const QString &fileName)
 
     QString imageFilenName;
     if (fileName.isEmpty())
-        imageFilenName = QDir::homePath() + "/image.jpg";
+        imageFilenName = QDir::homePath() + u"/image.jpg"_s;
     else
         imageFilenName = fileName;
 
@@ -72,17 +77,19 @@ int QWasmImageCapture::captureToBuffer()
 
 QImage QWasmImageCapture::takePicture()
 {
-    QVideoFrame thisFrame = m_captureSession->videoSink()->videoFrame();
-    if (!thisFrame.isValid())
-        return QImage();
-
     m_lastId++;
-    emit imageAvailable(m_lastId, thisFrame);
 
-    QImage image = thisFrame.toImage();
+    // Try the fast path: grab the current frame and convert via RHI.
+    QVideoFrame thisFrame = m_captureSession->videoSink()->videoFrame();
+    QImage image;
+    if (thisFrame.isValid()) {
+        emit imageAvailable(m_lastId, thisFrame);
+        image = thisFrame.toImage();
+    }
+
     if (image.isNull()) {
-        qCDebug(qWasmImageCapture) << Q_FUNC_INFO << "image is null";
-        emit error(m_lastId, QImageCapture::ResourceError, QStringLiteral("Resource error"));
+        qCDebug(qWasmImageCapture) << Q_FUNC_INFO << "image capture failed";
+        emit error(m_lastId, QImageCapture::ResourceError, QStringLiteral("Capture failed"));
         return QImage();
     }
 

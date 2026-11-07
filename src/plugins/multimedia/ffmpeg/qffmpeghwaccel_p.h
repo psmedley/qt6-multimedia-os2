@@ -16,13 +16,12 @@
 
 #include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
 #include <QtFFmpegMediaPluginImpl/private/qffmpegtextureconverter_p.h>
-#include "qvideoframeformat.h"
+#include <QtMultimedia/qvideoframeformat.h>
 #include <QtMultimedia/private/qhwvideobuffer_p.h>
 #include <QtMultimedia/private/qrhivaluemapper_p.h>
+#include <QtCore/qspan.h>
 
-#include <qshareddata.h>
 #include <memory>
-#include <functional>
 #include <mutex>
 
 QT_BEGIN_NAMESPACE
@@ -47,7 +46,11 @@ using HWAccelUPtr = std::unique_ptr<HWAccel>;
  */
 struct HwFrameContextData
 {
-    QRhiValueMapper<TextureConverter> textureConverterMapper;
+    using AVHWFramesContextDeleter = void (*)(struct AVHWFramesContext *ctx);
+    AVHWFramesContextDeleter avDeleter = nullptr;
+    void *avUserOpaque = nullptr;
+
+    QRhiValueMapper<TextureConverter> textureConverterMapper = {};
 
     /**
      * @brief gets or creates an instance of the class, associated with
@@ -60,7 +63,7 @@ struct HwFrameContextData
 
 class HWAccel
 {
-    AVBufferUPtr m_hwDeviceContext;
+    const AVBufferUPtr m_hwDeviceContext;
     AVBufferUPtr m_hwFramesContext;
 
     mutable std::once_flag m_constraintsOnceFlag;
@@ -83,13 +86,13 @@ public:
     bool matchesSizeContraints(QSize size) const;
 
     void createFramesContext(AVPixelFormat swFormat, const QSize &size);
+    void updateFramesContext(AVPixelFormat swFormat, const QSize &size);
     AVBufferRef *hwFramesContextAsBuffer() const { return m_hwFramesContext.get(); }
     AVHWFramesContext *hwFramesContext() const;
 
     static AVPixelFormat format(AVFrame *frame);
-    static const std::vector<AVHWDeviceType> &encodingDeviceTypes();
-
-    static const std::vector<AVHWDeviceType> &decodingDeviceTypes();
+    static QSpan<const AVHWDeviceType> encodingDeviceTypes();
+    static QSpan<const AVHWDeviceType> decodingDeviceTypes();
 
 private:
     HWAccel(AVBufferUPtr hwDeviceContext) : m_hwDeviceContext(std::move(hwDeviceContext)) { }

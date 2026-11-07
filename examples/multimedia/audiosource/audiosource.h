@@ -4,18 +4,33 @@
 #ifndef AUDIOINPUT_H
 #define AUDIOINPUT_H
 
+#include "audiorecorder.h"
+
 #include <QAudioSource>
 #include <QMediaDevices>
 
+#include <QtCore/qcompilerdetection.h>
+
+#include <QBasicTimer>
+
 #include <QComboBox>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSlider>
+#include <QVBoxLayout>
 #include <QWidget>
 
 #include <QPixmap>
-
 #include <QByteArray>
-#include <QScopedPointer>
+
+#include <atomic>
+#include <memory>
+
+enum class AudioTestMode : uint8_t {
+    Pull,
+    Push,
+    Callback,
+};
 
 class AudioInfo : public QIODevice
 {
@@ -27,19 +42,17 @@ public:
     void start();
     void stop();
 
-    qreal level() const { return m_level; }
+    [[nodiscard]] float level() const { return m_level; }
 
     qint64 readData(char *data, qint64 maxlen) override;
     qint64 writeData(const char *data, qint64 len) override;
 
-    qreal calculateLevel(const char *data, qint64 len) const;
-
 signals:
-    void levelChanged(qreal level);
+    void levelChanged(float level);
 
 private:
     const QAudioFormat m_format;
-    qreal m_level = 0.0; // 0.0 <= m_level <= 1.0
+    float m_level = 0.f; // 0.0 <= m_level <= 1.0
 };
 
 class RenderArea : public QWidget
@@ -49,47 +62,78 @@ class RenderArea : public QWidget
 public:
     explicit RenderArea(QWidget *parent = nullptr);
 
-    void setLevel(qreal value);
+    void setLevel(float value);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
 
 private:
-    qreal m_level = 0;
+    float m_level = 0.f;
 };
 
-class InputTest : public QWidget
+class InputTest final : public QWidget
 {
     Q_OBJECT
 
 public:
     InputTest();
+    ~InputTest() override;
 
 private:
     void initializeWindow();
-    void initializeAudio(const QAudioDevice &deviceInfo);
+    void startAudioSource(const QAudioDevice &, const QAudioFormat &);
+    void cleanupAudioSource();
     void initializeErrorWindow();
+    void restartAudioStream(bool record);
+    void timerEvent(QTimerEvent *) override;
 
-private slots:
+    template <typename T>
+    void processCallback(QSpan<const T> buffer, const QAudioFormat &format) noexcept
+        Q_DECL_NONBLOCKING_FUNCTION;
+
+    void startPullMode(bool record);
+    void startPushMode(bool record);
+    void startCallbackMode(bool record);
+
+    QString getRecordingFileName() const;
+
+private:
     void init();
-    void toggleMode();
     void toggleSuspend();
     void deviceChanged(int index);
     void sliderChanged(int value);
     void updateAudioDevices();
+    void formatChanged(QComboBox *box);
+    void updateRecordingProgress();
+    void updateControlsForRecording();
+    void setRecorder(std::unique_ptr<AudioRecorder> recorder);
 
 private:
+    QVBoxLayout *m_layout = nullptr;
     // Owned by layout
     RenderArea *m_canvas = nullptr;
-    QPushButton *m_modeButton = nullptr;
+    QComboBox *m_modeBox = nullptr;
     QPushButton *m_suspendResumeButton = nullptr;
     QComboBox *m_deviceBox = nullptr;
+    QComboBox *m_periodBox = nullptr;
     QSlider *m_volumeSlider = nullptr;
+    QComboBox *m_formatBox = nullptr;
+    QComboBox *m_rateBox = nullptr;
+    QComboBox *m_channelsBox = nullptr;
+    QPushButton *m_recordButton = nullptr;
+    QProgressBar *m_recordProgressBar = nullptr;
 
     QMediaDevices *m_devices = nullptr;
-    QScopedPointer<AudioInfo> m_audioInfo;
-    QScopedPointer<QAudioSource> m_audioInput;
-    bool m_pullMode = true;
+    QAudioDevice m_currentDevice;
+    std::unique_ptr<AudioInfo> m_audioInfo;
+    std::unique_ptr<QAudioSource> m_audioSource;
+    AudioTestMode m_mode = AudioTestMode::Pull;
+
+    QBasicTimer m_callbackVisualizerTimer;
+    QBasicTimer m_recordingProgressTimer;
+    std::atomic<float> m_level = 0.f;
+
+    std::unique_ptr<AudioRecorder> m_recorder;
 };
 
 #endif // AUDIOINPUT_H

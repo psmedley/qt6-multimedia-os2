@@ -5,7 +5,9 @@
 
 #include <QtMultimedia/qmediadevices.h>
 #include <QtMultimedia/private/qcameradevice_p.h>
+#include <QtMultimedia/private/qmultimedia_ranges_p.h>
 #include <QtCore/qloggingcategory.h>
+#include <QtCore/qset.h>
 #include <QtCore/private/quniquehandle_types_p.h>
 
 #include <common/qgst_p.h>
@@ -20,7 +22,9 @@
 
 QT_BEGIN_NAMESPACE
 
-static Q_LOGGING_CATEGORY(ltVideoDevices, "qt.multimedia.gstreamer.videodevices");
+namespace ranges = QtMultimediaPrivate::ranges;
+
+Q_STATIC_LOGGING_CATEGORY(ltVideoDevices, "qt.multimedia.gstreamer.videodevices");
 
 QGstreamerVideoDevices::QGstreamerVideoDevices(QPlatformMediaIntegration *integration)
     : QPlatformVideoDevices(integration),
@@ -36,6 +40,7 @@ QGstreamerVideoDevices::QGstreamerVideoDevices(QPlatformMediaIntegration *integr
       }
 {
     gst_device_monitor_add_filter(m_deviceMonitor.get(), "Video/Source", nullptr);
+    gst_device_monitor_set_show_all_devices(m_deviceMonitor.get(), true);
 
     m_busObserver.installMessageFilter(this);
     gst_device_monitor_start(m_deviceMonitor.get());
@@ -92,19 +97,22 @@ QList<QCameraDevice> QGstreamerVideoDevices::findVideoInputs() const
             int size = caps.size();
             for (int i = 0; i < size; ++i) {
                 auto cap = caps.at(i);
-                auto pixelFormat = cap.pixelFormat();
+                QList<QVideoFrameFormat::PixelFormat> pixelFormats = cap.pixelFormats();
+
                 auto frameRate = cap.frameRateRange();
 
-                if (pixelFormat == QVideoFrameFormat::PixelFormat::Format_Invalid) {
-                    qCDebug(ltVideoDevices) << "pixel format not supported:" << cap;
+                if (pixelFormats.isEmpty()) {
+                    qCDebug(ltVideoDevices) << "pixel format(s) not supported:" << cap;
                     continue; // skip pixel formats that we don't support
                 }
 
                 auto addFormatForResolution = [&](QSize resolution) {
-                    auto *f = new QCameraFormatPrivate{
-                        QSharedData(), pixelFormat, resolution, frameRate.min, frameRate.max,
-                    };
-                    formats.append(f->create());
+                    for (QVideoFrameFormat::PixelFormat pixelFormat : std::as_const(pixelFormats)){
+                        auto *f = new QCameraFormatPrivate{
+                            QSharedData(), pixelFormat, resolution, frameRate.min, frameRate.max,
+                        };
+                        formats.append(f->create());
+                    }
                     photoResolutions.insert(resolution);
                 };
 
@@ -131,11 +139,34 @@ void QGstreamerVideoDevices::addDevice(QGstDeviceHandle device)
     Q_ASSERT(gst_device_has_classes(device.get(), "Video/Source"));
 
 #if QT_CONFIG(linux_v4l)
-    QUniqueGstStructureHandle structureHandle{
+    QUniqueGstStructureHandle propertiesHandle{
         gst_device_get_properties(device.get()),
     };
+    if (!propertiesHandle.isValid()) {
+        qCDebug(ltVideoDevices) << "Skipping device without extra properties:" << device.get();
+        return;
+    }
 
-    const auto *p = QGstStructureView(structureHandle.get())["device.path"].toString();
+    auto properties = QGstStructureView(propertiesHandle.get());
+
+    // Pipewire devices causes infinite futex wait in gst_pipewire_src_change_state after calling
+    // QGstreamerMediaCaptureSession::setCameraActive() with true, so we skip adding them:
+    if (properties.name().contains("pipewire")) {
+        qCDebug(ltVideoDevices) << "Skipping pipewire device:" << device.get();
+        return;
+    }
+
+    // QTBUG-140092: NXP's CSI video device "imx-capture" may fail. Can be skipped via env var:
+    static const bool skipImxCapture = qEnvironmentVariableIsSet("QT_GSTREAMER_SKIP_IMXCAPTURE");
+    if (skipImxCapture) {
+        const char *name = properties["device.product.name"].toString();
+        if (name && std::strstr(name, "imx-capture")) {
+            qWarning() << Q_FUNC_INFO << "Skipping video device with product name" << name;
+            return;
+        }
+    }
+
+    const auto *p = properties["device.path"].toString();
     if (p) {
         QUniqueFileDescriptorHandle fd{
             qt_safe_open(p, O_RDONLY),
@@ -157,8 +188,13 @@ void QGstreamerVideoDevices::addDevice(QGstDeviceHandle device)
             qCDebug(ltVideoDevices) << "V4L2_CAP_META_CAPTURE device detected" << p;
             return;
         }
-        if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-            qCDebug(ltVideoDevices) << "not a V4L2_CAP_VIDEO_CAPTURE device" << p;
+
+        constexpr uint32_t videoCaptureCapabilities =
+                V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE;
+
+        if (!(cap.capabilities & videoCaptureCapabilities)) {
+            qCDebug(ltVideoDevices)
+                    << "not a V4L2_CAP_VIDEO_CAPTURE or V4L2_CAP_VIDEO_CAPTURE_MPLANE device" << p;
             return;
         }
         if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
@@ -170,8 +206,9 @@ void QGstreamerVideoDevices::addDevice(QGstDeviceHandle device)
         if (::ioctl(fd.get(), VIDIOC_G_INPUT, &index) < 0) {
             switch (errno) {
             case ENOTTY:
-                qCDebug(ltVideoDevices) << "device does not have video inputs" << p;
-                return;
+                qCDebug(ltVideoDevices) << "Device does not support VIDIOC_G_INPUT, but it could"
+                                           "still work" << p;
+                break;
 
             default:
                 qCWarning(ltVideoDevices)
@@ -180,12 +217,13 @@ void QGstreamerVideoDevices::addDevice(QGstDeviceHandle device)
             }
         }
     } else {
-        qCDebug(ltVideoDevices) << "Video device not a v4l2 device:" << structureHandle;
+        qCDebug(ltVideoDevices) << "Video device not a v4l2 device:" << propertiesHandle;
     }
 #endif
 
-    auto it = std::find_if(m_videoSources.begin(), m_videoSources.end(),
-                           [&](const QGstRecordDevice &a) { return a.gstDevice == device; });
+    auto it = ranges::find_if(m_videoSources, [&](const QGstRecordDevice &a) {
+        return a.gstDevice == device;
+    });
 
     if (it != m_videoSources.end())
         return;
@@ -202,8 +240,9 @@ void QGstreamerVideoDevices::addDevice(QGstDeviceHandle device)
 
 void QGstreamerVideoDevices::removeDevice(QGstDeviceHandle device)
 {
-    auto it = std::find_if(m_videoSources.begin(), m_videoSources.end(),
-                           [&](const QGstRecordDevice &a) { return a.gstDevice == device; });
+    auto it = ranges::find_if(m_videoSources, [&](const QGstRecordDevice &a) {
+        return a.gstDevice == device;
+    });
 
     if (it != m_videoSources.end()) {
         m_videoSources.erase(it);
@@ -233,8 +272,9 @@ bool QGstreamerVideoDevices::processBusMessage(const QGstreamerMessage &message)
 
 GstDevice *QGstreamerVideoDevices::videoDevice(const QByteArray &id) const
 {
-    auto it = std::find_if(m_videoSources.begin(), m_videoSources.end(),
-                           [&](const QGstRecordDevice &a) { return a.id == id; });
+    auto it = ranges::find_if(m_videoSources, [&](const QGstRecordDevice &a) {
+        return a.id == id;
+    });
     return it != m_videoSources.end() ? it->gstDevice.get() : nullptr;
 }
 

@@ -15,12 +15,10 @@
 #ifndef QMEDIAPLAYERCONTROL_H
 #define QMEDIAPLAYERCONTROL_H
 
-#include <QtMultimedia/qmediaplayer.h>
-#include <QtMultimedia/qmediatimerange.h>
 #include <QtMultimedia/qaudiodevice.h>
 #include <QtMultimedia/qmediametadata.h>
-
-#include <QtCore/qpair.h>
+#include <QtMultimedia/qmediaplayer.h>
+#include <QtMultimedia/qmediatimerange.h>
 #include <QtCore/private/qglobal_p.h>
 #include <QtCore/qobject.h>
 
@@ -33,8 +31,8 @@ class Q_MULTIMEDIA_EXPORT QPlatformMediaPlayer
 {
 public:
     virtual ~QPlatformMediaPlayer();
-    virtual QMediaPlayer::PlaybackState state() const { return m_state; }
-    virtual QMediaPlayer::MediaStatus mediaStatus() const { return m_status; };
+    QMediaPlayer::PlaybackState state() const { return m_state; }
+    QMediaPlayer::MediaStatus mediaStatus() const { return m_status; }
 
     virtual qint64 duration() const = 0;
 
@@ -76,7 +74,7 @@ public:
     // media streams
     enum TrackType : uint8_t { VideoStream, AudioStream, SubtitleStream, NTrackTypes };
 
-    virtual int trackCount(TrackType) { return 0; };
+    virtual int trackCount(TrackType) { return 0; }
     virtual QMediaMetaData trackMetaData(TrackType /*type*/, int /*streamNumber*/) { return QMediaMetaData(); }
     virtual int activeTrack(TrackType) { return -1; }
     virtual void setActiveTrack(TrackType, int /*streamNumber*/) {}
@@ -116,7 +114,8 @@ public:
 
     void stateChanged(QMediaPlayer::PlaybackState newState);
     void mediaStatusChanged(QMediaPlayer::MediaStatus status);
-    void error(int error, const QString &errorString);
+    void error(QMediaPlayer::Error, const QString &errorString);
+    void setInvalidMediaWithError(QMediaPlayer::Error, const QString &errString);
 
     void resetCurrentLoop() { m_currentLoop = 0; }
     bool doLoop() {
@@ -130,6 +129,17 @@ public:
         m_loops = loops;
         Q_EMIT player->loopsChanged();
     }
+
+    using PitchCompensationAvailability = QMediaPlayer::PitchCompensationAvailability;
+
+    virtual PitchCompensationAvailability pitchCompensationAvailability() const;
+    virtual void setPitchCompensation(bool enabled);
+    virtual bool pitchCompensation() const;
+    void pitchCompensationChanged(bool enabled) const;
+
+    QPlaybackOptions playbackOptions() const;
+
+    bool qmediaplayerDestructorCalled = false;
 
 protected:
     explicit QPlatformMediaPlayer(QMediaPlayer *parent = nullptr);
@@ -169,4 +179,3 @@ QT_END_NAMESPACE
 
 
 #endif  // QMEDIAPLAYERCONTROL_H
-

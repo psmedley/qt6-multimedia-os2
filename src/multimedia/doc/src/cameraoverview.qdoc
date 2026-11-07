@@ -98,45 +98,39 @@ in your application. To perform this check in C++, use the
 \l QMediaDevices::videoInputs() function, as shown in the example below:
 
 
-    \snippet multimedia-snippets/camera.cpp Camera overview check
+    \snippet multimedia-snippets/camerasnippets.cpp Camera overview check
 
 Access a camera using the \l QCamera class in C++ or the \l Camera
 type in QML.
 
-When multiple cameras are available, you can specify which one to use.
+When multiple camera-devices are available, you can specify which one to use.
 
 In C++:
 
-     \snippet multimedia-snippets/camera.cpp Camera selection
+     \snippet multimedia-snippets/camerasnippets.cpp Camera selection
 
 In QML, you can select the camera by setting the \l{Camera::cameraDevice} property.
-You can also select a camera by its physical position on the system rather than
+In C++, you can also select a camera-device by its physical orientation rather than
 by camera info. This is useful on mobile devices, which often have a
 front-facing and a back-facing camera.
 
 In C++:
 
-    \snippet multimedia-snippets/camera.cpp Camera overview position
+    \snippet multimedia-snippets/camerasnippets.cpp Camera overview position
 
-
-In QML, you can set the \c Camera \l{Camera::cameraDevice}{cameraDevice} property.
-Available cameras can be retrieved with MediaDevices.videoInputs
-
-In QML:
-
-\qml
-Camera {
-    position: Camera.FrontFace
-}
-\endqml
-
-
-If both QCameraDevice and position aren't specified, the default camera
-will be used. On desktop platforms, the default camera is set by the
-user in the system settings. On a mobile device, the back-facing camera
-is usually the default camera. You can get the default camera with
-QMediaDevices::defaultVideoInput() or MediaDevices.defaultVideoInput
+If no QCameraDevice is specified, the default device will be used. The
+default device is chosen based on information provided by the operating
+system. On desktop platforms, the default camera is commonly set by the
+end-user in the system settings. On a mobile device, the back-facing
+camera is usually the default camera-device. You can get the default
+camera-device with \l QMediaDevices::defaultVideoInput() in C++, or
+\l{QtMultimedia::MediaDevices::defaultVideoInput}{MediaDevices.defaultVideoInput}
 in QML.
+
+The default camera-device may change over time, i.e as a result of the
+end-user disconnecting the current default camera-device. Application
+developers may track the change by querying the default camera-device
+again when the signal \l QMediaDevices::videoInputsChanged is emitted.
 
 \section2 Preview
 
@@ -167,7 +161,7 @@ In C++, your choice depends on whether you are using widgets, or QGraphicsView.
 The \l QVideoWidget class is used in the widgets case, and \l QGraphicsVideoItem
 is useful for QGraphicsView.
 
-    \snippet multimedia-snippets/camera.cpp Camera overview viewfinder
+    \snippet multimedia-snippets/camerasnippets.cpp Camera overview viewfinder
 
 For advanced usage (like processing preview frames as they come, which enables
 detection of objects or patterns), you can also use your own QVideoSink and set
@@ -175,7 +169,7 @@ that as the videoOutput for the QMediaCaptureSession. In this case, you will nee
 render the preview image yourself by processing the data received from the
 videoFrameChanged() signal.
 
-    \snippet multimedia-snippets/camera.cpp Camera overview surface
+    \snippet multimedia-snippets/camerasnippets.cpp Camera overview surface
 
 On mobile devices, the preview image is by default oriented in the same way as the device.
 Thus, as the user rotates the device, the preview image will switch between portrait and
@@ -190,7 +184,7 @@ After setting up a viewfinder and finding something photogenic, to capture an
 image we need to initialize a new QImageCapture object. All that is then
 needed is to start the camera and capture the image.
 
-    \snippet multimedia-snippets/camera.cpp Camera overview capture
+    \snippet multimedia-snippets/camerasnippets.cpp Camera overview capture
 
 \section2 Movies
 
@@ -200,7 +194,7 @@ video requires the use of a \l QMediaRecorder object.
 To record video we need to create a camera object as before but this time as
 well as creating a viewfinder, we will also initialize a media recorder object.
 
-    \snippet multimedia-snippets/camera.cpp Camera overview movie
+    \snippet multimedia-snippets/camerasnippets.cpp Camera overview movie
 
 Signals from the \e QMediaRecorder can be connected to slots to react to
 changes in the state of the encoding process or error events. Recording
@@ -258,12 +252,6 @@ These settings include:
 
 Most cameras support automatic settings for all of these, so you shouldn't need
 to adjust them unless the user wants a specific setting.
-
-\section3 Canceling Asynchronous Operations
-
-Various operations, such as image capture and auto focusing, occur asynchronously.
-These operations can often be canceled by the start of a new operation, as long
-as this is supported by the camera.
 
 \section1 Examples
 

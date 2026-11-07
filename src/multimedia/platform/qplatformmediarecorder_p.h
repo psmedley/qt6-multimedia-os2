@@ -15,17 +15,18 @@
 #ifndef QPLATFORMMEDIARECORDER_H
 #define QPLATFORMMEDIARECORDER_H
 
-#include <QtCore/qurl.h>
 #include <QtCore/qsize.h>
+#include <QtCore/qurl.h>
+#if QT_CONFIG(mimetype)
 #include <QtCore/qmimetype.h>
-#include <QtCore/qpointer.h>
-#include <QtCore/qiodevice.h>
-
-#include <QtMultimedia/qmediarecorder.h>
-#include <QtMultimedia/qmediametadata.h>
-#include <QtMultimedia/qmediaformat.h>
+#endif
 #include <QtMultimedia/private/qerrorinfo_p.h>
+#include <QtMultimedia/qmediaformat.h>
+#include <QtMultimedia/qmediametadata.h>
+#include <QtMultimedia/qmediarecorder.h>
 #include <QtCore/private/qglobal_p.h>
+#include <QtCore/qiodevice.h>
+#include <QtCore/qpointer.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -57,8 +58,17 @@ public:
     QMediaFormat::FileFormat fileFormat() const { return mediaFormat().fileFormat(); }
     QMediaFormat::VideoCodec videoCodec() const { return mediaFormat().videoCodec(); }
     QMediaFormat::AudioCodec audioCodec() const { return mediaFormat().audioCodec(); }
+#if QT_CONFIG(mimetype)
     QMimeType mimeType() const { return mediaFormat().mimeType(); }
-    QString preferredSuffix() const { return mimeType().preferredSuffix(); }
+#endif
+    QString preferredSuffix() const
+    {
+#if QT_CONFIG(mimetype)
+        return mimeType().preferredSuffix();
+#else
+        return QStringLiteral("");
+#endif
+    }
 
     QMediaRecorder::EncodingMode encodingMode() const { return m_encodingMode; }
     void setEncodingMode(QMediaRecorder::EncodingMode mode) { m_encodingMode = mode; }

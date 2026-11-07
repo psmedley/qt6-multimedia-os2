@@ -9,6 +9,9 @@ qt_internal_add_module(MultimediaWidgets
     SOURCES
         qtmultimediawidgetsglobal.h
         qvideowidget.cpp qvideowidget.h qvideowidget_p.h
+    DEFINES
+        QT_NO_CAST_FROM_ASCII
+        QT_NO_CAST_TO_ASCII
     LIBRARIES
         Qt::MultimediaPrivate
         Qt::WidgetsPrivate
@@ -20,7 +23,6 @@ qt_internal_add_module(MultimediaWidgets
     PRIVATE_MODULE_INTERFACE
         Qt::MultimediaPrivate
         Qt::WidgetsPrivate
-    OS2_SHORT_NAME Qt6MMWid
 )
 
 ## Scopes:

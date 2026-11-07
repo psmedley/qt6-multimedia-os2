@@ -31,11 +31,9 @@ class Renderer : public PlaybackEngineObject
 {
     Q_OBJECT
 public:
-    using TimePoint = RealClock::time_point;
+    using TimePoint = SteadyClock::time_point;
 
-    Renderer(const TimeController &tc);
-
-    void syncSoft(TimePoint tp, TrackPosition trackPos);
+    Renderer(const PlaybackEngineObjectID &id, const TimeController &tc);
 
     TrackPosition seekPosition() const;
 
@@ -47,22 +45,24 @@ public:
 
     bool isStepForced() const;
 
-    void start(const TimeController &tc);
+    void setTimeController(const TimeController &tc);
+
+    void seek(quint64 sessionId, const TimeController &tc, const LoopOffset &offset);
 
 public slots:
 
-    void onFinalFrameReceived();
+    void onFinalFrameReceived(PlaybackEngineObjectID sourceID);
 
     void render(Frame);
 
 signals:
     void frameProcessed(Frame);
 
-    void synchronized(Id id, TimePoint tp, TrackPosition pos);
+    void synchronized(PlaybackEngineObjectID id, TimePoint tp, TrackPosition pos);
 
     void forceStepDone();
 
-    void loopChanged(Id id, TrackPosition offset, int index);
+    void loopChanged(PlaybackEngineObjectID id, TrackPosition offset, int index);
 
 protected:
     bool setForceStepDone();
@@ -71,7 +71,9 @@ protected:
 
     bool canDoNextStep() const override;
 
-    std::chrono::milliseconds timerInterval() const override;
+    TimePoint nextTimePoint() const override;
+
+    virtual void seekInternal() { }
 
     virtual void onPlaybackRateChanged() { }
 
@@ -86,7 +88,7 @@ protected:
     float playbackRate() const;
 
     std::chrono::microseconds frameDelay(const Frame &frame,
-                                         TimePoint timePoint = RealClock::now()) const;
+                                         TimePoint timePoint = SteadyClock::now()) const;
 
     void changeRendererTime(std::chrono::microseconds offset);
 
@@ -107,17 +109,19 @@ private:
     void doNextStep() override;
 
 private:
-    TimeController m_timeController;
-    TrackPosition m_lastFrameEnd = TrackPosition(0);
-    QAtomicInteger<qint64> m_lastPosition = 0;
-    QAtomicInteger<qint64> m_seekPos = 0;
+    struct SessionContext
+    {
+        TimeController timeController;
+        int loopIndex = 0;
+        TrackPosition lastFrameEnd = timeController.currentPosition();
+        QAtomicInteger<qint64> lastPosition = lastFrameEnd.get();
+        QAtomicInteger<qint64> seekPos = lastFrameEnd.get();
+        QQueue<Frame> frames = {};
+        std::optional<TimePoint> explicitNextFrameTime = {};
+    };
 
-    int m_loopIndex = 0;
-    QQueue<Frame> m_frames;
-
+    SessionContext m_sessionCtx;
     QAtomicInteger<bool> m_isStepForced = false;
-    bool m_started = false;
-    std::optional<TimePoint> m_explicitNextFrameTime;
 };
 
 } // namespace QFFmpeg

@@ -8,6 +8,7 @@ qt_internal_add_plugin(QWasmMediaPlugin
         qwasmmediaintegration.cpp qwasmmediaintegration_p.h
         mediaplayer/qwasmmediaplayer.cpp mediaplayer/qwasmmediaplayer_p.h
         mediaplayer/qwasmvideosink.cpp mediaplayer/qwasmvideosink_p.h
+        common/qwasmgltexturevideobuffer.cpp common/qwasmgltexturevideobuffer_p.h
         common/qwasmvideooutput.cpp common/qwasmvideooutput_p.h
         common/qwasmaudiooutput.cpp common/qwasmaudiooutput_p.h
         common/qwasmaudioinput.cpp common/qwasmaudioinput_p.h
@@ -15,14 +16,20 @@ qt_internal_add_plugin(QWasmMediaPlugin
         mediacapture/qwasmmediarecorder.cpp mediacapture/qwasmmediarecorder_p.h
         mediacapture/qwasmcamera.cpp mediacapture/qwasmcamera_p.h
         mediacapture/qwasmimagecapture.cpp  mediacapture/qwasmimagecapture_p.h
+        mediacapture/qwasmwindowcapture.cpp  mediacapture/qwasmwindowcapture_p.h
+        mediacapture/qwasmscreencapture.cpp  mediacapture/qwasmscreencapture_p.h
+        mediacapture/qwasmcapturablewindows.cpp  mediacapture/qwasmcapturablewindows_p.h
     INCLUDE_DIRECTORIES
         common
         mediaplayer
         mediacapture
+    DEFINES
+        QT_NO_CAST_FROM_ASCII
+        QT_NO_CAST_TO_ASCII
     LIBRARIES
         Qt::MultimediaPrivate
         Qt::CorePrivate
-        openal
 )
+
 
 target_link_libraries(QWasmMediaPlugin PUBLIC embind)

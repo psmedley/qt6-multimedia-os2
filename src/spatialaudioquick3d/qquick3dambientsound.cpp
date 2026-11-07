@@ -1,12 +1,12 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-3.0-only
+
 #include "qquick3dambientsound_p.h"
-#include "qquick3daudioengine_p.h"
-#include "qambientsound.h"
-#include <QAudioFormat>
-#include <qdir.h>
-#include <QQmlContext>
-#include <QQmlFile>
+
+#include <QtMultimediaQuick/private/qqmlcontext_source_resolver_p.h>
+#include <QtQuick3DSpatialAudio/private/qquick3daudioengine_p.h>
+#include <QtSpatialAudio/qambientsound.h>
+#include <QtSpatialAudio/private/qspatialaudiosound_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -31,6 +31,10 @@ QQuick3DAmbientSound::QQuick3DAmbientSound()
     connect(m_sound, &QAmbientSound::volumeChanged, this, &QQuick3DAmbientSound::volumeChanged);
     connect(m_sound, &QAmbientSound::loopsChanged, this, &QQuick3DAmbientSound::loopsChanged);
     connect(m_sound, &QAmbientSound::autoPlayChanged, this, &QQuick3DAmbientSound::autoPlayChanged);
+
+    auto *soundPrivate = static_cast<QSpatialAudioSoundPrivate *>(QObjectPrivate::get(m_sound));
+    soundPrivate->m_sourceResolver =
+            std::make_unique<QMultimediaPrivate::QQmlContextSourceResolver>(this);
 }
 
 QQuick3DAmbientSound::~QQuick3DAmbientSound()
@@ -48,17 +52,9 @@ QUrl QQuick3DAmbientSound::source() const
     return m_sound->source();
 }
 
-void QQuick3DAmbientSound::setSource(QUrl source)
+void QQuick3DAmbientSound::setSource(const QUrl& source)
 {
-    const QQmlContext *context = qmlContext(this);
-    QUrl url;
-    if (context) {
-        url = context->resolvedUrl(source);
-    } else {
-        url = QUrl::fromLocalFile(QDir::currentPath() + u"/");
-        url = url.resolved(source);
-    }
-    m_sound->setSource(url);
+    m_sound->setSource(source);
 }
 
 /*!
@@ -113,7 +109,7 @@ void QQuick3DAmbientSound::setAutoPlay(bool autoPlay)
 }
 
 /*!
-    \qmlmethod AmbientSound::play()
+    \qmlmethod void AmbientSound::play()
 
     Starts playing back the sound. Does nothing if the sound is already playing.
  */
@@ -123,7 +119,7 @@ void QQuick3DAmbientSound::play()
 }
 
 /*!
-    \qmlmethod AmbientSound::pause()
+    \qmlmethod void AmbientSound::pause()
 
     Pauses sound playback at the current position. Calling play() will continue playback.
  */
@@ -133,7 +129,7 @@ void QQuick3DAmbientSound::pause()
 }
 
 /*!
-    \qmlmethod AmbientSound::stop()
+    \qmlmethod void AmbientSound::stop()
 
     Stops sound playback and resets the current position and loop count to 0. Calling play() will
     begin playback at the beginning of the sound file.

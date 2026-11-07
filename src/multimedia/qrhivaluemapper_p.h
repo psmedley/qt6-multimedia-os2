@@ -16,6 +16,7 @@
 //
 
 #include <QtMultimedia/qtmultimediaglobal.h>
+#include <QtMultimedia/private/qmultimedia_ranges_p.h>
 
 #include <qreadwritelock.h>
 
@@ -107,11 +108,19 @@ public:
         return { &rhiIt->second, rhiAdded };
     }
 
-    Value *get(QRhi &rhi) const
+    Value *get(QRhi *rhi) const
     {
         QReadLocker locker(&m_data->lock);
-        auto rhiIt = m_data->storage.find(&rhi);
+        auto rhiIt = m_data->storage.find(rhi);
         return rhiIt == m_data->storage.end() ? nullptr : &rhiIt->second;
+    }
+
+    template <typename Functor>
+    Value &getOrCreate(QRhi &rhi, Functor &&factory)
+    {
+        if (Value *value = get(&rhi))
+            return *value;
+        return *tryMap(rhi, factory()).first;
     }
 
     //    To be added for thread-safe value read:
@@ -137,9 +146,11 @@ public:
     {
         QReadLocker locker(&m_data->lock);
         auto &storage = m_data->storage;
+        namespace ranges = QtMultimediaPrivate::ranges;
 
-        auto it = std::find_if(storage.begin(), storage.end(),
-                               [&p](auto &rhiItem) { return p(*rhiItem.first); });
+        auto it = ranges::find_if(storage, [&](auto &rhiItem) {
+            return p(*rhiItem.first);
+        });
         return it == storage.end() ? nullptr : it->first;
     }
 

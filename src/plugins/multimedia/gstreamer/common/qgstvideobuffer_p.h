@@ -23,31 +23,30 @@
 
 QT_BEGIN_NAMESPACE
 class QVideoFrameFormat;
-class QGstreamerVideoSink;
 class QOpenGLContext;
 
 class QGstVideoBuffer final : public QHwVideoBuffer
 {
 public:
-    QGstVideoBuffer(QGstBufferHandle buffer, const GstVideoInfo &info, QGstreamerVideoSink *sink,
-                    const QVideoFrameFormat &frameFormat, QGstCaps::MemoryFormat format);
+    QGstVideoBuffer(QGstBufferHandle buffer, const QGstVideoInfo &videoInfo,
+                    const QVideoFrameFormat &frameFormat);
     ~QGstVideoBuffer() override;
 
     MapData map(QVideoFrame::MapMode mode) override;
     void unmap() override;
 
+    bool isDmaBuf() const override;
+
     QVideoFrameTexturesUPtr mapTextures(QRhi &, QVideoFrameTexturesUPtr& /*oldTextures*/) override;
+    GstBuffer *gstBuffer() const { return m_buffer.get(); }
 
 private:
-    const QGstCaps::MemoryFormat memoryFormat = QGstCaps::CpuMemory;
+    const QGstCaps::MemoryFormat m_memoryFormat = QGstCaps::CpuMemory;
     const QVideoFrameFormat m_frameFormat;
-    QRhi *m_rhi = nullptr;
-    mutable GstVideoInfo m_videoInfo;
+    QGstVideoInfo m_videoInfo;
     mutable GstVideoFrame m_frame{};
     const QGstBufferHandle m_buffer;
     QVideoFrame::MapMode m_mode = QVideoFrame::NotMapped;
-    Qt::HANDLE eglDisplay = nullptr;
-    QFunctionPointer eglImageTargetTexture2D = nullptr;
 };
 
 QT_END_NAMESPACE

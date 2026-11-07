@@ -1,22 +1,28 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
-#include <qmediaplayer.h>
-#include <qvideoframe.h>
-#include <qdebug.h>
+#include <QtCore/qdebug.h>
+#include <QtCore/qthreadpool.h>
 
-#include <private/mediafileselector_p.h>
-#include <private/mediabackendutils_p.h>
-#include <private/testvideosink_p.h>
-#include "private/qvideotexturehelper_p.h"
-#include "private/qvideowindow_p.h"
-#include <thread>
+#include <QtGui/rhi/qrhi.h>
 
+#include <QtMultimedia/qmediaplayer.h>
+#include <QtMultimedia/qvideoframe.h>
 
-QT_USE_NAMESPACE
+#include <QtMultimedia/private/qthreadlocalrhi_p.h>
+#include <QtMultimedia/private/qvideotexturehelper_p.h>
+#include <QtMultimedia/private/qvideowindow_p.h>
 
-class tst_QVideoFrameBackend : public QObject
+#include <QtMultimediaTestLib/private/mediabackendutils_p.h>
+#include <QtMultimediaTestLib/private/qintegrationtestbase_p.h>
+#include <QtMultimediaTestLib/private/mediafileselector_p.h>
+#include <QtMultimediaTestLib/private/testvideosink_p.h>
+
+#include <QtTest/qtest.h>
+
+#include <list>
+
+class tst_QVideoFrameBackend : public QIntegrationTestBase
 {
     Q_OBJECT
 
@@ -34,6 +40,7 @@ private slots:
     void toImage_rendersUpdatedFrame_afterMappingInWriteModeAndModifying_data();
     void toImage_rendersUpdatedFrame_afterMappingInWriteModeAndModifying();
 
+    void toImage_returnsImage_whenCalledFromSeparateThreadAndWhileRenderingToWindow_data();
     void toImage_returnsImage_whenCalledFromSeparateThreadAndWhileRenderingToWindow();
 
 private:
@@ -47,8 +54,8 @@ private:
     void addMediaPlayerFrameTestData(F &&f);
 
 private:
-    MaybeUrl m_oneRedFrameVideo = QUnexpect{};
-    MaybeUrl m_colorsVideo = QUnexpect{};
+    MaybeUrl m_oneRedFrameVideo{ q23::unexpect };
+    MaybeUrl m_colorsVideo{ q23::unexpect };
     MediaFileSelector m_mediaSelector;
 };
 
@@ -87,11 +94,22 @@ void tst_QVideoFrameBackend::addMediaPlayerFrameTestData(F &&f)
         return;
     }
 
+    if (isOhosPlatform()) {
+        // createMediaPlayerFrame returns an invalid frame on OHOS because the
+        // OHOS video output cannot deliver textures into a bare QVideoSink
+        // that has no live RHI.
+        qWarning() << "createMediaPlayerFrame returns no frame on OHOS";
+        return;
+    }
+
     f();
 }
 
 void tst_QVideoFrameBackend::initTestCase()
 {
+    if (!initIntegrationTestCase())
+        return;
+
 #ifdef Q_OS_ANDROID
     qWarning() << "Skip media selection, QTBUG-118571";
     return;
@@ -105,6 +123,9 @@ void tst_QVideoFrameBackend::testMediaFilesAreSupported()
 {
 #ifdef Q_OS_ANDROID
     QSKIP("Skip test cases with mediaPlayerFrame on Android CI, because of QTBUG-118571");
+#endif
+#ifdef Q_OS_HARMONY
+    QSKIP("OHOS demuxer rejects some H.264/HEVC/AV1 profiles used by the test media");
 #endif
 
     QCOMPARE(m_mediaSelector.dumpErrors(), "");
@@ -181,6 +202,10 @@ void tst_QVideoFrameBackend::toImage_rendersUpdatedFrame_afterMappingInWriteMode
     QFETCH(const FrameCreator, frameCreator);
     QFETCH(const QVideoFrame::MapMode, mapMode);
 
+    if (isWMFPlatform())
+        // TODO: WMF backend only supports WriteOnly mapping
+        QSKIP("WMF backend does not support WriteOnly mapping");
+
     // Arrange
 
     QVideoFrame frame = std::invoke(frameCreator, this);
@@ -218,11 +243,33 @@ void tst_QVideoFrameBackend::toImage_rendersUpdatedFrame_afterMappingInWriteMode
     QCOMPARE(originalImage.pixel(1, 1), modifiedImage.pixel(1, 1));
 }
 
+void tst_QVideoFrameBackend::toImage_returnsImage_whenCalledFromSeparateThreadAndWhileRenderingToWindow_data()
+{
+    QTest::addColumn<QRhi::Implementation>("backend");
+
+#if QT_CONFIG(opengl)
+    QTest::newRow("OpenGL") << QRhi::OpenGLES2;
+#endif
+#if QT_CONFIG(metal)
+    QTest::newRow("Metal") << QRhi::Metal;
+#endif
+#if defined(Q_OS_WIN)
+    QTest::newRow("D3D11") << QRhi::D3D11;
+#endif
+}
+
 void tst_QVideoFrameBackend::toImage_returnsImage_whenCalledFromSeparateThreadAndWhileRenderingToWindow()
 {
+    QFETCH(QRhi::Implementation, backend);
+
+#ifdef Q_OS_HARMONY
+    QSKIP("OHOS demuxer rejects the H.264 profile used by colors.mp4");
+#endif
+
     if (isCI()) {
 #ifdef Q_OS_MACOS
-        QSKIP("SKIP on macOS because of crash and error \"Failed to create QWindow::MetalSurface. Metal is not supported by any of the GPUs in this system.\"");
+        if (backend == QRhi::Metal)
+            QSKIP("SKIP on macOS because of crash and error \"Failed to create QWindow::MetalSurface. Metal is not supported by any of the GPUs in this system.\"");
 #elif defined(Q_OS_ANDROID)
         QSKIP("SKIP initTestCase on CI, because of QTBUG-118571");
 #endif
@@ -237,27 +284,39 @@ void tst_QVideoFrameBackend::toImage_returnsImage_whenCalledFromSeparateThreadAn
     player.setVideoOutput(&window);
 
     const QVideoSink *sink = window.videoSink();
-    std::vector<QImage> images;
+    std::list<QImage> images;
+
+    QThreadPool threadPool;
+    threadPool.setMaxThreadCount(4);
 
     // act
     connect(sink, &QVideoSink::videoFrameChanged, sink, [&](const QVideoFrame &frame) {
+        if (!frame.isValid())
+            return; // ignore last frame
 
-        // Run toImage on separate thread to exercise special code path
-        QImage image;
-        auto t = std::thread([&] { image = frame.toImage(); });
-        t.join();
+        images.push_back({});
 
-        if (!image.isNull())
-            images.push_back(image);
+        threadPool.start([it = std::prev(images.end()), frame, backend]() {
+            qSetPreferredThreadLocalRhiBackend(backend);
+            *it = frame.toImage();
+        });
     });
 
     // Arrange some more
     player.setSource(*m_colorsVideo);
-    player.setLoops(10);
+    player.setLoops(5);
+    player.setPlaybackRate(5.f);
     player.play();
 
-    // assert
-    QTRY_COMPARE_GE_WITH_TIMEOUT(images.size(), 10u, std::chrono::seconds(60) );
+    QTRY_COMPARE_GE_WITH_TIMEOUT(images.size(), 25u, std::chrono::seconds(60));
+    player.stop();
+
+    QVERIFY(threadPool.waitForDone(std::chrono::seconds(60)));
+
+    const size_t validImagesCount = std::count_if(
+            images.begin(), images.end(), [](const QImage &image) { return !image.isNull(); });
+
+    QCOMPARE(validImagesCount, images.size());
 }
 
 QTEST_MAIN(tst_QVideoFrameBackend)

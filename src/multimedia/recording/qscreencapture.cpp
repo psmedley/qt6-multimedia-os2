@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qscreencapture.h"
-#include "qmediacapturesession.h"
-#include <private/qplatformmediaintegration_p.h>
-#include <private/qplatformsurfacecapture_p.h>
-#include <private/qobject_p.h>
+
+#include <QtCore/private/qobject_p.h>
+
+#include <QtMultimedia/qmediacapturesession.h>
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+#include <QtMultimedia/private/qplatformsurfacecapture_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -31,10 +33,13 @@ public:
     \brief This class is used for capturing a screen.
 
     The class captures a screen. It is managed by
-    the QMediaCaptureSession class where the captured screen can be displayed
+    the \l QMediaCaptureSession class where the captured screen can be displayed
     in a video preview object or recorded to a file.
 
-    \snippet multimedia-snippets/media.cpp Media recorder
+    The following snippet shows how to capture the primary screen and display
+    the result in a QVideoWidget:
+
+    \snippet multimedia-snippets/screencapturesnippets.cpp Basic setup
 
     \include qscreencapture-limitations.qdocinc {content} {Q}
 
@@ -48,27 +53,17 @@ public:
     \inqmlmodule QtMultimedia
     \ingroup multimedia_qml
     \ingroup multimedia_video_qml
+    \since 6.5
 
     ScreenCapture captures a screen. It is managed by
-    MediaCaptureSession where the captured screen can be displayed
-    in a video preview object or recorded to a file.
+    \l{QtMultimedia::CaptureSession}{CaptureSession} where the captured
+    screen can be displayed in a video preview object or recorded to a
+    file.
 
-    \since 6.5
     The code below shows a simple capture session with ScreenCapture playing
-    back the captured primary screen view in VideoOutput.
+    back the captured primary screen view in \l {QtMultimedia::VideoOutput}{VideoOutput}.
 
-\qml
-    CaptureSession {
-        id: captureSession
-        screenCapture: ScreenCapture {
-            id: screenCapture
-            active: true
-        }
-        videoOutput: VideoOutput {
-            id: videoOutput
-        }
-    }
-\endqml
+    \snippet multimedia-snippets/screencapturesnippets.qml Basic setup
 
     \include qscreencapture-limitations.qdocinc {content} {}
 
@@ -87,14 +82,17 @@ QScreenCapture::QScreenCapture(QObject *parent)
         connect(platformCapture, &QPlatformSurfaceCapture::errorChanged, this,
                 &QScreenCapture::errorChanged);
         connect(platformCapture, &QPlatformSurfaceCapture::errorOccurred, this,
-                [this](QPlatformSurfaceCapture::Error error, QString errorString) {
-                    emit errorOccurred(toScreenCaptureError(error), errorString);
-                });
+                [this](QPlatformSurfaceCapture::Error error, const QString &errorString) {
+            emit errorOccurred(toScreenCaptureError(error), errorString);
+        });
 
         connect(platformCapture,
                 qOverload<QPlatformSurfaceCapture::ScreenSource>(
                         &QPlatformSurfaceCapture::sourceChanged),
                 this, &QScreenCapture::screenChanged);
+
+        connect(platformCapture, &QPlatformSurfaceCapture::frameRateChanged, this,
+                &QScreenCapture::maximumFrameRateChanged);
 
         d->platformScreenCapture.reset(platformCapture);
     }
@@ -127,8 +125,8 @@ QScreenCapture::~QScreenCapture()
 /*!
     Returns the capture session this QScreenCapture is connected to.
 
-    Use QMediaCaptureSession::setScreenCapture() to connect the camera to
-    a session.
+    Use QMediaCaptureSession::setScreenCapture() to connect the screen capture
+    to a session.
 */
 QMediaCaptureSession *QScreenCapture::captureSession() const
 {
@@ -140,11 +138,15 @@ QMediaCaptureSession *QScreenCapture::captureSession() const
 /*!
     \qmlproperty bool QtMultimedia::ScreenCapture::active
     Describes whether the capturing is currently active.
+
+    \sa start(), stop()
 */
 
 /*!
     \property QScreenCapture::active
     \brief whether the capturing is currently active.
+
+    \sa start(), stop()
 */
 void QScreenCapture::setActive(bool active)
 {
@@ -164,11 +166,21 @@ bool QScreenCapture::isActive() const
 /*!
     \qmlproperty Screen QtMultimedia::ScreenCapture::screen
     Describes the screen for capturing.
+
+    If null \c Screen is set, the primary screen will be selected
+    when the \c ScreenCapture instance gets activated.
+
+    \sa {QtQuick::Application::screens}{Application.screens}
 */
 
 /*!
     \property QScreenCapture::screen
     \brief the screen for capturing.
+
+    If null \l QScreen is set, \l QGuiApplication::primaryScreen will be selected
+    when the \c QScreenCapture instance gets activated.
+
+    \sa QGuiApplication::screens(), QGuiApplication::primaryScreen()
 */
 
 void QScreenCapture::setScreen(QScreen *screen)
@@ -189,8 +201,28 @@ QScreen *QScreenCapture::screen() const
 }
 
 /*!
+    \qmlsignal QtMultimedia::ScreenCapture::errorChanged()
+
+    This signal is emitted when the \l{error} or \l{errorString} properties are changed.
+
+    This signal is not emitted whenever multiple identical errors are raised. To track such
+    errors, use the signal \l errorOccurred.
+*/
+
+/*!
+    \fn void QScreenCapture::errorChanged()
+
+    This signal is emitted when the \l{error} or \l{errorString} properties are changed.
+
+    This signal is not emitted whenever multiple identical errors are raised. To track such
+    errors, use the signal \l errorOccurred.
+*/
+
+/*!
     \qmlproperty enumeration QtMultimedia::ScreenCapture::error
     Returns a code of the last error.
+
+    \qmlenumeratorsfrom QScreenCapture::Error
 */
 
 /*!
@@ -205,6 +237,17 @@ QScreenCapture::Error QScreenCapture::error() const
                                     : CapturingNotSupported;
 }
 
+/*!
+    \qmlsignal QtMultimedia::ScreenCapture::errorOccurred(int error, string errorString)
+
+    Signals when an \a error occurs, along with the \a errorString.
+
+    For the error parameter, see the enumeration table in
+    \l {QtMultimedia::ScreenCapture::error}{error} for what values may
+    be passed.
+
+    \sa {QtMultimedia::ScreenCapture::error}{error}
+*/
 /*!
     \fn void QScreenCapture::errorOccurred(QScreenCapture::Error error, const QString &errorString)
 
@@ -224,17 +267,67 @@ QString QScreenCapture::errorString() const
     Q_D(const QScreenCapture);
 
     return d->platformScreenCapture ? d->platformScreenCapture->errorString()
-                                    : QLatin1StringView("Capturing is not support on this platform");
+                                    : QLatin1StringView("Capturing is not supported on this platform");
 }
+
+/*!
+    \since 6.12
+    \property QScreenCapture::maximumFrameRate
+    \brief The screen capture frame rate upper limit.
+
+    This can be set to override the capture frame rate used by default based on
+    e.g. display refresh rate, but only as an upper limit since screen capture
+    produces frames at a variable rate. Setting this higher than the display
+    refresh rate is not recommended and can cause errors.
+
+    Any changes to this property are applied the next time the QScreenCapture
+    goes active.
+*/
+void QScreenCapture::setMaximumFrameRate(std::optional<qreal> frameRate)
+{
+    Q_D(QScreenCapture);
+
+    if (d->platformScreenCapture)
+        d->platformScreenCapture->setFrameRate(frameRate);
+}
+
+std::optional<qreal> QScreenCapture::maximumFrameRate() const
+{
+    Q_D(const QScreenCapture);
+
+    return d->platformScreenCapture ? d->platformScreenCapture->frameRate() : std::nullopt;
+}
+
+/*!
+    \qmlmethod void QtMultimedia::ScreenCapture::start()
+
+    Starts capturing the \l screen.
+
+    This is equivalent to setting the \l active property to \c true.
+*/
+
 /*!
     \fn void QScreenCapture::start()
 
-    Starts screen capture.
+    Starts capturing the \l screen.
+
+    This is equivalent to setting the \l active property to true.
 */
+
+/*!
+    \qmlmethod void QtMultimedia::ScreenCapture::stop()
+
+    Stops capturing.
+
+    This is equivalent to setting the \l active property to \c false.
+*/
+
 /*!
     \fn void QScreenCapture::stop()
 
-    Stops screen capture.
+    Stops capturing.
+
+    This is equivalent to setting the \l active property to false.
 */
 /*!
     \internal

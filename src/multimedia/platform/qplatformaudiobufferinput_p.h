@@ -4,8 +4,8 @@
 #ifndef QPLATFORMAUDIOBUFFERINPUT_P_H
 #define QPLATFORMAUDIOBUFFERINPUT_P_H
 
-#include "qaudioformat.h"
-#include "qaudiobuffer.h"
+#include <QtMultimedia/qaudiobuffer.h>
+#include <QtMultimedia/qaudioformat.h>
 
 //
 //  W A R N I N G

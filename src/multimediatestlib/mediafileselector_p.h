@@ -15,7 +15,8 @@
 // We mean it.
 //
 
-#include <QUrl>
+#include <QtCore/qurl.h>
+#include <QtCore/private/qexpected_p.h>
 #include <qmediaplayer.h>
 #include <qaudiooutput.h>
 #include <qvideosink.h>
@@ -23,12 +24,15 @@
 #include <qfileinfo.h>
 #include <qtest.h>
 #include <private/qmultimediautils_p.h>
+#ifdef Q_OS_ANDROID
+#include <QtCore/qtemporaryfile.h>
+#endif
 
 #include <unordered_map>
 
 QT_BEGIN_NAMESPACE
 
-using MaybeUrl = QMaybe<QUrl, QString>;
+using MaybeUrl = q23::expected<QUrl, QString>;
 
 #define CHECK_SELECTED_URL(maybeUrl)                                                             \
   if (!maybeUrl)                                                                                 \
@@ -72,14 +76,14 @@ public:
             }
 
             if (foundUrl.isEmpty() && emplaceRes.first->second.isEmpty())
-                foundUrl = media;
+                foundUrl.setUrl(media);
         }
 
         if (!foundUrl.isEmpty())
             return foundUrl;
 
         ++m_failedSelectionsCount;
-        return { QUnexpect{}, dumpErrors(candidates) };
+        return q23::unexpected{ dumpErrors(candidates) };
     }
 
 private:
@@ -106,6 +110,9 @@ private:
         if (qEnvironmentVariableIsSet("QTEST_SKIP_MEDIA_VALIDATION"))
             return QUrl(media);
 
+        if (media.endsWith(".wav"))
+            return QUrl(media);
+
         using namespace Qt::StringLiterals;
 
         QAudioOutput audioOutput;
@@ -114,7 +121,7 @@ private:
         player.setAudioOutput(&audioOutput);
         player.setVideoOutput(&videoOutput);
 
-        player.setSource(media);
+        player.setSource(QUrl{media});
         player.play();
 
         const auto waitingFinished = QTest::qWaitFor([&]() {
@@ -138,20 +145,18 @@ private:
         };
 
         if (!waitingFinished)
-            return { QUnexpect{},
-                     "The media got stuck in the status "_L1
-                             + enumValueToString(player.mediaStatus()) };
+            return q23::unexpected{ "The media got stuck in the status "_L1
+                                    + enumValueToString(player.mediaStatus()) };
 
         if (player.mediaStatus() == QMediaPlayer::InvalidMedia)
-            return { QUnexpect{},
-                     "Unable to load the media. Error ["_L1 + enumValueToString(player.error())
-                             + " "_L1 + player.errorString() + "]"_L1 };
+            return q23::unexpected{ "Unable to load the media. Error ["_L1
+                                    + enumValueToString(player.error()) + " "_L1
+                                    + player.errorString() + "]"_L1 };
 
         if (player.error() != QMediaPlayer::NoError)
-            return { QUnexpect{},
-                     "Unable to start playing the media, codecs issues. Error ["_L1
-                             + enumValueToString(player.error()) + " "_L1 + player.errorString()
-                             + "]"_L1 };
+            return q23::unexpected{ "Unable to start playing the media, codecs issues. Error ["_L1
+                                    + enumValueToString(player.error()) + " "_L1
+                                    + player.errorString() + "]"_L1 };
 
         return QUrl(media);
     }

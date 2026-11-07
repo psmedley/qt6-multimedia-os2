@@ -3,11 +3,10 @@
 
 // TESTED_COMPONENT=src/multimedia
 
-#include <QtTest/QtTest>
+#include <QtTest/qtest.h>
 #include <private/qvideotransformation_p.h>
 #include <map>
 
-QT_USE_NAMESPACE
 
 using namespace QtVideo;
 
@@ -15,8 +14,8 @@ struct VideoTransformationLess
 {
     bool operator()(const VideoTransformation &lhs, const VideoTransformation &rhs) const
     {
-        return std::tie(lhs.rotation, lhs.mirrorredHorizontallyAfterRotation)
-                < std::tie(rhs.rotation, rhs.mirrorredHorizontallyAfterRotation);
+        return std::tie(lhs.rotation, lhs.mirroredHorizontallyAfterRotation)
+                < std::tie(rhs.rotation, rhs.mirroredHorizontallyAfterRotation);
     }
 };
 
@@ -95,7 +94,7 @@ void tst_VideoTransformation::defaultConstructor_setsNoTransform()
 {
     VideoTransformation transform;
     QCOMPARE(transform.rotation, QtVideo::Rotation::None);
-    QVERIFY(!transform.mirrorredHorizontallyAfterRotation);
+    QVERIFY(!transform.mirroredHorizontallyAfterRotation);
 }
 
 void tst_VideoTransformation::rotationIndex_returnsIndexAccordingToRotation_data()

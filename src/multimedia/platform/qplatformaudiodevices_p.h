@@ -15,11 +15,12 @@
 // We mean it.
 //
 
-#include <QtCore/qlist.h>
-#include <QtCore/qobject.h>
 #include <QtMultimedia/private/qaudiodevice_p.h>
 #include <QtMultimedia/private/qcachedvalue_p.h>
 #include <QtMultimedia/private/qtmultimediaglobal_p.h>
+#include <QtCore/qlist.h>
+#include <QtCore/qobject.h>
+
 #include <memory>
 
 QT_BEGIN_NAMESPACE
@@ -48,15 +49,13 @@ public:
     virtual QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
                                                 QObject *parent);
 
-    QPlatformAudioSource *audioInputDevice(const QAudioFormat &format,
-                                           const QAudioDevice &deviceInfo, QObject *parent);
-    QPlatformAudioSink *audioOutputDevice(const QAudioFormat &format,
-                                          const QAudioDevice &deviceInfo, QObject *parent);
-
-    virtual void prepareAudio();
+    QPlatformAudioSource *audioInputDevice(QAudioFormat, const QAudioDevice &, QObject *parent);
+    QPlatformAudioSink *audioOutputDevice(QAudioFormat, const QAudioDevice &, QObject *parent);
 
     void initVideoDevicesConnection();
     virtual QLatin1String backendName() const { return QLatin1String{ "null" }; }
+
+    virtual bool hasCallbackApi() const;
 
 protected:
     virtual QList<QAudioDevice> findAudioInputs() const { return {}; }

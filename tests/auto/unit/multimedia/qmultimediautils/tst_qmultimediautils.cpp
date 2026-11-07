@@ -1,11 +1,16 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
+#include <QtTest/qtest.h>
 #include <QDebug>
 #include <private/qmultimediautils_p.h>
 #include <qvideoframeformat.h>
 #include <qvideoframe.h>
+
+#ifdef Q_OS_APPLE
+#  include <private/qapple_utils_p.h>
+#  include <CoreAudioTypes/CoreAudioBaseTypes.h>
+#endif
 
 class tst_QMultimediaUtils : public QObject
 {
@@ -42,6 +47,10 @@ private slots:
 
     void qVideoTransformationFromMatrix_returnsNormalizedTransformation_whenInputIsInvalid_data();
     void qVideoTransformationFromMatrix_returnsNormalizedTransformation_whenInputIsInvalid();
+
+#ifdef Q_OS_APPLE
+    void QOSStatus_qDebug();
+#endif
 };
 
 void tst_QMultimediaUtils::fraction_of_0()
@@ -416,6 +425,20 @@ void tst_QMultimediaUtils::
 
     QVERIFY(!actual);
 }
+
+#ifdef Q_OS_APPLE
+void tst_QMultimediaUtils::QOSStatus_qDebug()
+{
+    using namespace QtMultimediaPrivate;
+
+    QTest::ignoreMessage(QtMsgType::QtWarningMsg, "noErr");
+    qWarning() << QOSStatus(noErr);
+    QTest::ignoreMessage(QtMsgType::QtWarningMsg, "!pth");
+    qWarning() << QOSStatus(kAudio_BadFilePathError);
+
+    QTest::failOnWarning();
+}
+#endif
 
 QTEST_MAIN(tst_QMultimediaUtils)
 

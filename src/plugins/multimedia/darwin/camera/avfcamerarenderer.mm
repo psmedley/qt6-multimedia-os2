@@ -1,29 +1,25 @@
 // Copyright (C) 2016 The Qt Company Ltd and/or its subsidiary(-ies).
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "qabstractvideobuffer.h"
-#include "private/qcameradevice_p.h"
-#include "private/qvideoframe_p.h"
 #include "avfcamerarenderer_p.h"
-#include "avfcamerasession_p.h"
-#include "avfcameraservice_p.h"
-#include "avfcameradebug_p.h"
-#include "avfcamera_p.h"
-#include <avfvideosink_p.h>
-#include <avfvideobuffer_p.h>
-#include "qvideosink.h"
-#include "qavfhelpers_p.h"
 
-#include <rhi/qrhi.h>
+#include <avfvideobuffer_p.h>
+#include <avfvideosink_p.h>
+#include <camera/avfcamera_p.h>
+#include <camera/avfcameraservice_p.h>
+#include <camera/avfcamerasession_p.h>
+
+#include <QtMultimedia/qabstractvideobuffer.h>
+#include <QtMultimedia/qvideoframeformat.h>
+#include <QtMultimedia/qvideosink.h>
+#include <QtMultimedia/private/qavfcameradebug_p.h>
+#include <QtMultimedia/private/qavfhelpers_p.h>
+#include <QtMultimedia/private/qcameradevice_p.h>
+#include <QtMultimedia/private/qvideoframe_p.h>
+#include <QtGui/rhi/qrhi.h>
+#include <QtCore/qmetaobject.h>
 
 #import <AVFoundation/AVFoundation.h>
-
-#ifdef Q_OS_IOS
-#include <QtGui/qopengl.h>
-#endif
-
-#include <QtCore/qmetaobject.h>
-#include <QtMultimedia/qvideoframeformat.h>
 
 QT_USE_NAMESPACE
 
@@ -62,8 +58,10 @@ QT_USE_NAMESPACE
     // NB: on iOS captureOutput/connection can be nil (when recording a video -
     // avfmediaassetwriter).
 
-    CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-    auto buffer = std::make_unique<AVFVideoBuffer>(m_renderer, imageBuffer);
+    auto buffer =
+            std::make_unique<AVFVideoBuffer>(m_renderer,
+                                             QCFType<CVImageBufferRef>::constructFromGet(
+                                                     CMSampleBufferGetImageBuffer(sampleBuffer)));
     auto format = buffer->videoFormat();
     if (!format.isValid()) {
         return;
@@ -91,10 +89,6 @@ AVFCameraRenderer::~AVFCameraRenderer()
 
     if (m_delegateQueue)
         dispatch_release(m_delegateQueue);
-#ifdef Q_OS_IOS
-    if (m_textureCache)
-        CFRelease(m_textureCache);
-#endif
 }
 
 void AVFCameraRenderer::reconfigure()
@@ -275,7 +269,7 @@ void AVFCameraRenderer::setPixelFormat(QVideoFrameFormat::PixelFormat pixelForma
     if (isSupported) {
         NSDictionary *outputSettings = @{
             (NSString *)
-            kCVPixelBufferPixelFormatTypeKey : [NSNumber numberWithUnsignedInt:cvPixelFormat]
+            kCVPixelBufferPixelFormatTypeKey : @(cvPixelFormat)
 #ifndef Q_OS_IOS // On iOS this key generates a warning about 'unsupported key'.
             ,
             (NSString *)kCVPixelBufferMetalCompatibilityKey : @true

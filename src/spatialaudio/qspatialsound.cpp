@@ -1,146 +1,91 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-3.0-only
-#include "qaudioroom_p.h"
-#include "qspatialsound_p.h"
-#include "qaudiolistener.h"
-#include "qaudioengine_p.h"
-#include "resonance_audio.h"
-#include <qaudiosink.h>
-#include <qurl.h>
-#include <qdebug.h>
-#include <qaudiodecoder.h>
+
+#include "qspatialsound.h"
+
+#include <QtMultimedia/qaudiosink.h>
+#include <QtSpatialAudio/qaudiolistener.h>
+#include <QtSpatialAudio/private/qaudioroom_p.h>
+#include <QtSpatialAudio/private/qaudioengine_p.h>
+#include <QtSpatialAudio/private/qspatialaudiosound_p.h>
+#include <QtCore/qdebug.h>
+#include <QtCore/qurl.h>
+
+#include <array>
 
 QT_BEGIN_NAMESPACE
 
-/*!
-    \class QSpatialSound
-    \inmodule QtSpatialAudio
-    \ingroup spatialaudio
-    \ingroup multimedia_audio
 
-    \brief A sound object in 3D space.
+namespace {
 
-    QSpatialSound represents an audible object in 3D space. You can define
-    its position and orientation in space, set the sound it is playing and define a
-    volume for the object.
-
-    The object can have different attenuation behavior, emit sound mainly in one direction
-    or spherically, and behave as if occluded by some other object.
-  */
-
-/*!
-    Creates a spatial sound source for \a engine. The object can be placed in
-    3D space and will be louder the closer to the listener it is.
- */
-QSpatialSound::QSpatialSound(QAudioEngine *engine)
-    : d(new QSpatialSoundPrivate(this))
+static int addSpatialSound(QAudioEngine *engine)
 {
-    setEngine(engine);
+    auto *ep = QAudioEnginePrivate::get(engine);
+    if (!ep)
+        return -1;
+    return ep->resonanceAudio->api->CreateSoundObjectSource(vraudio::kBinauralHighQuality);
 }
 
-/*!
-    Destroys the sound source.
- */
-QSpatialSound::~QSpatialSound()
+} // namespace
+
+class QSpatialSoundPrivate final : public QSpatialAudioSoundPrivate
 {
-    setEngine(nullptr);
+    Q_DECLARE_PUBLIC(QSpatialSound)
+
+public:
+    explicit QSpatialSoundPrivate(QAudioEngine *engine);
+    ~QSpatialSoundPrivate();
+
+    static QSpatialSoundPrivate *get(QSpatialSound *soundSource)
+    {
+        return soundSource ? soundSource->d_func() : nullptr;
+    }
+
+    void applyVolume() override;
+
+    QVector3D pos;
+    QVector3D unscaledPosition;
+    QQuaternion rotation;
+    QSpatialSound::DistanceModel distanceModel = QSpatialSound::DistanceModel::Logarithmic;
+    float size = .1f;
+    float distanceCutoff = 50.f;
+    float manualAttenuation = 0.f;
+    float occlusionIntensity = 0.f;
+    float directivity = 0.f;
+    float directivityOrder = 1.f;
+    float nearFieldGain = 0.f;
+    float wallDampening = 1.f;
+    float wallOcclusion = 0.f;
+
+    void updateDistanceModel();
+    void updateRoomEffects() override;
+};
+
+QSpatialSoundPrivate::QSpatialSoundPrivate(QAudioEngine *engine)
+    : QSpatialAudioSoundPrivate{
+          engine,
+          1,
+          addSpatialSound(engine),
+      }
+{
+    withResonanceApi([&](vraudio::ResonanceAudioApi *api) {
+        api->SetSourcePosition(sourceId, pos.x(), pos.y(), pos.z());
+        api->SetSourceRotation(sourceId, rotation.x(), rotation.y(), rotation.z(),
+                               rotation.scalar());
+        api->SetSoundObjectDirectivity(sourceId, directivity, directivityOrder);
+        api->SetSoundObjectNearFieldEffectGain(sourceId, nearFieldGain);
+        applyVolume();
+        updateDistanceModel();
+    });
 }
 
-/*!
-    \property QSpatialSound::position
+QSpatialSoundPrivate::~QSpatialSoundPrivate() = default;
 
-    Defines the position of the sound source in 3D space. Units are in centimeters
-    by default.
-
-    \sa QAudioEngine::distanceScale
- */
-void QSpatialSound::setPosition(QVector3D pos)
+void QSpatialSoundPrivate::applyVolume()
 {
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    pos *= ep->distanceScale;
-    d->pos = pos;
-    if (ep)
-        ep->resonanceAudio->api->SetSourcePosition(d->sourceId, pos.x(), pos.y(), pos.z());
-    emit positionChanged();
-}
-
-QVector3D QSpatialSound::position() const
-{
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    return d->pos/ep->distanceScale;
-}
-
-/*!
-    \property QSpatialSound::rotation
-
-    Defines the orientation of the sound source in 3D space.
- */
-void QSpatialSound::setRotation(const QQuaternion &q)
-{
-    d->rotation = q;
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep)
-        ep->resonanceAudio->api->SetSourceRotation(d->sourceId, q.x(), q.y(), q.z(), q.scalar());
-    emit rotationChanged();
-}
-
-QQuaternion QSpatialSound::rotation() const
-{
-    return d->rotation;
-}
-
-/*!
-    \property QSpatialSound::volume
-
-    Defines the volume of the sound.
-
-    Values between 0 and 1 will attenuate the sound, while values above 1
-    provide an additional gain boost.
- */
-void QSpatialSound::setVolume(float volume)
-{
-    if (d->volume == volume)
-        return;
-    d->volume = volume;
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep)
-        ep->resonanceAudio->api->SetSourceVolume(d->sourceId, d->volume*d->wallDampening);
-    emit volumeChanged();
-}
-
-float QSpatialSound::volume() const
-{
-    return d->volume;
-}
-
-/*!
-    \enum QSpatialSound::DistanceModel
-
-    Defines how the volume of the sound scales with distance to the listener.
-
-    \value Logarithmic Volume decreases logarithmically with distance.
-    \value Linear Volume decreases linearly with distance.
-    \value ManualAttenuation Attenuation is defined manually using the
-    \l manualAttenuation property.
-*/
-
-/*!
-    \property QSpatialSound::distanceModel
-
-    Defines distance model for this sound source. The volume starts scaling down
-    from \l size to \l distanceCutoff. The volume is constant for distances smaller
-    than size and zero for distances larger than the cutoff distance.
-
-    \sa QSpatialSound::DistanceModel
- */
-void QSpatialSound::setDistanceModel(DistanceModel model)
-{
-    if (d->distanceModel == model)
-        return;
-    d->distanceModel = model;
-
-    d->updateDistanceModel();
-    emit distanceModelChanged();
+    withResonanceApi([&](vraudio::ResonanceAudioApi *api) {
+        api->SetSourceVolume(sourceId, volume() * wallDampening);
+    });
 }
 
 void QSpatialSoundPrivate::updateDistanceModel()
@@ -148,6 +93,7 @@ void QSpatialSoundPrivate::updateDistanceModel()
     if (!engine || sourceId < 0)
         return;
     auto *ep = QAudioEnginePrivate::get(engine);
+    Q_ASSERT(ep);
 
     vraudio::DistanceRolloffModel dm = vraudio::kLogarithmic;
     switch (distanceModel) {
@@ -169,15 +115,21 @@ void QSpatialSoundPrivate::updateRoomEffects()
     if (!engine || sourceId < 0)
         return;
     auto *ep = QAudioEnginePrivate::get(engine);
-    if (!ep->currentRoom)
+    Q_ASSERT(ep);
+
+    if (!ep->currentRoom())
         return;
-    auto *rp = QAudioRoomPrivate::get(ep->currentRoom);
+    auto *rp = QAudioRoomPrivate::get(ep->currentRoom());
     if (!rp)
         return;
 
-    QVector3D roomDim2 = ep->currentRoom->dimensions()/2.;
-    QVector3D roomPos = ep->currentRoom->position();
-    QQuaternion roomRot = ep->currentRoom->rotation();
+    auto listenerPos = ep->listenerPosition();
+    if (!listenerPos)
+        return;
+
+    QVector3D roomDim2 = ep->currentRoom()->dimensions() / 2.;
+    QVector3D roomPos = ep->currentRoom()->position();
+    QQuaternion roomRot = ep->currentRoom()->rotation();
     QVector3D dist = pos - roomPos;
     // transform into room coordinates
     dist = roomRot.rotatedVector(dist);
@@ -194,7 +146,7 @@ void QSpatialSoundPrivate::updateRoomEffects()
         //
         // We basically cast a ray from the listener through the walls. If walls have different characteristics
         // and we get close to a corner, we try to use some averaging to avoid abrupt changes
-        auto relativeListenerPos = ep->listenerPosition() - roomPos;
+        auto relativeListenerPos = *listenerPos - roomPos;
         relativeListenerPos = roomRot.rotatedVector(relativeListenerPos);
 
         auto direction = dist.normalized();
@@ -204,11 +156,11 @@ void QSpatialSoundPrivate::updateRoomEffects()
         // Very rough approximation, use the size of the source plus twice the size of our head.
         // One could probably improve upon this.
         const float transitionDistance = size + 0.4;
-        QAudioRoom::Wall walls[3];
+        std::array<QAudioRoom::Wall, 3> walls;
         walls[X] = direction.x() > 0 ? QAudioRoom::RightWall : QAudioRoom::LeftWall;
         walls[Y] = direction.y() > 0 ? QAudioRoom::FrontWall : QAudioRoom::BackWall;
         walls[Z] = direction.z() > 0 ? QAudioRoom::Ceiling : QAudioRoom::Floor;
-        float factors[3] = { 0., 0., 0. };
+        std::array<float, 3> factors = {};
         bool foundWall = false;
         if (direction.x() != 0) {
             float sign = direction.x() > 0 ? 1.f : -1.f;
@@ -267,11 +219,167 @@ void QSpatialSoundPrivate::updateRoomEffects()
         ep->resonanceAudio->api->SetSourceRoomEffectsGain(sourceId, 0);
     }
     ep->resonanceAudio->api->SetSoundObjectOcclusionIntensity(sourceId, occlusionIntensity + wallOcclusion);
-    ep->resonanceAudio->api->SetSourceVolume(sourceId, volume*wallDampening);
+    ep->resonanceAudio->api->SetSourceVolume(sourceId, volume() * wallDampening);
+}
+
+
+/*!
+    \class QSpatialSound
+    \inmodule QtSpatialAudio
+    \ingroup spatialaudio
+    \ingroup multimedia_audio
+
+    \brief A sound object in 3D space.
+
+    QSpatialSound represents an audible object in 3D space. You can define
+    its position and orientation in space, set the sound it is playing and define a
+    volume for the object.
+
+    The object can have different attenuation behavior, emit sound mainly in one direction
+    or spherically, and behave as if occluded by some other object.
+  */
+
+/*!
+    Creates a spatial sound source for \a engine. The object can be placed in
+    3D space and will be louder the closer to the listener it is.
+
+    \note Must be called with a valid QAudioEngine
+ */
+QSpatialSound::QSpatialSound(QAudioEngine *engine) : QObject(*new QSpatialSoundPrivate(engine))
+{
+    if (!engine)
+        qWarning() << "Cannot create QSpatialSound without a valid QAudioEngine";
+}
+
+/*!
+    Destroys the sound source.
+ */
+QSpatialSound::~QSpatialSound()
+{
+    Q_D(QSpatialSound);
+    if (d->state() != QSpatialAudioSoundPrivate::State::Stopped)
+        d->stop();
+}
+
+/*!
+    \property QSpatialSound::position
+
+    Defines the position of the sound source in 3D space. Units are in centimeters
+    by default.
+
+    \sa QAudioEngine::distanceScale
+ */
+void QSpatialSound::setPosition(QVector3D pos)
+{
+    Q_D(QSpatialSound);
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return;
+
+    if (pos == d->unscaledPosition)
+        return;
+
+    d->unscaledPosition = pos;
+    pos *= ep->distanceScale();
+    d->pos = pos;
+    ep->resonanceAudio->api->SetSourcePosition(d->sourceId, pos.x(), pos.y(), pos.z());
+    emit positionChanged();
+}
+
+QVector3D QSpatialSound::position() const
+{
+    Q_D(const QSpatialSound);
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return {};
+
+    return d->pos / ep->distanceScale();
+}
+
+/*!
+    \property QSpatialSound::rotation
+
+    Defines the orientation of the sound source in 3D space.
+ */
+void QSpatialSound::setRotation(const QQuaternion &q)
+{
+    Q_D(QSpatialSound);
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return;
+
+    if (d->rotation == q)
+        return;
+
+    d->rotation = q;
+    ep->resonanceAudio->api->SetSourceRotation(d->sourceId, q.x(), q.y(), q.z(), q.scalar());
+    emit rotationChanged();
+}
+
+QQuaternion QSpatialSound::rotation() const
+{
+    Q_D(const QSpatialSound);
+    return d->rotation;
+}
+
+/*!
+    \property QSpatialSound::volume
+
+    Defines the volume of the sound.
+
+    Values between 0 and 1 will attenuate the sound, while values above 1
+    provide an additional gain boost.
+ */
+void QSpatialSound::setVolume(float volume)
+{
+    Q_D(QSpatialSound);
+    if (volume != d->volume()) {
+        d->setVolume(volume);
+        emit volumeChanged();
+    }
+}
+
+float QSpatialSound::volume() const
+{
+    Q_D(const QSpatialSound);
+    return d->volume();
+}
+
+/*!
+    \enum QSpatialSound::DistanceModel
+
+    Defines how the volume of the sound scales with distance to the listener.
+
+    \value Logarithmic Volume decreases logarithmically with distance.
+    \value Linear Volume decreases linearly with distance.
+    \value ManualAttenuation Attenuation is defined manually using the
+    \l manualAttenuation property.
+*/
+
+/*!
+    \property QSpatialSound::distanceModel
+
+    Defines distance model for this sound source. The volume starts scaling down
+    from \l size to \l distanceCutoff. The volume is constant for distances smaller
+    than size and zero for distances larger than the cutoff distance.
+
+    \sa QSpatialSound::DistanceModel
+ */
+void QSpatialSound::setDistanceModel(DistanceModel model)
+{
+    Q_D(QSpatialSound);
+
+    if (d->distanceModel == model)
+        return;
+    d->distanceModel = model;
+
+    d->updateDistanceModel();
+    emit distanceModelChanged();
 }
 
 QSpatialSound::DistanceModel QSpatialSound::distanceModel() const
 {
+    Q_D(const QSpatialSound);
     return d->distanceModel;
 }
 
@@ -284,8 +392,12 @@ QSpatialSound::DistanceModel QSpatialSound::distanceModel() const
  */
 void QSpatialSound::setSize(float size)
 {
+    Q_D(QSpatialSound);
     auto *ep = QAudioEnginePrivate::get(d->engine);
-    size *= ep->distanceScale;
+    if (!ep)
+        return;
+
+    size *= ep->distanceScale();
     if (d->size == size)
         return;
     d->size = size;
@@ -296,8 +408,12 @@ void QSpatialSound::setSize(float size)
 
 float QSpatialSound::size() const
 {
+    Q_D(const QSpatialSound);
     auto *ep = QAudioEnginePrivate::get(d->engine);
-    return d->size/ep->distanceScale;
+    if (!ep)
+        return {};
+
+    return d->size / ep->distanceScale();
 }
 
 /*!
@@ -309,8 +425,12 @@ float QSpatialSound::size() const
  */
 void QSpatialSound::setDistanceCutoff(float cutoff)
 {
+    Q_D(QSpatialSound);
     auto *ep = QAudioEnginePrivate::get(d->engine);
-    cutoff *= ep->distanceScale;
+    if (!ep)
+        return;
+
+    cutoff *= ep->distanceScale();
     if (d->distanceCutoff == cutoff)
         return;
     d->distanceCutoff = cutoff;
@@ -321,8 +441,12 @@ void QSpatialSound::setDistanceCutoff(float cutoff)
 
 float QSpatialSound::distanceCutoff() const
 {
+    Q_D(const QSpatialSound);
     auto *ep = QAudioEnginePrivate::get(d->engine);
-    return d->distanceCutoff/ep->distanceScale;
+    if (!ep)
+        return {};
+
+    return d->distanceCutoff / ep->distanceScale();
 }
 
 /*!
@@ -333,17 +457,21 @@ float QSpatialSound::distanceCutoff() const
  */
 void QSpatialSound::setManualAttenuation(float attenuation)
 {
+    Q_D(QSpatialSound);
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return;
+
     if (d->manualAttenuation == attenuation)
         return;
     d->manualAttenuation = attenuation;
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep)
-        ep->resonanceAudio->api->SetSourceDistanceAttenuation(d->sourceId, d->manualAttenuation);
+    ep->resonanceAudio->api->SetSourceDistanceAttenuation(d->sourceId, d->manualAttenuation);
     emit manualAttenuationChanged();
 }
 
 float QSpatialSound::manualAttenuation() const
 {
+    Q_D(const QSpatialSound);
     return d->manualAttenuation;
 }
 
@@ -365,17 +493,22 @@ float QSpatialSound::manualAttenuation() const
  */
 void QSpatialSound::setOcclusionIntensity(float occlusion)
 {
+    Q_D(QSpatialSound);
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return;
+
     if (d->occlusionIntensity == occlusion)
         return;
     d->occlusionIntensity = occlusion;
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep)
-        ep->resonanceAudio->api->SetSoundObjectOcclusionIntensity(d->sourceId, d->occlusionIntensity + d->wallOcclusion);
+    ep->resonanceAudio->api->SetSoundObjectOcclusionIntensity(d->sourceId, d->occlusionIntensity + d->wallOcclusion);
     emit occlusionIntensityChanged();
 }
 
 float QSpatialSound::occlusionIntensity() const
 {
+    Q_D(const QSpatialSound);
+
     return d->occlusionIntensity;
 }
 
@@ -390,20 +523,24 @@ float QSpatialSound::occlusionIntensity() const
  */
 void QSpatialSound::setDirectivity(float alpha)
 {
+    Q_D(QSpatialSound);
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return;
+
     alpha = qBound(0., alpha, 1.);
     if (alpha == d->directivity)
         return;
     d->directivity = alpha;
 
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep)
-        ep->resonanceAudio->api->SetSoundObjectDirectivity(d->sourceId, d->directivity, d->directivityOrder);
+    ep->resonanceAudio->api->SetSoundObjectDirectivity(d->sourceId, d->directivity, d->directivityOrder);
 
     emit directivityChanged();
 }
 
 float QSpatialSound::directivity() const
 {
+    Q_D(const QSpatialSound);
     return d->directivity;
 }
 
@@ -417,20 +554,25 @@ float QSpatialSound::directivity() const
  */
 void QSpatialSound::setDirectivityOrder(float order)
 {
+    Q_D(QSpatialSound);
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return;
+
     order = qMax(order, 1.);
     if (order == d->directivityOrder)
         return;
     d->directivityOrder = order;
 
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep)
-        ep->resonanceAudio->api->SetSoundObjectDirectivity(d->sourceId, d->directivity, d->directivityOrder);
+    ep->resonanceAudio->api->SetSoundObjectDirectivity(d->sourceId, d->directivity, d->directivityOrder);
 
-    emit directivityChanged();
+    emit directivityOrderChanged();
 }
 
 float QSpatialSound::directivityOrder() const
 {
+    Q_D(const QSpatialSound);
+
     return d->directivityOrder;
 }
 
@@ -443,14 +585,17 @@ float QSpatialSound::directivityOrder() const
  */
 void QSpatialSound::setNearFieldGain(float gain)
 {
+    Q_D(QSpatialSound);
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return;
+
     gain = qBound(0., gain, 1.);
     if (gain == d->nearFieldGain)
         return;
     d->nearFieldGain = gain;
 
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep)
-        ep->resonanceAudio->api->SetSoundObjectNearFieldEffectGain(d->sourceId, d->nearFieldGain*9.f);
+    ep->resonanceAudio->api->SetSoundObjectNearFieldEffectGain(d->sourceId, d->nearFieldGain*9.f);
 
     emit nearFieldGainChanged();
 
@@ -458,6 +603,8 @@ void QSpatialSound::setNearFieldGain(float gain)
 
 float QSpatialSound::nearFieldGain() const
 {
+    Q_D(const QSpatialSound);
+
     return d->nearFieldGain;
 }
 
@@ -468,17 +615,20 @@ float QSpatialSound::nearFieldGain() const
  */
 void QSpatialSound::setSource(const QUrl &url)
 {
-    if (d->url == url)
-        return;
-    d->url = url;
+    Q_D(QSpatialSound);
 
-    d->load();
+    if (d->url() == url)
+        return;
+    d->loadUrl(url);
+
     emit sourceChanged();
 }
 
 QUrl QSpatialSound::source() const
 {
-    return d->url;
+    Q_D(const QSpatialSound);
+
+    return d->url();
 }
 
 /*!
@@ -499,14 +649,17 @@ QUrl QSpatialSound::source() const
  */
 int QSpatialSound::loops() const
 {
-    return d->m_loops.loadRelaxed();
+    Q_D(const QSpatialSound);
+    return d->loops();
 }
 
 void QSpatialSound::setLoops(int loops)
 {
-    int oldLoops = d->m_loops.fetchAndStoreRelaxed(loops);
-    if (oldLoops != loops)
+    Q_D(QSpatialSound);
+    if (loops != d->loops()) {
+        d->setLoops(loops);
         emit loopsChanged();
+    }
 }
 
 /*!
@@ -519,14 +672,17 @@ void QSpatialSound::setLoops(int loops)
  */
 bool QSpatialSound::autoPlay() const
 {
-    return d->m_autoPlay.loadRelaxed();
+    Q_D(const QSpatialSound);
+    return d->autoPlay();
 }
 
 void QSpatialSound::setAutoPlay(bool autoPlay)
 {
-    bool old = d->m_autoPlay.fetchAndStoreRelaxed(autoPlay);
-    if (old != autoPlay)
+    Q_D(QSpatialSound);
+    if (autoPlay != d->autoPlay()) {
+        d->setAutoPlay(autoPlay);
         emit autoPlayChanged();
+    }
 }
 
 /*!
@@ -534,6 +690,8 @@ void QSpatialSound::setAutoPlay(bool autoPlay)
  */
 void QSpatialSound::play()
 {
+    Q_D(QSpatialSound);
+
     d->play();
 }
 
@@ -542,6 +700,8 @@ void QSpatialSound::play()
  */
 void QSpatialSound::pause()
 {
+    Q_D(QSpatialSound);
+
     d->pause();
 }
 
@@ -551,35 +711,9 @@ void QSpatialSound::pause()
  */
 void QSpatialSound::stop()
 {
+    Q_D(QSpatialSound);
+
     d->stop();
-}
-
-/*!
-    \internal
- */
-void QSpatialSound::setEngine(QAudioEngine *engine)
-{
-    if (d->engine == engine)
-        return;
-
-    // Remove self from old engine (if necessary)
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep)
-        ep->removeSpatialSound(this);
-
-    d->engine = engine;
-
-    // Add self to new engine if necessary
-    ep = QAudioEnginePrivate::get(d->engine);
-    if (ep) {
-        ep->addSpatialSound(this);
-        ep->resonanceAudio->api->SetSourcePosition(d->sourceId, d->pos.x(), d->pos.y(), d->pos.z());
-        ep->resonanceAudio->api->SetSourceRotation(d->sourceId, d->rotation.x(), d->rotation.y(), d->rotation.z(), d->rotation.scalar());
-        ep->resonanceAudio->api->SetSourceVolume(d->sourceId, d->volume);
-        ep->resonanceAudio->api->SetSoundObjectDirectivity(d->sourceId, d->directivity, d->directivityOrder);
-        ep->resonanceAudio->api->SetSoundObjectNearFieldEffectGain(d->sourceId, d->nearFieldGain);
-        d->updateDistanceModel();
-    }
 }
 
 /*!
@@ -587,6 +721,8 @@ void QSpatialSound::setEngine(QAudioEngine *engine)
  */
 QAudioEngine *QSpatialSound::engine() const
 {
+    Q_D(const QSpatialSound);
+
     return d->engine;
 }
 

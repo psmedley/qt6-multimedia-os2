@@ -5,10 +5,9 @@
 #ifndef QAUDIOFORMAT_H
 #define QAUDIOFORMAT_H
 
+#include <QtMultimedia/qtmultimediaglobal.h>
 #include <QtCore/qobject.h>
 #include <QtCore/qshareddata.h>
-
-#include <QtMultimedia/qtmultimediaglobal.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -91,7 +90,11 @@ public:
     Q_MULTIMEDIA_EXPORT void setChannelConfig(ChannelConfig config) noexcept;
     constexpr ChannelConfig channelConfig() const noexcept { return m_channelConfig; }
 
-    constexpr void setChannelCount(int channelCount) noexcept { m_channelConfig = ChannelConfigUnknown; m_channelCount = channelCount; }
+    constexpr void setChannelCount(int channelCount) noexcept
+    {
+        m_channelConfig = ChannelConfigUnknown;
+        m_channelCount = short(channelCount);
+    }
     constexpr int channelCount() const noexcept { return m_channelCount; }
 
     Q_MULTIMEDIA_EXPORT int channelOffset(AudioChannelPosition channel) const noexcept;
@@ -143,7 +146,7 @@ private:
     short m_channelCount = 0;
     ChannelConfig m_channelConfig = ChannelConfigUnknown;
     int m_sampleRate = 0;
-    quint64 reserved = 0;
+    Q_DECL_UNUSED_MEMBER quint64 reserved = 0;
 };
 
 #ifndef QT_NO_DEBUG_STREAM

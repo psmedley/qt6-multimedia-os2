@@ -1,8 +1,11 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include <common/qglist_helper_p.h>
 #include "qgstreamerformatinfo_p.h"
+
+#include <common/qglist_helper_p.h>
+
+#include <QtCore/qset.h>
 
 #include <gst/gst.h>
 
@@ -178,7 +181,8 @@ QImageCapture::FileFormat QGstreamerFormatInfo::imageFormatForCaps(QGstStructure
     return QImageCapture::UnspecifiedFormat;
 }
 
-static QPair<QList<QMediaFormat::AudioCodec>, QList<QMediaFormat::VideoCodec>> getCodecsList(bool decode)
+static std::pair<QList<QMediaFormat::AudioCodec>, QList<QMediaFormat::VideoCodec>>
+getCodecsList(bool decode)
 {
     QList<QMediaFormat::AudioCodec> audio;
     QList<QMediaFormat::VideoCodec> video;
@@ -214,8 +218,8 @@ static QPair<QList<QMediaFormat::AudioCodec>, QList<QMediaFormat::VideoCodec>> g
 
 QList<QGstreamerFormatInfo::CodecMap>
 QGstreamerFormatInfo::getCodecMaps(QMediaFormat::ConversionMode conversionMode,
-                                   QList<QMediaFormat::AudioCodec> supportedAudioCodecs,
-                                   QList<QMediaFormat::VideoCodec> supportedVideoCodecs)
+                                   const QList<QMediaFormat::AudioCodec> &supportedAudioCodecs,
+                                   const QList<QMediaFormat::VideoCodec> &supportedVideoCodecs)
 {
     QList<QGstreamerFormatInfo::CodecMap> maps;
 
@@ -258,6 +262,7 @@ QGstreamerFormatInfo::getCodecMaps(QMediaFormat::ConversionMode conversionMode,
 
         QList<QMediaFormat::AudioCodec> audioCodecs;
         QList<QMediaFormat::VideoCodec> videoCodecs;
+        bool hasAnySrcCaps = false;
 
         for (GstStaticPadTemplate *padTemplate :
              QGstUtils::GListConstRangeAdaptor<GstStaticPadTemplate *>(
@@ -266,6 +271,13 @@ QGstreamerFormatInfo::getCodecMaps(QMediaFormat::ConversionMode conversionMode,
             // check the other side for supported inputs/outputs
             if (padTemplate->direction != dataPadDirection) {
                 auto caps = QGstCaps(gst_static_caps_get(&padTemplate->static_caps), QGstCaps::HasRef);
+
+                // Demuxers like matroskademux/qtdemux/asfdemux advertise ANY on their SRC pad
+                // templates because the actual output caps depend on the stream.
+                if (gst_caps_is_any(caps.get())) {
+                    hasAnySrcCaps = true;
+                    continue;
+                }
 
                 bool acceptsRawAudio = false;
                 for (int i = 0; i < caps.size(); i++) {
@@ -297,8 +309,24 @@ QGstreamerFormatInfo::getCodecMaps(QMediaFormat::ConversionMode conversionMode,
                 }
             }
         }
+
+        // SRC pads reported ANY: the demuxer supports whatever codecs the installed decoders
+        // handle. We claim to support all discovered audio/video codecs in that case, and rely on fixupCodecMaps() to
+        // remove unsupported combinations.
+        if (hasAnySrcCaps) {
+            if (audioCodecs.isEmpty())
+                audioCodecs = supportedAudioCodecs;
+            if (videoCodecs.isEmpty())
+                videoCodecs = supportedVideoCodecs;
+        }
         if (!audioCodecs.isEmpty() || !videoCodecs.isEmpty()) {
             for (auto f : std::as_const(fileFormats)) {
+                // QTBUG-131726: encodebin rejects muxers for x-ms-asf, so we should ignore WMV/WMA
+                // for encoding
+                if ((f == QMediaFormat::WMV || f == QMediaFormat::WMA)
+                    && conversionMode == QMediaFormat::Encode)
+                    continue;
+
                 maps.append({f, audioCodecs, videoCodecs});
                 if (f == QMediaFormat::MPEG4 && !fileFormats.contains(QMediaFormat::Mpeg4Audio)) {
                     maps.append({QMediaFormat::Mpeg4Audio, audioCodecs, {}});
@@ -387,6 +415,8 @@ QGstreamerFormatInfo::QGstreamerFormatInfo()
 //    dumpMuxers(encoders);
 
     imageFormats = getImageFormatList();
+
+    fixupCodecMaps();
 }
 
 QGstreamerFormatInfo::~QGstreamerFormatInfo() = default;

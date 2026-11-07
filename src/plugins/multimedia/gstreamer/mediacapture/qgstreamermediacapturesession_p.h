@@ -15,6 +15,8 @@
 // We mean it.
 //
 
+#include <QtCore/private/qexpected_p.h>
+
 #include <private/qplatformmediacapture_p.h>
 #include <private/qplatformmediaintegration_p.h>
 
@@ -30,13 +32,13 @@ class QGstreamerMediaRecorder;
 class QGstreamerAudioInput;
 class QGstreamerAudioOutput;
 class QGstreamerVideoOutput;
-class QGstreamerVideoSink;
+class QGstreamerRelayVideoSink;
 
 class QGstreamerMediaCaptureSession final : public QPlatformMediaCaptureSession,
                                             QGstreamerBusMessageFilter
 {
 public:
-    static QMaybe<QPlatformMediaCaptureSession *> create();
+    static q23::expected<QPlatformMediaCaptureSession *, QString> create();
     ~QGstreamerMediaCaptureSession() override;
 
     QPlatformCamera *camera() override;
@@ -49,14 +51,14 @@ public:
     void setMediaRecorder(QPlatformMediaRecorder *recorder) override;
 
     void setAudioInput(QPlatformAudioInput *input) override;
-    QGstreamerAudioInput *audioInput() { return gstAudioInput; }
+    QGstreamerAudioInput *audioInput() { return m_gstAudioInput; }
 
     void setVideoPreview(QVideoSink *sink) override;
     void setAudioOutput(QPlatformAudioOutput *output) override;
 
     const QGstPipeline &pipeline() const;
 
-    QGstreamerVideoSink *gstreamerVideoSink() const;
+    QGstreamerRelayVideoSink *gstreamerVideoSink() const;
 
     struct RecorderElements
     {
@@ -81,23 +83,23 @@ private:
 
     friend QGstreamerMediaRecorder;
     // Gst elements
-    QGstPipeline capturePipeline;
+    QGstPipeline m_capturePipeline;
 
-    QGstreamerAudioInput *gstAudioInput = nullptr;
-    QGstreamerCameraBase *gstCamera = nullptr;
-    QMetaObject::Connection gstCameraActiveConnection;
+    QGstreamerAudioInput *m_gstAudioInput = nullptr;
+    QGstreamerCameraBase *m_gstCamera = nullptr;
+    QMetaObject::Connection m_gstCameraActiveConnection;
 
-    QGstElement gstAudioTee;
-    QGstPad audioSrcPadForEncoder;
-    QGstPad audioSrcPadForOutput;
+    QGstElement m_gstAudioTee;
+    QGstPad m_audioSrcPadForEncoder;
+    QGstPad m_audioSrcPadForOutput;
 
-    QGstElement gstVideoTee;
-    QGstPad videoSrcPadForEncoder;
-    QGstPad videoSrcPadForOutput;
-    QGstPad videoSrcPadForImageCapture;
+    QGstElement m_gstVideoTee;
+    QGstPad m_videoSrcPadForEncoder;
+    QGstPad m_videoSrcPadForOutput;
+    QGstPad m_videoSrcPadForImageCapture;
 
-    QGstElement encoderVideoCapsFilter;
-    QGstElement encoderAudioCapsFilter;
+    QGstElement m_encoderVideoCapsFilter;
+    QGstElement m_encoderAudioCapsFilter;
 
     QGstPad imageCaptureSink();
     QGstPad videoOutputSink();
@@ -105,11 +107,13 @@ private:
 
     std::optional<RecorderElements> m_currentRecorderState;
 
-    QGstreamerAudioOutput *gstAudioOutput = nullptr;
-    QGstreamerVideoOutput *gstVideoOutput = nullptr;
+    QGstreamerAudioOutput *m_gstAudioOutput = nullptr;
+    QGstreamerVideoOutput *m_gstVideoOutput = nullptr;
 
     QGstreamerMediaRecorder *m_mediaRecorder = nullptr;
     QGstreamerImageCapture *m_imageCapture = nullptr;
+
+    QGstreamerRelayVideoSink *m_gstVideoSink = nullptr;
 };
 
 QT_END_NAMESPACE

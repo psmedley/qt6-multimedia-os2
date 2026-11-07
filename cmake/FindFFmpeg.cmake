@@ -1,73 +1,20 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
-#.rst:
-# FindFFmpeg
-# ----------
-#
-# Try to find the required ffmpeg components (default: AVFORMAT, AVUTIL, AVCODEC)
-#
-# Next variables can be used to hint FFmpeg libs search:
-#
-# ::
-#
-#   PC_<component>_LIBRARY_DIRS
-#   PC_FFMPEG_LIBRARY_DIRS
-#   PC_<component>_INCLUDE_DIRS
-#   PC_FFMPEG_INCLUDE_DIRS
-#
-# Once done this will define
-#
-# ::
-#
-#   FFMPEG_FOUND         - System has the all required components.
-#   FFMPEG_SHARED_LIBRARIES - Found FFmpeg shared libraries.
-#
-# For each of the components it will additionally set.
-#
-# ::
-#
-#   AVCODEC
-#   AVDEVICE
-#   AVFORMAT
-#   AVFILTER
-#   AVUTIL
-#   POSTPROC
-#   SWSCALE
-#
-# the following variables will be defined
-#
-# ::
-#
-#   <component>_FOUND        - System has <component>
-#   FFMPEG_<component>_FOUND - System has <component> (as checked by FHSPA)
-#   <component>_INCLUDE_DIRS - Include directory necessary for using the <component> headers
-#   <component>_LIBRARIES    - Link these to use <component>
-#   <component>_LIBRARY_DIRS - Link directories
-#   <component>_DEFINITIONS  - Compiler switches required for using <component>
-#   <component>_VERSION      - The components version
-#
-# the following import targets is created
-#
-# ::
-#
-#   FFmpeg::FFmpeg - for all components
-#   FFmpeg::<component> - where <component> in lower case (FFmpeg::avcodec) for each components
-#
-# Copyright (c) 2006, Matthias Kretz, <kretz@kde.org>
-# Copyright (c) 2008, Alexander Neundorf, <neundorf@kde.org>
-# Copyright (c) 2011, Michael Jansen, <kde@michael-jansen.biz>
-# Copyright (c) 2017, Alexander Drozdov, <adrozdoff@gmail.com>
-#
 
 include(FindPackageHandleStandardArgs)
 
-# The default components were taken from a survey over other FindFFMPEG.cmake files
 if (NOT FFmpeg_FIND_COMPONENTS)
-    set(FFmpeg_FIND_COMPONENTS AVCODEC AVFORMAT AVUTIL)
+    set(FFmpeg_FIND_COMPONENTS AVCODEC AVFORMAT AVUTIL SWSCALE SWRESAMPLE)
 endif ()
 
 if (QT_DEPLOY_FFMPEG AND BUILD_SHARED_LIBS)
     set(shared_libs_desired TRUE)
+endif()
+
+if(IOS)
+    set(QT_FFMPEG_SHARED_LIBRARY_SUFFIX ".xcframework")
+else()
+    set(QT_FFMPEG_SHARED_LIBRARY_SUFFIX "${CMAKE_SHARED_LIBRARY_SUFFIX}")
 endif()
 
 # finds FFmpeg libs, including symlinks, for the specified component.
@@ -82,13 +29,13 @@ macro(find_shared_libs_for_component _component)
             # only them even though the folder bin/ contains proper *.dll and *.lib.
 
             string(REGEX REPLACE "^lib" "" name_we "${name_we}")
-            set(shared_lib_pattern "../bin/${name_we}*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+            set(shared_lib_pattern "../bin/${name_we}*${QT_FFMPEG_SHARED_LIBRARY_SUFFIX}")
         else()
-            set(shared_lib_pattern "${name_we}*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+            set(shared_lib_pattern "${name_we}*${QT_FFMPEG_SHARED_LIBRARY_SUFFIX}")
         endif()
 
     else()
-        set(shared_lib_pattern "${name_we}*${CMAKE_SHARED_LIBRARY_SUFFIX}*")
+        set(shared_lib_pattern "${name_we}*${QT_FFMPEG_SHARED_LIBRARY_SUFFIX}*")
     endif()
 
     file(GLOB ${_component}_SHARED_LIBRARIES "${${_component}_LIBRARY_DIR}/${shared_lib_pattern}")
@@ -110,6 +57,11 @@ macro(set_component_found _component)
 endmacro()
 
 find_package(PkgConfig QUIET)
+if (FFMPEG_DIR)
+    if(NOT EXISTS "${FFMPEG_DIR}" OR NOT IS_DIRECTORY "${FFMPEG_DIR}")
+        message(FATAL_ERROR "Explicitly set FFmpeg directory '${FFMPEG_DIR}' is invalid")
+    endif()
+endif()
 if (NOT PKG_CONFIG_FOUND AND NOT FFMPEG_DIR)
     set(FFMPEG_DIR "/usr/local")
 endif()
@@ -120,22 +72,13 @@ endif()
 # include directories.
 #
 macro(find_component _component _pkgconfig _library _header)
-    # use pkg-config to get the directories and then use these values
-    # in the FIND_PATH() and FIND_LIBRARY() calls
-    if (PKG_CONFIG_FOUND AND NOT FFMPEG_DIR)
+    if (FFMPEG_DIR)
+        set(backup_cmake_find_root_path "${CMAKE_FIND_ROOT_PATH}")
+        list(PREPEND CMAKE_FIND_ROOT_PATH "${FFMPEG_DIR}")
+    elseif(PKG_CONFIG_FOUND)
+        # use pkg-config to get the directories and then use these values
+        # in the FIND_PATH() and FIND_LIBRARY() calls
         pkg_check_modules(PC_${_component} ${_pkgconfig})
-    endif ()
-
-    if (FFMPEG_DIR OR FFMPEG_ROOT)
-        set(__find_ffmpeg_backup_root_dir "${CMAKE_FIND_ROOT_PATH}")
-    endif()
-
-    if(FFMPEG_DIR)
-        list(APPEND CMAKE_FIND_ROOT_PATH "${FFMPEG_DIR}")
-    endif()
-
-    if(FFMPEG_ROOT)
-        list(APPEND CMAKE_FIND_ROOT_PATH "${FFMPEG_ROOT}")
     endif()
 
     if (${_component}_INCLUDE_DIR AND NOT EXISTS ${${_component}_INCLUDE_DIR})
@@ -153,9 +96,12 @@ macro(find_component _component _pkgconfig _library _header)
         PATH_SUFFIXES
             ffmpeg include
     )
+    if (${_component}_INCLUDE_DIR)
+        mark_as_advanced(${_component}_INCLUDE_DIR)
+    endif()
 
     if (shared_libs_desired AND NOT WIN32)
-        set(CMAKE_FIND_LIBRARY_SUFFIXES "${CMAKE_SHARED_LIBRARY_SUFFIX};${CMAKE_STATIC_LIBRARY_SUFFIX}")
+        set(CMAKE_FIND_LIBRARY_SUFFIXES "${QT_FFMPEG_SHARED_LIBRARY_SUFFIX};${CMAKE_STATIC_LIBRARY_SUFFIX}")
     endif()
 
     if (${_component}_LIBRARY AND NOT EXISTS ${${_component}_LIBRARY})
@@ -163,20 +109,42 @@ macro(find_component _component _pkgconfig _library _header)
         unset(${_component}_LIBRARY CACHE)
     endif()
 
-    find_library(${_component}_LIBRARY
-        NAMES ${PC_${_component}_LIBRARIES} ${_library}
-        HINTS
-            ${PC_${_component}_LIBDIR}
-            ${PC_${_component}_LIBRARY_DIRS}
-            ${PC_FFMPEG_LIBRARY_DIRS}
-        PATHS
-            ${FFMPEG_DIR}
-        PATH_SUFFIXES
-            lib bin
-    )
+    # On iOS we use .xcframework for shared libraries, but this is not
+    # picked up by standard find_library behavior because .xcframework
+    # files count as directories. We first search for shared libraries
+    # on iOS, then we fallback to regular search if we can't find them.
+    if (IOS)
+        find_path(${_component}_LIBRARY
+            NAMES lib${_library}${QT_FFMPEG_SHARED_LIBRARY_SUFFIX}
+            PATHS
+                ${FFMPEG_DIR}
+            PATH_SUFFIXES
+                lib bin
+        )
+        # There is a quirk here where find_path will return the parent
+        # directory of the target directory if it's found. We append the
+        # specific filename.
+        if (${_component}_LIBRARY)
+            set(${_component}_LIBRARY "${${_component}_LIBRARY}/lib${_library}${QT_FFMPEG_SHARED_LIBRARY_SUFFIX}")
+        endif()
+    endif()
 
-    if(FFMPEG_DIR OR FFMPEG_ROOT)
-        set(CMAKE_FIND_ROOT_PATH "${__find_ffmpeg_backup_root_dir}")
+    if (NOT ${_component}_LIBRARY)
+        find_library(${_component}_LIBRARY
+            NAMES ${PC_${_component}_LIBRARIES} ${_library}
+            HINTS
+                ${PC_${_component}_LIBDIR}
+                ${PC_${_component}_LIBRARY_DIRS}
+                ${PC_FFMPEG_LIBRARY_DIRS}
+            PATHS
+                ${FFMPEG_DIR}
+            PATH_SUFFIXES
+                lib bin
+        )
+    endif()
+
+    if(FFMPEG_DIR)
+        set(CMAKE_FIND_ROOT_PATH "${backup_cmake_find_root_path}")
     endif()
 
     if (${_component}_LIBRARY)
@@ -185,22 +153,26 @@ macro(find_component _component _pkgconfig _library _header)
 
         # On Windows, shared linking goes through 'integration' static libs, so we should look for shared ones anyway
         # On Unix, we gather symlinks as well so that we could install them.
-        if (WIN32 OR ${${_component}_LIBRARY_NAME} MATCHES "\\${CMAKE_SHARED_LIBRARY_SUFFIX}$")
+        if (WIN32 OR ${${_component}_LIBRARY_NAME} MATCHES "\\${QT_FFMPEG_SHARED_LIBRARY_SUFFIX}$")
             find_shared_libs_for_component(${_component})
         endif()
 
+        mark_as_advanced(${_component}_LIBRARY)
     endif()
 
-    set(${_component}_DEFINITIONS  ${PC_${_component}_CFLAGS_OTHER})
-    set_component_found(${_component})
+    set(${_component}_CFLAGS ${PC_${_component}_CFLAGS} ${PC_${_component}_CFLAGS_OTHER})
 
-    mark_as_advanced(${_component}_LIBRARY)
+    if (${_component}_INCLUDE_DIR AND ${_component}_LIBRARY)
+        set_component_found(${_component})
+    endif()
 endmacro()
 
 # Clear the previously cached variables, because they are recomputed every time
 # the Find script is included.
+unset(FFMPEG_INCLUDE_DIRS CACHE)
 unset(FFMPEG_SHARED_LIBRARIES CACHE)
 unset(FFMPEG_STUBS CACHE)
+unset(FFMPEG_USES_OPENSSL CACHE)
 
 # Check for components.
 foreach (_component ${FFmpeg_FIND_COMPONENTS})
@@ -229,20 +201,26 @@ endforeach()
 function(qt_internal_multimedia_try_add_dynamic_resolve_dependency _component dep)
     set(dynamic_resolve_added FALSE PARENT_SCOPE)
 
+    if (NOT QT_FEATURE_library)
+         return()
+    endif()
+
     if (NOT ANDROID AND NOT LINUX)
         return()
     endif()
 
     set(supported_stubs "ssl|crypto|va|va-drm|va-x11")
-    if(${_component}_SHARED_LIBRARIES)
-        set(stub_prefix "Qt${PROJECT_VERSION_MAJOR}FFmpegStub-")
-        if (${dep} MATCHES "^${stub_prefix}(${supported_stubs})$")
-            string(REPLACE "${stub_prefix}" "" dep "${dep}")
-            set(FFMPEG_STUBS ${FFMPEG_STUBS} ${dep} CACHE INTERNAL "")
+    set(stub_prefix "Qt${PROJECT_VERSION_MAJOR}FFmpegStub-")
 
-            set(dynamic_resolve_added TRUE PARENT_SCOPE)
-        endif()
-    elseif (${dep} MATCHES "^(${supported_stubs})$")
+    # If FFmpeg pulls in OpenSSL directly (-lssl) the libraries are needed at runtime.
+    # If they're pulled through the stubs they're not strictly needed but can end up
+    # being used anyway.
+    if (${dep} MATCHES "^(${stub_prefix})?(ssl|crypto)$")
+        set(FFMPEG_USES_OPENSSL TRUE CACHE INTERNAL "")
+    endif()
+
+    if (${dep} MATCHES "^${stub_prefix}(${supported_stubs})$")
+        string(REPLACE "${stub_prefix}" "" dep "${dep}")
         set(FFMPEG_STUBS ${FFMPEG_STUBS} ${dep} CACHE INTERNAL "")
         set(dynamic_resolve_added TRUE PARENT_SCOPE)
     endif()
@@ -253,42 +231,52 @@ endfunction()
 function(__ffmpeg_internal_set_dependencies _component)
     string(TOLOWER ${_component} lib)
 
-    # The pkgconfig directory is always in lib/pkgconfig/, even on Windows
-    # where libs and dlls are in bin/
-    set(PC_FILE ${${_component}_LIBRARY_DIR}/../lib/pkgconfig/lib${lib}.pc)
+    if (WIN32)
+        set(PC_FILE ${${_component}_LIBRARY_DIR}/../lib/pkgconfig/lib${lib}.pc)
+    else()
+        set(PC_FILE ${${_component}_LIBRARY_DIR}/pkgconfig/lib${lib}.pc)
+    endif()
 
     if(EXISTS ${PC_FILE})
         file(READ ${PC_FILE} pcfile)
 
         set(prefix_l "(^| )\\-l")
         set(suffix_lib "\\.lib($| )")
+        set(framework_regex "-framework [A-Za-z0-9_]*")
 
         string(REGEX REPLACE ".*Libs:([^\n\r]+).*" "\\1" out "${pcfile}")
         string(REGEX MATCHALL "${prefix_l}[^ ]+" libs_dependency ${out})
         string(REGEX MATCHALL "[^ ]+${suffix_lib}" libs_dependency_lib ${out})
+        string(REGEX MATCHALL "${framework_regex}" framework_dependencies ${out})
 
-        string(REGEX REPLACE ".*Libs.private:([^\n\r]+).*" "\\1" out "${pcfile}")
-        string(REGEX MATCHALL "${prefix_l}[^ ]+" libs_private_dependency ${out})
-        string(REGEX MATCHALL "[^ ]+${suffix_lib}" libs_private_dependency_lib ${out})
-
-        list(APPEND deps_no_suffix ${libs_dependency} ${libs_private_dependency})
-        foreach(dependency ${deps_no_suffix})
+        foreach(dependency IN LISTS libs_dependency)
             string(REGEX REPLACE ${prefix_l} "" dependency ${dependency})
             if(NOT ${lib} STREQUAL ${dependency})
                 qt_internal_multimedia_try_add_dynamic_resolve_dependency(${_component} ${dependency})
-                if(NOT dynamic_resolve_added AND NOT ${_component}_SHARED_LIBRARIES)
+                if(NOT dynamic_resolve_added)
                     target_link_libraries(FFmpeg::${lib} INTERFACE ${dependency})
                 endif()
             endif()
         endforeach()
 
-        if(NOT ${_component}_SHARED_LIBRARIES)
-            list(APPEND deps_lib_suffix ${libs_dependency_lib} ${libs_private_dependency_lib})
-            foreach(dependency ${deps_lib_suffix})
-                string(REGEX REPLACE ${suffix_lib} "" dependency ${dependency})
-                target_link_libraries(FFmpeg::${lib} INTERFACE ${dependency})
-            endforeach()
-        endif()
+        foreach(dependency IN LISTS libs_dependency_lib)
+            string(STRIP "${dependency}" dependency)
+            target_link_libraries(FFmpeg::${lib} INTERFACE ${dependency})
+        endforeach()
+
+        # we don't link private dependencies, but just populate the FFMPEG_STUBS
+        string(REGEX REPLACE ".*Libs.private:([^\n\r]+).*" "\\1" out "${pcfile}")
+        string(REGEX MATCHALL "${prefix_l}[^ ]+" libs_private_dependency ${out})
+        string(REGEX MATCHALL "[^ ]+${suffix_lib}" libs_private_dependency_lib ${out})
+
+        foreach(dependency IN LISTS libs_private_dependency)
+            string(REGEX REPLACE ${prefix_l} "" dependency ${dependency})
+            qt_internal_multimedia_try_add_dynamic_resolve_dependency(${_component} ${dependency})
+        endforeach()
+
+        foreach(dependency IN LISTS framework_dependencies)
+            target_link_libraries(FFmpeg::${lib} INTERFACE "${dependency}")
+        endforeach()
     else()
         message(WARNING "FFmpeg pc file ${PC_FILE} is not found")
     endif()
@@ -303,19 +291,16 @@ endfunction()
 foreach (_component ${FFmpeg_FIND_COMPONENTS})
     if (${_component}_FOUND)
         string(TOLOWER ${_component} _lowerComponent)
-        if (NOT TARGET FFmpeg::${_lowerComponent})
-            add_library(FFmpeg::${_lowerComponent} INTERFACE IMPORTED)
-            set_target_properties(FFmpeg::${_lowerComponent} PROPERTIES
-                INTERFACE_COMPILE_OPTIONS "${${_component}_DEFINITIONS}"
-                INTERFACE_INCLUDE_DIRECTORIES ${${_component}_INCLUDE_DIR}
-                INTERFACE_LINK_LIBRARIES "${${_component}_LIBRARY_NAME}"
-                INTERFACE_LINK_DIRECTORIES "${${_component}_LIBRARY_DIR}"
-            )
+        set(_target FFmpeg::${_lowerComponent})
+        if (NOT TARGET ${_target})
+            add_library(${_target} INTERFACE IMPORTED)
+            target_compile_options(${_target} INTERFACE "${${_component}_CFLAGS}")
+            target_include_directories(${_target} INTERFACE "${${_component}_INCLUDE_DIR}")
+            target_link_libraries(${_target} INTERFACE "${${_component}_LIBRARY}")
 
             __ffmpeg_internal_set_dependencies(${_component})
-            target_link_libraries(FFmpeg::${_lowerComponent} INTERFACE "${${_component}_LIBRARY_NAME}")
             if (UNIX AND NOT APPLE)
-                target_link_options(FFmpeg::${_lowerComponent} INTERFACE  "-Wl,--exclude-libs=lib${_lowerComponent}")
+                target_link_options(${_target} INTERFACE  "-Wl,--exclude-libs=lib${_lowerComponent}")
             endif ()
         endif()
     endif()
@@ -329,11 +314,14 @@ list(REMOVE_DUPLICATES FFMPEG_STUBS)
 
 message(STATUS "FFmpeg shared libs: ${FFMPEG_SHARED_LIBRARIES}")
 message(STATUS "FFmpeg stubs: ${FFMPEG_STUBS}")
+message(STATUS "FFmpeg built with OpenSSL: ${FFMPEG_USES_OPENSSL}")
 
 # cache the vars.
+set(FFMPEG_INCLUDE_DIRS ${FFMPEG_INCLUDE_DIRS} CACHE STRING "The FFmpeg include directories." FORCE)
 set(FFMPEG_SHARED_LIBRARIES ${FFMPEG_SHARED_LIBRARIES} CACHE STRING "The FFmpeg dynamic libraries." FORCE)
 set(FFMPEG_STUBS ${FFMPEG_STUBS} CACHE STRING "The FFmpeg stubs." FORCE)
 
+mark_as_advanced(FFMPEG_INCLUDE_DIRS)
 mark_as_advanced(FFMPEG_SHARED_LIBRARIES)
 mark_as_advanced(FFMPEG_STUBS)
 
@@ -355,17 +343,6 @@ if (shared_libs_desired AND NOT FFMPEG_SHARED_COMPONENTS)
     message(WARNING
         "Shared FFmpeg libs are desired as QT_DEPLOY_FFMPEG=TRUE, but haven't been found!\n"
         "Remove QT_DEPLOY_FFMPEG or set the proper path to shared FFmpeg via FFMPEG_DIR.")
-endif()
-
-if (NOT TARGET FFmpeg::FFmpeg)
-    add_library(FFmpeg INTERFACE)
-    set_target_properties(FFmpeg PROPERTIES
-        INTERFACE_COMPILE_OPTIONS "${FFMPEG_DEFINITIONS}"
-        INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_INCLUDE_DIRS}"
-        INTERFACE_LINK_LIBRARIES "${FFMPEG_LIBRARIES}"
-        INTERFACE_LINK_DIRECTORIES "${FFMPEG_LIBRARY_DIRS}"
-    )
-    add_library(FFmpeg::FFmpeg ALIAS FFmpeg)
 endif()
 
 # Compile the list of required vars

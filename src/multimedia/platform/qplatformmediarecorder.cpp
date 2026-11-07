@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qplatformmediarecorder_p.h"
-#include "qstandardpaths.h"
-#include "qmediastoragelocation_p.h"
-#include <QObject>
+
+#include <QtMultimedia/private/qmediastoragelocation_p.h>
+#include <QtCore/qobject.h>
+#include <QtCore/qstandardpaths.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -63,10 +64,8 @@ QString QPlatformMediaRecorder::findActualLocation(const QMediaEncoderSettings &
 
     const auto primaryLocation =
             audioOnly ? QStandardPaths::MusicLocation : QStandardPaths::MoviesLocation;
-    const QMimeType mimeType = settings.mimeType();
-    const QString suffix = mimeType.preferredSuffix();
     QString location = QMediaStorageLocation::generateFileName(
-            outputLocation().toString(QUrl::PreferLocalFile), primaryLocation, suffix);
+            outputLocation().toString(QUrl::PreferLocalFile), primaryLocation, settings.preferredSuffix());
 
     Q_ASSERT(!location.isEmpty());
 

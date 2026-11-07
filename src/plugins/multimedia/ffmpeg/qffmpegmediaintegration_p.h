@@ -17,6 +17,10 @@
 
 #include <QtMultimedia/private/qplatformmediaintegration_p.h>
 
+#ifdef Q_OS_WIN
+#  include <QtMultimedia/private/qwindowsmediafoundation_p.h>
+#endif
+
 QT_BEGIN_NAMESPACE
 
 extern bool thread_local FFmpegLogsEnabledInThread;
@@ -28,19 +32,21 @@ class QFFmpegMediaIntegration : public QPlatformMediaIntegration
 public:
     QFFmpegMediaIntegration();
 
-    QMaybe<QPlatformAudioDecoder *> createAudioDecoder(QAudioDecoder *decoder) override;
-    QMaybe<std::unique_ptr<QPlatformAudioResampler>> createAudioResampler(const QAudioFormat &inputFormat, const QAudioFormat &outputFormat) override;
-    QMaybe<QPlatformMediaCaptureSession *> createCaptureSession() override;
-    QMaybe<QPlatformMediaPlayer *> createPlayer(QMediaPlayer *player) override;
-    QMaybe<QPlatformCamera *> createCamera(QCamera *) override;
+    q23::expected<QPlatformAudioDecoder *, QString> createAudioDecoder(QAudioDecoder *decoder) override;
+    q23::expected<std::unique_ptr<QPlatformAudioResampler>, QString>
+    createAudioResampler(const QAudioFormat &inputFormat,
+                         const QAudioFormat &outputFormat) override;
+    q23::expected<QPlatformMediaCaptureSession *, QString> createCaptureSession() override;
+    q23::expected<QPlatformMediaPlayer *, QString> createPlayer(QMediaPlayer *player) override;
+    q23::expected<QPlatformCamera *, QString> createCamera(QCamera *) override;
     QPlatformSurfaceCapture *createScreenCapture(QScreenCapture *) override;
     QPlatformSurfaceCapture *createWindowCapture(QWindowCapture *) override;
-    QMaybe<QPlatformMediaRecorder *> createRecorder(QMediaRecorder *) override;
-    QMaybe<QPlatformImageCapture *> createImageCapture(QImageCapture *) override;
+    q23::expected<QPlatformMediaRecorder *, QString> createRecorder(QMediaRecorder *) override;
+    q23::expected<QPlatformImageCapture *, QString> createImageCapture(QImageCapture *) override;
 
-    QMaybe<QPlatformVideoSink *> createVideoSink(QVideoSink *sink) override;
+    q23::expected<QPlatformVideoSink *, QString> createVideoSink(QVideoSink *sink) override;
 
-    QMaybe<QPlatformAudioInput *> createAudioInput(QAudioInput *input) override;
+    q23::expected<QPlatformAudioInput *, QString> createAudioInput(QAudioInput *input) override;
 //    QPlatformAudioOutput *createAudioOutput(QAudioOutput *) override;
 
     QVideoFrame convertVideoFrame(QVideoFrame &srcFrame,
@@ -52,6 +58,13 @@ protected:
     QPlatformVideoDevices *createVideoDevices() override;
 
     QPlatformCapturableWindows *createCapturableWindows() override;
+
+private:
+#ifdef Q_OS_WIN
+    // We keep the WMF runtime initialized, as frequent MFStartup/MFShutdown calls can cause issues
+    // with COM deinitialization (causing crashes on exit).
+    QMFRuntimeInit m_wmfRuntime;
+#endif
 };
 
 QT_END_NAMESPACE

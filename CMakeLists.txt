@@ -13,17 +13,30 @@ project(QtMultimedia
     LANGUAGES CXX C
 )
 
-find_package(Qt6 ${PROJECT_VERSION} CONFIG REQUIRED COMPONENTS BuildInternals Core)
-find_package(Qt6 ${PROJECT_VERSION} QUIET CONFIG OPTIONAL_COMPONENTS Gui Network Svg Widgets Quick Qml QuickTest QuickControls2 Quick3D)
+find_package(Qt6 ${PROJECT_VERSION} CONFIG REQUIRED COMPONENTS BuildInternals)
+
+# This should be called as early as possible, just after find_package(BuildInternals) where it is
+# defined.
 qt_internal_project_setup()
+
+find_package(Qt6 ${PROJECT_VERSION} CONFIG REQUIRED Core)
+find_package(Qt6 ${PROJECT_VERSION} QUIET CONFIG
+    OPTIONAL_COMPONENTS
+        Gui
+        Network
+        Svg
+        Widgets
+        Quick
+        Qml
+        Test
+        QuickTest
+        QuickControls2
+        Quick3D
+        OpenGLPrivate
+        Concurrent)
 
 if(NOT TARGET Qt::Gui)
     message(NOTICE "Skipping the build as the condition \"TARGET Qt::Gui\" is not met.")
-    return()
-endif()
-
-if(QNX AND CMAKE_SYSTEM_VERSION GREATER_EQUAL 800)
-    message(NOTICE "Skipping the build as multimedia is not supported on QNX8.0.")
     return()
 endif()
 
@@ -34,7 +47,6 @@ set(QT_BUILD_EXTRA_IDE_FILE_PATTERNS
     src/multimedia/doc/qtmultimedia.qdocconf
     src/multimedia/doc/snippets/CMakeLists.txt
     src/multimedia/doc/snippets/multimedia-snippets/audio.cpp
-    src/multimedia/doc/snippets/multimedia-snippets/camera.cpp
     src/multimedia/doc/snippets/multimedia-snippets/devices.cpp
     src/multimedia/doc/snippets/multimedia-snippets/images/qt-logo.png
     src/multimedia/doc/snippets/multimedia-snippets/media.cpp
@@ -44,13 +56,13 @@ set(QT_BUILD_EXTRA_IDE_FILE_PATTERNS
     src/multimedia/doc/snippets/multimedia-snippets/soundeffect.qml
     src/multimedia/doc/snippets/multimedia-snippets/video.cpp
     src/multimedia/doc/src/audiooverview.qdoc
-    src/multimedia/doc/src/backend-notes-apple.qdoc
     src/multimedia/doc/src/cameraoverview.qdoc
     src/multimedia/doc/src/classic.css
     src/multimedia/doc/src/multimedia-overview.qdoc
     src/multimedia/doc/src/platform-notes-apple.qdoc
     src/multimedia/doc/src/platform-notes-wasm.qdoc
-    src/multimedia/doc/src/platform-notes-wayland.qdoc
+    src/multimedia/doc/src/platform-notes-linux.qdoc
+    src/multimedia/doc/src/backend-notes-gstreamer.qdoc
     src/multimedia/doc/src/qm-external-pages.qdoc
     src/multimedia/doc/src/qt6-changes.qdoc
     src/multimedia/doc/src/qtmultimedia-building-from-source.qdoc

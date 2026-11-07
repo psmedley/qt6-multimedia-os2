@@ -15,20 +15,23 @@
 // We mean it.
 //
 
-#include <private/qplatformaudiodevices_p.h>
-#include <QtCore/private/qcomptr_p.h>
-#include <private/qcominitializer_p.h>
-#include <private/qwindowsmediafoundation_p.h>
+#include <QtMultimedia/qaudiodevice.h>
+#include <QtMultimedia/private/qplatformaudiodevices_p.h>
+#include <QtMultimedia/private/qwindowsmediafoundation_p.h>
 
-#include <qaudiodevice.h>
+#include <QtCore/qmutex.h>
+#include <QtCore/qchronotimer.h>
+#include <QtCore/private/qcomptr_p.h>
 
 struct IAudioClient3;
+struct IMMDevice;
 struct IMMDeviceEnumerator;
 
 QT_BEGIN_NAMESPACE
 
-class QWindowsEngine;
+namespace QtWASAPI {
 class CMMNotificationClient;
+} // namespace QtWASAPI
 
 class QWindowsAudioDevices : public QPlatformAudioDevices
 {
@@ -41,30 +44,33 @@ public:
     QPlatformAudioSink *createAudioSink(const QAudioDevice &, const QAudioFormat &,
                                         QObject *parent) override;
 
-    void prepareAudio() override;
-
     using QPlatformAudioDevices::onAudioInputsChanged;
     using QPlatformAudioDevices::onAudioOutputsChanged;
 
     QLatin1String backendName() const override { return QLatin1String{ "WASAPI" }; }
+    bool hasCallbackApi() const override { return true; }
 
 protected:
     QList<QAudioDevice> findAudioInputs() const override;
     QList<QAudioDevice> findAudioOutputs() const override;
 
 private:
-    QComInitializer m_comInitializer;
-    QMFRuntimeInit m_wmfRuntime{ QWindowsMediaFoundation::instance() };
+    void scheduleAudioInputsChanged();
+    void scheduleAudioOutputsChanged();
+
+    QMFRuntimeInit m_wmfRuntime;
     QList<QAudioDevice> availableDevices(QAudioDevice::Mode mode) const;
 
     ComPtr<IMMDeviceEnumerator> m_deviceEnumerator;
-    ComPtr<CMMNotificationClient> m_notificationClient;
-    // The "warm-up" audio client is required to run in the background in order to keep audio engine
-    // ready for audio output immediately after creating any other subsequent audio client.
-    ComPtr<IAudioClient3> m_warmUpAudioClient;
-    std::atomic_bool m_isAudioClientWarmedUp = false;
+    ComPtr<QtWASAPI::CMMNotificationClient> m_notificationClient;
 
-    friend CMMNotificationClient;
+    QChronoTimer m_audioInputsDebounce;
+    QChronoTimer m_audioOutputsDebounce;
+
+    friend QtWASAPI::CMMNotificationClient;
+
+    mutable QMutex m_cacheMutex;
+    mutable std::map<ComPtr<IMMDevice>, QAudioDevice> m_cachedDevices;
 };
 
 QT_END_NAMESPACE

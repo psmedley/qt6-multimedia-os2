@@ -1,38 +1,41 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
-#include <QtGui/QImageReader>
+#include <QtCore/qdebug.h>
+#include <QtCore/qrandom.h>
+#include <QtCore/qsysinfo.h>
 #include <QtCore/qurl.h>
-#include <QDebug>
-#include <QVideoSink>
-#include <QVideoWidget>
-#include <QSysInfo>
 
-#include <qcamera.h>
-#include <qcameradevice.h>
-#include <qimagecapture.h>
-#include <qmediacapturesession.h>
-#include <qmediaplayer.h>
-#include <qmediadevices.h>
-#include <qmediarecorder.h>
-#include <qaudiooutput.h>
-#include <qaudioinput.h>
-#include <qaudiodevice.h>
-#include <qaudiodecoder.h>
-#include <qaudiobuffer.h>
-#include <qscreencapture.h>
-#include <qwindowcapture.h>
-#include <qaudiobufferinput.h>
-#include <qvideoframeinput.h>
+#include <QtGui/qimagereader.h>
 
-#include <qcamera.h>
-#include <QMediaFormat>
-#include <QtMultimediaWidgets/QVideoWidget>
+#include <QtMultimedia/qaudiobuffer.h>
+#include <QtMultimedia/qaudiobufferinput.h>
+#include <QtMultimedia/qaudiodecoder.h>
+#include <QtMultimedia/qaudiodevice.h>
+#include <QtMultimedia/qaudioinput.h>
+#include <QtMultimedia/qaudiooutput.h>
+#include <QtMultimedia/qcamera.h>
+#include <QtMultimedia/qcameradevice.h>
+#include <QtMultimedia/qimagecapture.h>
+#include <QtMultimedia/qmediacapturesession.h>
+#include <QtMultimedia/qmediadevices.h>
+#include <QtMultimedia/qmediaformat.h>
+#include <QtMultimedia/qmediaplayer.h>
+#include <QtMultimedia/qmediarecorder.h>
+#include <QtMultimedia/qscreencapture.h>
+#include <QtMultimedia/qvideoframeinput.h>
+#include <QtMultimedia/qvideosink.h>
+#include <QtMultimedia/qwindowcapture.h>
 
-#include <private/mediabackendutils_p.h>
+#include <QtMultimediaTestLib/private/mediabackendutils_p.h>
+#include <QtMultimediaTestLib/private/qintegrationtestbase_p.h>
 
-QT_USE_NAMESPACE
+#include <QtMultimediaWidgets/qvideowidget.h>
+
+#include <QtTest/qsignalspy.h>
+#include <QtTest/qtest.h>
+
+using namespace Qt::StringLiterals;
 
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
@@ -43,11 +46,16 @@ QT_USE_NAMESPACE
  it may be less stable.
 */
 
-class tst_QMediaCaptureSession: public QObject
+class tst_QMediaCaptureSession : public QIntegrationTestBase
 {
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        if (!initIntegrationTestCase())
+            return;
+    }
 
     void testAudioMute();
     void stress_test_setup_and_teardown();
@@ -813,6 +821,10 @@ void tst_QMediaCaptureSession::can_change_CameraDevice_on_attached_Camera()
 
 void tst_QMediaCaptureSession::can_change_VideoOutput_with_and_without_camera()
 {
+#ifdef Q_OS_HARMONY
+    QSKIP("Phone form factor only allows one top-level window; this test shows two QVideoWidgets simultaneously");
+#endif
+
     QCamera camera;
     if (!camera.isAvailable())
         QSKIP("No video input is available");
@@ -1212,6 +1224,14 @@ void tst_QMediaCaptureSession::can_add_ImageCapture_and_capture_during_recording
 
 void tst_QMediaCaptureSession::testAudioMute()
 {
+#ifdef Q_OS_HARMONY
+    // OHOS records the Wave file via OH_AudioCapturer (OH_AVRecorder has no
+    // PCM codec), but the OHOS backend does not yet implement a
+    // QPlatformAudioDecoder, so this test cannot decode the recorded file for
+    // raw sample inspection.
+    QSKIP("OHOS backend has no QAudioDecoder implementation yet");
+#endif
+
     QAudioInput audioInput;
     if (audioInput.device().isNull())
         QSKIP("No audio input available");
@@ -1224,7 +1244,7 @@ void tst_QMediaCaptureSession::testAudioMute()
     session.setAudioInput(&audioInput);
 
     session.setCamera(nullptr);
-    recorder.setOutputLocation(QStringLiteral("test"));
+    recorder.setOutputLocation(QUrl{u"test"_s});
 
     QSignalSpy spy(&audioInput, &QAudioInput::mutedChanged);
     QSignalSpy durationChanged(&recorder, &QMediaRecorder::durationChanged);

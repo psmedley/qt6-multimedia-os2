@@ -7,6 +7,8 @@
 #include <QtMultimedia/qvideosink.h>
 #include <QtMultimedia/private/qvideoframe_p.h>
 #include <QtGui/rhi/qrhi.h>
+#include <QtGui/qguiapplication.h>
+#include <QtGui/qopenglcontext.h>
 #include <QtCore/qcoreapplication.h>
 #include <QtCore/qdebug.h>
 #include <QtCore/qloggingcategory.h>
@@ -29,20 +31,21 @@
 
 // DMA support
 #if QT_CONFIG(gstreamer_gl_egl) && QT_CONFIG(linux_dmabuf)
+#  include <common/qgstreameregldisplay_p.h>
 #  include <gst/allocators/gstdmabuf.h>
 #endif
 
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
-static Q_LOGGING_CATEGORY(qLcGstVideoRenderer, "qt.multimedia.gstvideorenderer")
+Q_STATIC_LOGGING_CATEGORY(qLcGstVideoRenderer, "qt.multimedia.gstvideorenderer");
 
 QT_BEGIN_NAMESPACE
 
-QGstVideoRenderer::QGstVideoRenderer(QGstreamerVideoSink *sink)
+QGstVideoRenderer::QGstVideoRenderer(QGstreamerRelayVideoSink *sink)
     : m_sink(sink), m_surfaceCaps(createSurfaceCaps(sink))
 {
     QObject::connect(
-            sink, &QGstreamerVideoSink::aboutToBeDestroyed, this,
+            sink, &QGstreamerRelayVideoSink::aboutToBeDestroyed, this,
             [this] {
                 QMutexLocker locker(&m_sinkMutex);
                 m_sink = nullptr;
@@ -52,7 +55,7 @@ QGstVideoRenderer::QGstVideoRenderer(QGstreamerVideoSink *sink)
 
 QGstVideoRenderer::~QGstVideoRenderer() = default;
 
-QGstCaps QGstVideoRenderer::createSurfaceCaps([[maybe_unused]] QGstreamerVideoSink *sink)
+QGstCaps QGstVideoRenderer::createSurfaceCaps([[maybe_unused]] QGstreamerRelayVideoSink *sink)
 {
     QGstCaps caps = QGstCaps::create();
 
@@ -78,35 +81,18 @@ QGstCaps QGstVideoRenderer::createSurfaceCaps([[maybe_unused]] QGstreamerVideoSi
                    << QVideoFrameFormat::Format_Y8
                    << QVideoFrameFormat::Format_Y16
         ;
+    caps.addPixelFormats(formats);
 #if QT_CONFIG(gstreamer_gl)
     QRhi *rhi = sink->rhi();
     if (rhi && rhi->backend() == QRhi::OpenGLES2) {
         caps.addPixelFormats(formats, GST_CAPS_FEATURE_MEMORY_GL_MEMORY);
 #  if QT_CONFIG(gstreamer_gl_egl) && QT_CONFIG(linux_dmabuf)
-        if (sink->eglDisplay() && sink->eglImageTargetTexture2D()) {
-            // We currently do not handle planar DMA buffers, as it's somewhat unclear how to
-            // convert the planar EGLImage into something we can use from OpenGL
-            auto singlePlaneFormats = QList<QVideoFrameFormat::PixelFormat>()
-                           << QVideoFrameFormat::Format_UYVY
-                           << QVideoFrameFormat::Format_YUYV
-                           << QVideoFrameFormat::Format_AYUV
-                           << QVideoFrameFormat::Format_XRGB8888
-                           << QVideoFrameFormat::Format_XBGR8888
-                           << QVideoFrameFormat::Format_RGBX8888
-                           << QVideoFrameFormat::Format_BGRX8888
-                           << QVideoFrameFormat::Format_ARGB8888
-                           << QVideoFrameFormat::Format_ABGR8888
-                           << QVideoFrameFormat::Format_RGBA8888
-                           << QVideoFrameFormat::Format_BGRA8888
-                           << QVideoFrameFormat::Format_Y8
-                           << QVideoFrameFormat::Format_Y16
-                ;
-            caps.addPixelFormats(singlePlaneFormats, GST_CAPS_FEATURE_MEMORY_DMABUF);
+        if (qGstEglCanMapDmaBuf()) {
+            caps.addPixelFormats(formats, GST_CAPS_FEATURE_MEMORY_DMABUF);
         }
 #  endif
     }
 #endif
-    caps.addPixelFormats(formats);
     return caps;
 }
 
@@ -138,8 +124,8 @@ QT_WARNING_POP
 
 void QGstVideoRenderer::handleNewBuffer(RenderBufferState state)
 {
-    auto videoBuffer = std::make_unique<QGstVideoBuffer>(state.buffer, m_videoInfo, m_sink,
-                                                         state.format, state.memoryFormat);
+    auto videoBuffer =
+            std::make_unique<QGstVideoBuffer>(state.buffer, state.videoInfo, state.format);
     QVideoFrame frame = QVideoFramePrivate::createFrame(std::move(videoBuffer), state.format);
     QGstUtils::setFrameTimeStampsFromBuffer(&frame, state.buffer.get());
     m_currentPipelineFrame = std::move(frame);
@@ -162,14 +148,15 @@ bool QGstVideoRenderer::start(const QGstCaps& caps)
 {
     qCDebug(qLcGstVideoRenderer) << "QGstVideoRenderer::start" << caps;
 
-    auto optionalFormatAndVideoInfo = caps.formatAndVideoInfo();
-    if (optionalFormatAndVideoInfo) {
-        std::tie(m_format, m_videoInfo) = std::move(*optionalFormatAndVideoInfo);
+    auto optionalVideoInfo = caps.videoInfo();
+    if (optionalVideoInfo) {
+        m_videoInfo = std::move(*optionalVideoInfo);
+        m_format = qVideoFrameFormatFromGstVideoInfo(m_videoInfo);
     } else {
         m_format = {};
         m_videoInfo = {};
     }
-    m_memoryFormat = caps.memoryFormat();
+    m_capsMemoryFormat = caps.memoryFormat();
 
     // NOTE: m_format will not be fully populated until GST_EVENT_TAG is processed
 
@@ -189,9 +176,42 @@ void QGstVideoRenderer::unlock()
     qCDebug(qLcGstVideoRenderer) << "QGstVideoRenderer::unlock";
 }
 
-bool QGstVideoRenderer::proposeAllocation(GstQuery *)
+bool QGstVideoRenderer::proposeAllocation(GstQuery *query)
 {
-    qCDebug(qLcGstVideoRenderer) << "QGstVideoRenderer::proposeAllocation";
+    if (!query || GST_QUERY_TYPE(query) != GST_QUERY_ALLOCATION)
+        return false;
+
+    GstCaps *queryCaps = nullptr;
+    gboolean needPool = false;
+    gst_query_parse_allocation(query, &queryCaps, &needPool);
+    GstVideoInfo info;
+    int size = 0;
+    if (queryCaps && gst_video_info_from_caps(&info, queryCaps)) {
+        size = info.size;
+    } else {
+        qWarning(qLcGstVideoRenderer) << "QGstVideoRenderer::proposeAllocation failed to "
+                                          "get size from query caps";
+        return true;
+    }
+
+    constexpr int defaultMinBuffers = 3;
+    static const int env
+            = qEnvironmentVariableIntValue("QT_GSTREAMER_PROPOSE_ALLOCATION_MIN_BUFFERS");
+    static const int minBuffers = env ? env : defaultMinBuffers;
+    qCDebug(qLcGstVideoRenderer) << "QGstVideoRenderer::proposeAllocation: "
+                                    "needPool:" << needPool
+                                 << "size:" << size
+                                 << "minBuffers:" << minBuffers;
+
+    // This call is needed to avoid enabling of copy threshold by v4l2 decoders, which can result
+    // in a mix of dmabuf and system memory buffers. The query sender should use its own buffer
+    // pool, and will only take the size value and our suggested minimum buffers into account.
+    // The driver can force a higher minimum if minBuffers is set too low, making 3 sufficient.
+    gst_query_add_allocation_pool(query, nullptr, size, minBuffers, 0);
+
+    // Advertise GstVideoMeta support, often needed for DMA buffer negotiation.
+    gst_query_add_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr);
+
     return true;
 }
 
@@ -217,10 +237,56 @@ GstFlowReturn QGstVideoRenderer::render(GstBuffer *buffer)
         }
     }
 
+    // Some gst elements, like v4l2h264dec, can provide Direct Memory Access buffers (DMA-BUF)
+    // without specifying it in their caps. So we check the memory format manually:
+    QGstCaps::MemoryFormat bufferMemoryFormat = [&] {
+        if (m_capsMemoryFormat != QGstCaps::CpuMemory)
+            return m_capsMemoryFormat;
+
+        return qMemoryFormatFromGstBuffer(buffer);
+    }();
+
+    qCDebug(qLcGstVideoRenderer) << "m_capsMemoryFormat" << m_capsMemoryFormat
+                                 << "bufferMemoryFormat" << bufferMemoryFormat;
+
+    QVideoFrameFormat bufferVideoFrameFormat = m_format;
+
+    // When rendering DMAbuf frames with OpenGLES, EGL seems to do implicit YUV->RGB conversion for
+    // UYVY and YUYV (YUY2), so we need to change the pixel format to Format_RGBA8888 to select the
+    // correct shader.
+    const bool setFormat_RGBA8888 = [&] {
+#if QT_CONFIG(gstreamer_gl_egl) && QT_CONFIG(linux_dmabuf)
+        if ((m_format.pixelFormat() == QVideoFrameFormat::Format_UYVY
+             || m_format.pixelFormat() == QVideoFrameFormat::Format_YUYV)
+            && bufferMemoryFormat == QGstCaps::DMABuf && m_sink && qGstEglCanMapDmaBuf()) {
+
+            QRhi *rhi = m_sink->rhi();
+            if (!rhi || rhi->backend() != QRhi::OpenGLES2)
+                return false;
+
+            auto *nativeHandles = static_cast<const QRhiGles2NativeHandles *>(rhi->nativeHandles());
+            QOpenGLContext *glContext = nativeHandles ? nativeHandles->context : nullptr;
+            return glContext && glContext->isOpenGLES();
+        }
+#endif
+        return false;
+    }();
+    if (setFormat_RGBA8888) {
+        // TODO: Replace with new private setter of pixel format.
+        qCDebug(qLcGstVideoRenderer) << "Setting pixel format to Format_RGBA8888";
+        bufferVideoFrameFormat = QVideoFrameFormat(m_format.frameSize(),
+                                                   QVideoFrameFormat::Format_RGBA8888);
+        bufferVideoFrameFormat.setStreamFrameRate(m_format.streamFrameRate());
+        bufferVideoFrameFormat.setColorRange(m_format.colorRange());
+        bufferVideoFrameFormat.setColorTransfer(m_format.colorTransfer());
+        bufferVideoFrameFormat.setColorSpace(m_format.colorSpace());
+    }
+
     RenderBufferState state{
         QGstBufferHandle{ buffer, QGstBufferHandle::NeedsRef },
-        m_format,
-        m_memoryFormat,
+        bufferVideoFrameFormat,
+        m_videoInfo,
+        bufferMemoryFormat,
     };
 
     qCDebug(qLcGstVideoRenderer) << "    sending video frame";
@@ -237,17 +303,21 @@ bool QGstVideoRenderer::query(GstQuery *query)
 {
 #if QT_CONFIG(gstreamer_gl)
     if (GST_QUERY_TYPE(query) == GST_QUERY_CONTEXT) {
-        const gchar *type;
+        const gchar *type = nullptr;
         gst_query_parse_context_type(query, &type);
 
-        if (strcmp(type, "gst.gl.local_context") != 0)
+        QLatin1StringView typeStr(type);
+        if (typeStr != QLatin1StringView("gst.gl.GLDisplay")
+            && typeStr != QLatin1StringView("gst.gl.local_context")) {
             return false;
+        }
 
         QMutexLocker locker(&m_sinkMutex);
         if (!m_sink)
             return false;
 
-        auto *gstGlContext = m_sink->gstGlLocalContext();
+        auto *gstGlContext = typeStr == QLatin1StringView("gst.gl.GLDisplay")
+                ? m_sink->gstGlDisplayContext() : m_sink->gstGlLocalContext();
         if (!gstGlContext)
             return false;
 
@@ -337,11 +407,11 @@ void QGstVideoRenderer::gstEventHandleFlushStop(GstEvent *)
 }
 
 static GstVideoSinkClass *gvrs_sink_parent_class;
-static thread_local QGstreamerVideoSink *gvrs_current_sink;
+static thread_local QGstreamerRelayVideoSink *gvrs_current_sink;
 
 #define VO_SINK(s) QGstVideoRendererSink *sink(reinterpret_cast<QGstVideoRendererSink *>(s))
 
-QGstVideoRendererSinkElement QGstVideoRendererSink::createSink(QGstreamerVideoSink *sink)
+QGstVideoRendererSinkElement QGstVideoRendererSink::createSink(QGstreamerRelayVideoSink *sink)
 {
     setSink(sink);
     QGstVideoRendererSink *gstSink = reinterpret_cast<QGstVideoRendererSink *>(
@@ -353,7 +423,7 @@ QGstVideoRendererSinkElement QGstVideoRendererSink::createSink(QGstreamerVideoSi
     };
 }
 
-void QGstVideoRendererSink::setSink(QGstreamerVideoSink *sink)
+void QGstVideoRendererSink::setSink(QGstreamerRelayVideoSink *sink)
 {
     gvrs_current_sink = sink;
 }

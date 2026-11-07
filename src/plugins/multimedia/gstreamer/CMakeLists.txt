@@ -26,6 +26,7 @@ qt_internal_add_module(GstreamerMediaPluginImplPrivate
         common/qgstreamervideosink.cpp common/qgstreamervideosink_p.h
         common/qgstpipeline.cpp common/qgstpipeline_p.h
         common/qgstutils.cpp common/qgstutils_p.h
+        common/qgstreameregldisplay.cpp common/qgstreameregldisplay_p.h
         common/qgstvideobuffer.cpp common/qgstvideobuffer_p.h
         common/qgstvideorenderersink.cpp common/qgstvideorenderersink_p.h
         common/qgstsubtitlesink.cpp common/qgstsubtitlesink_p.h
@@ -50,9 +51,14 @@ qt_internal_add_module(GstreamerMediaPluginImplPrivate
     NO_GENERATE_CPP_EXPORTS
     DEFINES
         GLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_26
+        QT_NO_CAST_FROM_ASCII
+        QT_NO_CAST_TO_ASCII
     PUBLIC_LIBRARIES
-        Qt::MultimediaPrivate
+        Qt::Concurrent
+        Qt::Core
         Qt::CorePrivate
+        Qt::Multimedia
+        Qt::MultimediaPrivate
         GStreamer::GStreamer
         GStreamer::App
         GStreamer::Play

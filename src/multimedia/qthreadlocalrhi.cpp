@@ -3,63 +3,69 @@
 
 #include "qthreadlocalrhi_p.h"
 
-#include <rhi/qrhi.h>
 #include <QtCore/qcoreapplication.h>
 #include <QtCore/qthreadstorage.h>
+#include <QtGui/private/qguiapplication_p.h>
 #include <QtGui/qoffscreensurface.h>
-#include <qpa/qplatformintegration.h>
-#include <private/qguiapplication_p.h>
+#include <QtGui/qpa/qplatformintegration.h>
 
 #if defined(Q_OS_ANDROID)
-#include <qmetaobject.h>
+#  include <QtCore/qmetaobject.h>
 #endif
 
 QT_BEGIN_NAMESPACE
 
 namespace {
 
+static thread_local QRhi::Implementation s_preferredBackend = QRhi::Null;
+
+#if QT_CONFIG(opengl)
+
+bool openGLCapsSupported(const QPlatformIntegration &qpa)
+{
+     return qpa.hasCapability(QPlatformIntegration::OpenGL) &&
+            !QCoreApplication::testAttribute(Qt::AA_ForceRasterWidgets) &&
+            (QThread::isMainThread() ||
+                (qpa.hasCapability(QPlatformIntegration::ThreadedOpenGL) &&
+                 qpa.hasCapability(QPlatformIntegration::OffscreenSurface)));
+}
+#endif
+
 class ThreadLocalRhiHolder
 {
 public:
     ~ThreadLocalRhiHolder() { resetRhi(); }
 
-    QRhi *ensureRhi(QRhi *referenceRhi)
+    QRhi *ensureRhi([[maybe_unused]] QRhi::Implementation backend)
     {
         if (m_rhi || m_cpuOnly)
             return m_rhi.get();
 
-        QRhi::Implementation referenceBackend = referenceRhi ? referenceRhi->backend() : QRhi::Null;
         const QPlatformIntegration *qpa = QGuiApplicationPrivate::platformIntegration();
 
         if (qpa && qpa->hasCapability(QPlatformIntegration::RhiBasedRendering)) {
 
 #if QT_CONFIG(metal)
-            if (referenceBackend == QRhi::Metal || referenceBackend == QRhi::Null) {
+            if (canUseRhiImpl(QRhi::Metal, backend)) {
                 QRhiMetalInitParams params;
                 m_rhi.reset(QRhi::create(QRhi::Metal, &params));
             }
 #endif
 
 #if defined(Q_OS_WIN)
-            if (referenceBackend == QRhi::D3D11 || referenceBackend == QRhi::Null) {
+            if (!m_rhi && canUseRhiImpl(QRhi::D3D11, backend)) {
                 QRhiD3D11InitParams params;
                 m_rhi.reset(QRhi::create(QRhi::D3D11, &params));
             }
 #endif
 
 #if QT_CONFIG(opengl)
-            if (!m_rhi && (referenceBackend == QRhi::OpenGLES2 || referenceBackend == QRhi::Null)) {
-                if (qpa->hasCapability(QPlatformIntegration::OpenGL)
-                    && qpa->hasCapability(QPlatformIntegration::RasterGLSurface)
-                    && !QCoreApplication::testAttribute(Qt::AA_ForceRasterWidgets)) {
+            if (!m_rhi && canUseRhiImpl(QRhi::OpenGLES2, backend)) {
+                if (openGLCapsSupported(*qpa)) {
 
                     m_fallbackSurface.reset(QRhiGles2InitParams::newFallbackSurface());
                     QRhiGles2InitParams params;
                     params.fallbackSurface = m_fallbackSurface.get();
-                    if (referenceBackend == QRhi::OpenGLES2)
-                        params.shareContext = static_cast<const QRhiGles2NativeHandles *>(
-                                                      referenceRhi->nativeHandles())
-                                                      ->context;
                     m_rhi.reset(QRhi::create(QRhi::OpenGLES2, &params));
 
 #  if defined(Q_OS_ANDROID)
@@ -92,7 +98,6 @@ public:
         return m_rhi.get();
     }
 
-private:
     void resetRhi()
     {
         m_rhi.reset();
@@ -100,6 +105,21 @@ private:
         m_fallbackSurface.reset();
 #endif
         m_cpuOnly = false;
+    }
+
+    bool canUseRhiImpl(const QRhi::Implementation implementation,
+                       const QRhi::Implementation reference)
+    {
+        // First priority goes to reference backend
+        if (reference != QRhi::Null)
+            return implementation == reference;
+
+        // If no reference, but preference exists, compare to that
+        if (s_preferredBackend != QRhi::Null)
+            return implementation == s_preferredBackend;
+
+        // Can use (assuming platform and configuration allow)
+        return true;
     }
 
 private:
@@ -120,9 +140,17 @@ QThreadStorage<ThreadLocalRhiHolder> g_threadLocalRhiHolder;
 
 }
 
-QRhi *ensureThreadLocalRhi(QRhi* referenceRhi)
+QRhi *qEnsureThreadLocalRhi(QRhi::Implementation backend)
 {
-    return g_threadLocalRhiHolder.localData().ensureRhi(referenceRhi);
+    return g_threadLocalRhiHolder.localData().ensureRhi(backend);
+}
+
+void qSetPreferredThreadLocalRhiBackend(QRhi::Implementation backend)
+{
+    if (s_preferredBackend != backend) {
+        s_preferredBackend = backend;
+        g_threadLocalRhiHolder.localData().resetRhi();
+    }
 }
 
 QT_END_NAMESPACE

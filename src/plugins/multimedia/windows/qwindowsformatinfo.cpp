@@ -3,74 +3,79 @@
 
 #include "qwindowsformatinfo_p.h"
 
-#include <mfapi.h>
-#include <mftransform.h>
-#include <QtCore/private/qcomptr_p.h>
-#include <private/qwindowsmultimediautils_p.h>
-#include <private/qcomtaskresource_p.h>
-
+#include <QtMultimedia/private/qcomtaskresource_p.h>
+#include <QtMultimedia/private/qwindowsmultimediautils_p.h>
+#include <QtGui/qimagewriter.h>
+#include <QtCore/qhash.h>
 #include <QtCore/qlist.h>
 #include <QtCore/qset.h>
-#include <QtCore/qhash.h>
-#include <QtGui/qimagewriter.h>
+#include <QtCore/private/qcomptr_p.h>
+
+#include <mfapi.h>
+#include <mftransform.h>
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 namespace {
 
 template<typename T>
-using CheckedCodecs = QHash<QPair<T, QMediaFormat::ConversionMode>, bool>;
+using CheckedCodecs = QHash<std::pair<T, QMediaFormat::ConversionMode>, bool>;
 
 bool isSupportedMFT(const GUID &category, const MFT_REGISTER_TYPE_INFO &type, QMediaFormat::ConversionMode mode)
 {
     UINT32 count = 0;
-    IMFActivate **activateArrayRaw = nullptr;
-    HRESULT hr = MFTEnumEx(
-            category,
-            MFT_ENUM_FLAG_ALL,
-            (mode == QMediaFormat::Encode) ? nullptr : &type,  // Input type
-            (mode == QMediaFormat::Encode) ? &type : nullptr,  // Output type
-            &activateArrayRaw,
-            &count
-            );
+    QComTaskResource<IMFActivate *> activate;
+    HRESULT hr = E_FAIL;
 
-    if (FAILED(hr))
+    // MFTEnumEx may crash inside third-party drivers (e.g. D3D12Core.dll,
+    // RTWorkQ.dll) when enumerating hardware codecs. Wrap the call with SEH
+    // to prevent the crash from taking down the whole application.
+#ifdef Q_CC_MSVC
+    __try {
+#endif
+        hr = MFTEnumEx(
+                category,
+                MFT_ENUM_FLAG_ALL,
+                (mode == QMediaFormat::Encode) ? nullptr : &type,  // Input type
+                (mode == QMediaFormat::Encode) ? &type : nullptr,  // Output type
+                activate.address(),
+                &count
+                );
+#ifdef Q_CC_MSVC
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        qWarning("MFTEnumEx crashed while enumerating codecs (SEH exception caught)");
         return false;
-
-    QComTaskResource<IMFActivate *[], QComDeleter> activateArray(activateArrayRaw, count);
-    for (UINT32 i = 0; i < count; ++i) {
-        ComPtr<IMFTransform> transform;
-        hr = activateArray[i]->ActivateObject(IID_PPV_ARGS(transform.GetAddressOf()));
-        if (SUCCEEDED(hr))
-            return true;
     }
+#endif
 
-    return false;
+    return SUCCEEDED(hr) && count > 0;
 }
 
 bool isSupportedCodec(QMediaFormat::AudioCodec codec, QMediaFormat::ConversionMode mode)
 {
     return isSupportedMFT((mode == QMediaFormat::Encode) ? MFT_CATEGORY_AUDIO_ENCODER : MFT_CATEGORY_AUDIO_DECODER,
-                          { MFMediaType_Audio, QWindowsMultimediaUtils::audioFormatForCodec(codec) },
+                          { MFMediaType_Audio, QWMF::audioFormatForCodec(codec) },
                           mode);
 }
 
 bool isSupportedCodec(QMediaFormat::VideoCodec codec, QMediaFormat::ConversionMode mode)
 {
     return isSupportedMFT((mode == QMediaFormat::Encode) ? MFT_CATEGORY_VIDEO_ENCODER : MFT_CATEGORY_VIDEO_DECODER,
-                          { MFMediaType_Video, QWindowsMultimediaUtils::videoFormatForCodec(codec) },
+                          { MFMediaType_Video, QWMF::videoFormatForCodec(codec) },
                           mode);
 }
 
 template <typename T>
 bool isSupportedCodec(T codec, QMediaFormat::ConversionMode m, CheckedCodecs<T> &checkedCodecs)
 {
-    if (auto it = checkedCodecs.constFind(qMakePair(codec, m)); it != checkedCodecs.constEnd())
+    if (auto it = checkedCodecs.constFind(std::pair{codec, m}); it != checkedCodecs.constEnd())
         return it.value();
 
     const bool supported = isSupportedCodec(codec, m);
 
-    checkedCodecs.insert(qMakePair(codec, m), supported);
+    checkedCodecs.insert(std::pair{codec, m}, supported);
     return supported;
 }
 
@@ -83,13 +88,13 @@ static QList<QImageCapture::FileFormat> getImageFormatList()
 
     for (const auto &f : formats) {
         auto format = QString::fromUtf8(f);
-        if (format.compare(QLatin1String("jpg"), Qt::CaseInsensitive) == 0)
+        if (format.compare(u"jpg", Qt::CaseInsensitive) == 0)
             list.append(QImageCapture::FileFormat::JPEG);
-        else if (format.compare(QLatin1String("png"), Qt::CaseInsensitive) == 0)
+        else if (format.compare(u"png", Qt::CaseInsensitive) == 0)
             list.append(QImageCapture::FileFormat::PNG);
-        else if (format.compare(QLatin1String("webp"), Qt::CaseInsensitive) == 0)
+        else if (format.compare(u"webp", Qt::CaseInsensitive) == 0)
             list.append(QImageCapture::FileFormat::WebP);
-        else if (format.compare(QLatin1String("tiff"), Qt::CaseInsensitive) == 0)
+        else if (format.compare(u"tiff", Qt::CaseInsensitive) == 0)
             list.append(QImageCapture::FileFormat::Tiff);
     }
 
@@ -178,6 +183,8 @@ QWindowsFormatInfo::QWindowsFormatInfo()
     }
 
     imageFormats = getImageFormatList();
+
+    fixupCodecMaps();
 }
 
 QWindowsFormatInfo::~QWindowsFormatInfo()

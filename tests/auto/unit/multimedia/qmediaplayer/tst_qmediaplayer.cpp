@@ -1,7 +1,8 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
+#include <QtTest/qtest.h>
+#include <QtTest/qsignalspy.h>
 
 #include <QtCore/qdebug.h>
 #include <QtCore/qbuffer.h>
@@ -9,6 +10,7 @@
 #include <qvideosink.h>
 #include <qmediaplayer.h>
 #include <private/qplatformmediaplayer_p.h>
+#include <private/qmediaplayer_p.h>
 #include <qobject.h>
 
 #include "qmockintegration.h"
@@ -16,8 +18,14 @@
 #include "qmockaudiooutput.h"
 #include "qvideosink.h"
 #include "qaudiooutput.h"
+#include <QtMultimedia/qplaybackoptions.h>
 
-QT_USE_NAMESPACE
+#include <QtMultimediaTestLib/private/qmockresolvers_p.h>
+
+using namespace std::chrono_literals;
+
+
+using namespace Qt::StringLiterals;
 
 Q_ENABLE_MOCK_MULTIMEDIA_PLUGIN
 
@@ -97,6 +105,12 @@ private slots:
     void testDestructor();
     void testQrc_data();
     void testQrc();
+    void playbackOptions_returnsDefaultAfterConstruction();
+    void setPlaybackOptions_setsPlaybackOptions();
+    void setPlaybackOptions_doesNotEmitChangeSignal_whenOptionsDidNotChange();
+    void resetPlaybackOptions_resetsPlaybackOptionsToDefault();
+
+    void testSourceResolver();
 
 private:
     void setupCommonTestData();
@@ -205,7 +219,7 @@ void tst_QMediaPlayer::cleanup()
 
 void tst_QMediaPlayer::play_doesNotResetError()
 {
-    player->setSource({ "https://dummy/dummy.mp3" });
+    player->setSource(QUrl{u"https://dummy/dummy.mp3"_s});
 
     mockPlayer->setError(QMediaPlayer::AccessDeniedError);
     mockPlayer->setErrorString(QStringLiteral(u"Error"));
@@ -224,7 +238,7 @@ void tst_QMediaPlayer::setSource_resetsError()
     mockPlayer->setErrorString(QStringLiteral(u"Error"));
     QSignalSpy errorSpy{ player, &QMediaPlayer::errorChanged };
 
-    player->setSource({ "https://dummy/dummy.mp3" });
+    player->setSource(QUrl{u"https://dummy/dummy.mp3"_s});
 
     QCOMPARE_EQ(player->error(), QMediaPlayer::NoError);
     QVERIFY(player->errorString().isEmpty());
@@ -237,7 +251,7 @@ void tst_QMediaPlayer::setSourceDevice_resetsError()
     mockPlayer->setErrorString(QStringLiteral(u"Error"));
     QSignalSpy errorSpy{ player, &QMediaPlayer::errorChanged };
 
-    player->setSourceDevice(nullptr, { "https://dummy/dummy.mp3" });
+    player->setSourceDevice(nullptr, QUrl{u"https://dummy/dummy.mp3"_s});
 
     QCOMPARE_EQ(player->error(), QMediaPlayer::NoError);
     QVERIFY(player->errorString().isEmpty());
@@ -806,28 +820,28 @@ void tst_QMediaPlayer::debugEnums()
 void tst_QMediaPlayer::testQrc_data()
 {
     QTest::addColumn<QUrl>("mediaContent");
-    QTest::addColumn<QMediaPlayer::MediaStatus>("status");
+    QTest::addColumn<QList<QMediaPlayer::MediaStatus>>("status");
     QTest::addColumn<QMediaPlayer::Error>("error");
     QTest::addColumn<int>("errorCount");
     QTest::addColumn<QString>("backendMediaContentScheme");
     QTest::addColumn<bool>("backendHasStream");
 
     QTest::newRow("invalid") << QUrl(QUrl(QLatin1String("qrc:/invalid.mp3")))
-                             << QMediaPlayer::InvalidMedia
+                             << QList{QMediaPlayer::LoadingMedia, QMediaPlayer::InvalidMedia}
                              << QMediaPlayer::ResourceError
                              << 1 // error count
                              << QString() // backend should not have got any media (empty URL scheme)
                              << false; // backend should not have got any stream
 
     QTest::newRow("valid+nostream") << QUrl(QUrl(QLatin1String("qrc:/testdata/nokia-tune.mp3")))
-                                    << QMediaPlayer::LoadingMedia
+                                    << QList{QMediaPlayer::LoadingMedia}
                                     << QMediaPlayer::NoError
                                     << 0 // error count
                                     << QStringLiteral("file") // backend should have a got a temporary file
                                     << false; // backend should not have got any stream
 
     QTest::newRow("valid+stream") << QUrl(QUrl(QLatin1String("qrc:/testdata/nokia-tune.mp3")))
-                                  << QMediaPlayer::LoadingMedia
+                                  << QList{QMediaPlayer::LoadingMedia}
                                   << QMediaPlayer::NoError
                                   << 0 // error count
                                   << QStringLiteral("qrc")
@@ -837,7 +851,7 @@ void tst_QMediaPlayer::testQrc_data()
 void tst_QMediaPlayer::testQrc()
 {
     QFETCH(QUrl, mediaContent);
-    QFETCH(QMediaPlayer::MediaStatus, status);
+    QFETCH(QList<QMediaPlayer::MediaStatus>, status);
     QFETCH(QMediaPlayer::Error, error);
     QFETCH(int, errorCount);
     QFETCH(QString, backendMediaContentScheme);
@@ -852,9 +866,12 @@ void tst_QMediaPlayer::testQrc()
 
     player->setSource(mediaContent);
 
-    QTRY_COMPARE(player->mediaStatus(), status);
-    QCOMPARE(statusSpy.size(), 1);
-    QCOMPARE(qvariant_cast<QMediaPlayer::MediaStatus>(statusSpy.last().value(0)), status);
+    QTRY_COMPARE(player->mediaStatus(), status.back());
+    QList<QMediaPlayer::MediaStatus> spyStatus;
+    for (const auto &call : statusSpy)
+        spyStatus.append(qvariant_cast<QMediaPlayer::MediaStatus>(call.value(0)));
+
+    QCOMPARE(spyStatus, status);
 
     QCOMPARE(player->source(), mediaContent);
     QCOMPARE(mediaSpy.size(), 1);
@@ -870,6 +887,64 @@ void tst_QMediaPlayer::testQrc()
     // Check the media actually passed to the backend
     QCOMPARE(mockPlayer->media().scheme(), backendMediaContentScheme);
     QCOMPARE(bool(mockPlayer->mediaStream()), backendHasStream);
+}
+
+void tst_QMediaPlayer::playbackOptions_returnsDefaultAfterConstruction()
+{
+    QCOMPARE_EQ(player->playbackOptions(), QPlaybackOptions{});
+}
+
+void tst_QMediaPlayer::setPlaybackOptions_setsPlaybackOptions()
+{
+    QSignalSpy spy{ player, &QMediaPlayer::playbackOptionsChanged };
+
+    QPlaybackOptions options;
+    const std::chrono::milliseconds defaultNetworkTimeout = options.networkTimeout();
+    options.setNetworkTimeout(defaultNetworkTimeout + 1ms);
+
+    player->setPlaybackOptions(options);
+
+    QCOMPARE_NE(player->playbackOptions().networkTimeout(), defaultNetworkTimeout);
+
+    QCOMPARE_EQ(spy.size(), 1);
+}
+
+void tst_QMediaPlayer::setPlaybackOptions_doesNotEmitChangeSignal_whenOptionsDidNotChange()
+{
+    QSignalSpy spy{ player, &QMediaPlayer::playbackOptionsChanged };
+
+    player->setPlaybackOptions(player->playbackOptions());
+
+    QCOMPARE_EQ(spy.size(), 0);
+}
+
+void tst_QMediaPlayer::resetPlaybackOptions_resetsPlaybackOptionsToDefault()
+{
+    auto options = player->playbackOptions();
+    options.setNetworkTimeout(options.networkTimeout() + 1ms);
+    player->setPlaybackOptions(options);
+
+    player->resetPlaybackOptions();
+    QCOMPARE_EQ(player->playbackOptions(), QPlaybackOptions{});
+}
+
+void tst_QMediaPlayer::testSourceResolver()
+{
+    using namespace QtMultimediaTest;
+
+    QMediaPlayer player;
+    auto *d = QMediaPlayerPrivate::get(&player);
+
+    auto mock = std::make_unique<MockSourceResolver>(QUrl(u"mock://resolved"_s));
+    MockSourceResolver *mockPtr = mock.get();
+    d->m_sourceResolver = std::move(mock);
+
+    player.setSource(QUrl(u"original://test"_s));
+
+    QCOMPARE(mockPtr->m_callCount, 1);
+    QCOMPARE(mockPtr->m_lastInput, QUrl(u"original://test"_s));
+
+    QCOMPARE(player.source(), QUrl(u"original://test"_s));
 }
 
 QTEST_GUILESS_MAIN(tst_QMediaPlayer)

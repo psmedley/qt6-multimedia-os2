@@ -3,14 +3,12 @@
 
 #include "qqnxaudiooutput_p.h"
 
-#include <private/qqnxaudiodevice_p.h>
-
 #include <qaudiodevice.h>
 #include <qaudiooutput.h>
 
 #include <QtCore/qloggingcategory.h>
 
-static Q_LOGGING_CATEGORY(qLcMediaAudioOutput, "qt.multimedia.audiooutput")
+Q_STATIC_LOGGING_CATEGORY(qLcMediaAudioOutput, "qt.multimedia.audiooutput");
 
 QT_BEGIN_NAMESPACE
 

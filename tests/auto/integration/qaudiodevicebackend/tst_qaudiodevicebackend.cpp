@@ -2,16 +2,22 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 
-#include <QtTest/QtTest>
-#include <QtCore/qlocale.h>
-#include <qaudiodevice.h>
+#include <QtTest/qtest.h>
 
-#include <QStringList>
-#include <QList>
-#include <QMediaDevices>
-
+#include <QtCore/qstringlist.h>
+#include <QtCore/qlist.h>
+#include <QtCore/qsemaphore.h>
+#include <QtCore/qthread.h>
+#include <QtMultimedia/qmediadevices.h>
+#include <QtMultimedia/qaudiodevice.h>
 
 #include <private/mediabackendutils_p.h>
+#include <private/osdetection_p.h>
+#include <private/qplatformmediaintegration_p.h>
+
+#ifdef Q_OS_ANDROID
+#include <QtCore/qcoreapplication_platform.h>
+#endif
 
 class tst_QAudioDeviceBackend : public QObject
 {
@@ -32,6 +38,9 @@ private slots:
     void id();
     void defaultConstructor();
     void equalityOperator();
+#ifdef Q_OS_ANDROID
+    void noDeadlockOnDestroy();
+#endif
 
 private:
     std::unique_ptr<QAudioDevice> device;
@@ -90,10 +99,8 @@ void tst_QAudioDeviceBackend::sampleRates()
 
 void tst_QAudioDeviceBackend::isFormatSupported()
 {
-#ifdef Q_OS_MACOS
-    if (isCI())
+    if (isCI() && isMacOS)
         QSKIP("MacOS vms don't seem to support 44100hz on CI?");
-#endif
 
     QAudioFormat format;
     format.setSampleRate(44100);
@@ -106,9 +113,17 @@ void tst_QAudioDeviceBackend::isFormatSupported()
 
 void tst_QAudioDeviceBackend::preferred()
 {
-    QAudioFormat format = device->preferredFormat();
-    QVERIFY(format.isValid());
-    QVERIFY(device->isFormatSupported(format));
+    auto isPreferredSupported = [](const QAudioDevice &dev) {
+        QAudioFormat format = dev.preferredFormat();
+        QVERIFY(format.isValid());
+        QVERIFY(dev.isFormatSupported(format));
+    };
+
+    for (const auto &dev: QMediaDevices::audioOutputs())
+        isPreferredSupported(dev);
+
+    for (const auto &dev: QMediaDevices::audioInputs())
+        isPreferredSupported(dev);
 }
 
 // QAudioDevice's assignOperator method
@@ -166,6 +181,46 @@ void tst_QAudioDeviceBackend::equalityOperator()
 
     // XXX Perhaps each available device should not be equal to any other
 }
+
+#ifdef Q_OS_ANDROID
+void tst_QAudioDeviceBackend::noDeadlockOnDestroy()
+{
+    // Ensure QAndroidAudioDevices exists, to be destroyed by resetInstance()
+    QPlatformMediaIntegration::instance()->audioDevices();
+
+    // Block the Android UI thread to simulate terminateQtNativeApplication's sem_wait.
+    QSemaphore uiThreadBlocked; // Released by UI thread when it starts blocking
+    QSemaphore releaseUiThread; // Released to unblock the UI thread
+
+    // RAII: Unblock UI thread on early exit
+    QSemaphoreReleaser uiThreadReleaser(releaseUiThread);
+
+    auto uiThreadBlocker = QNativeInterface::QAndroidApplication::runOnAndroidMainThread(
+            [&uiThreadBlocked, &releaseUiThread]() -> QVariant {
+                uiThreadBlocked.release();
+                releaseUiThread.acquire();
+                return { };
+            });
+
+    QVERIFY2(uiThreadBlocked.tryAcquire(1, 2000),
+             "Timed out waiting for Android UI thread to block");
+
+    // Destroy and recreate the integration
+    std::unique_ptr<QThread> resetThread(QThread::create([]() {
+        QPlatformMediaIntegration::instance()->resetInstance();
+    }));
+    resetThread->start();
+
+    const bool finishedInTime = resetThread->wait(5000);
+
+    // Unblock UI thread
+    uiThreadReleaser.cancel();
+    releaseUiThread.release();
+
+    QVERIFY2(finishedInTime,
+             "QAndroidAudioDevices destructor deadlocked with blocked Android UI thread");
+}
+#endif
 
 QTEST_MAIN(tst_QAudioDeviceBackend)
 

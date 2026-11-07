@@ -30,8 +30,11 @@ class Demuxer : public PlaybackEngineObject
 {
     Q_OBJECT
 public:
-    Demuxer(AVFormatContext *context, TrackPosition initialPosUs, bool seekPending,
-            const LoopOffset &loopOffset, const StreamIndexes &streamIndexes, int loops);
+    Demuxer(const PlaybackEngineObjectID &id, AVFormatContext *context, TrackPosition initialPosUs,
+            bool seekPending, const LoopOffset &loopOffset, const StreamIndexes &streamIndexes,
+            int loops);
+
+    void seek(quint64 sessionId, TrackPosition initialPosUs, const LoopOffset &loopOffset);
 
     using RequestingSignal = void (Demuxer::*)(Packet);
     static RequestingSignal signalByTrackType(QPlatformMediaPlayer::TrackType trackType);
@@ -39,17 +42,17 @@ public:
     void setLoops(int loopsCount);
 
 public slots:
-    void onPacketProcessed(Packet);
+    void onPacketProcessed(const Packet &);
 
 signals:
     void requestProcessAudioPacket(Packet);
     void requestProcessVideoPacket(Packet);
     void requestProcessSubtitlePacket(Packet);
-    void firstPacketFound(Id id, TrackPosition absSeekPos);
+    void firstPacketFound(PlaybackEngineObjectID id, TrackPosition absSeekPos);
     void packetsBuffered();
 
 protected:
-    std::chrono::milliseconds timerInterval() const override;
+    TimePoint nextTimePoint() const override;
 
 private:
     bool canDoNextStep() const override;
@@ -75,15 +78,24 @@ private:
 
 private:
     AVFormatContext *m_context = nullptr;
-    bool m_seeked = false;
-    bool m_firstPacketFound = false;
+
+    struct SessionContext
+    {
+        TrackPosition posInLoopUs = TrackPosition(0); // Position in current loop in [0, duration()]
+        LoopOffset loopOffset = {};
+        bool seeked = false;
+        bool firstPacketFound = false;
+        bool buffered = false;
+        TrackPosition maxPacketsEndPos = TrackPosition(0);
+
+        qsizetype demuxerRetryCount = 0;
+        std::optional<TimePoint> failTimePoint = {};
+    };
+
+    SessionContext m_sessionCtx;
     std::unordered_map<int, StreamData> m_streams;
-    TrackPosition m_posInLoopUs = TrackPosition(0); // Position in current loop in [0, duration()]
-    LoopOffset m_loopOffset;
-    TrackPosition m_maxPacketsEndPos = TrackPosition(0);
     QAtomicInt m_loops = QMediaPlayer::Once;
-    bool m_buffered = false;
-    qsizetype m_demuxerRetryCount = 0;
+
     static constexpr qsizetype s_maxDemuxerRetries = 10; // Arbitrarily chosen
     static constexpr std::chrono::milliseconds s_demuxerRetryInterval = std::chrono::milliseconds(10);
 };

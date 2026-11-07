@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qffmpeghwaccel_d3d11_p.h"
-#include "playbackengine/qffmpegstreamdecoder_p.h"
 
 #include <qvideoframeformat.h>
-#include "qffmpegvideobuffer_p.h"
 
 #include <private/qvideotexturehelper_p.h>
 #include <QtCore/private/qcomptr_p.h>
@@ -57,21 +55,20 @@ const AVD3D11VADeviceContext *getHwDeviceContext(const AVHWDeviceContext *ctx)
     return static_cast<AVD3D11VADeviceContext *>(ctx->hwctx);
 }
 
-void freeTextureAndData(void *opaque, uint8_t *data)
-{
-    static_cast<ID3D11Texture2D *>(opaque)->Release();
-    av_free(data);
-}
-
 AVBufferRef *wrapTextureAsBuffer(const ComPtr<ID3D11Texture2D> &tex)
 {
+    Q_ASSERT(tex);
+
     AVD3D11FrameDescriptor *avFrameDesc =
             static_cast<AVD3D11FrameDescriptor *>(av_mallocz(sizeof(AVD3D11FrameDescriptor)));
     avFrameDesc->index = 0;
     avFrameDesc->texture = tex.Get();
 
     return av_buffer_create(reinterpret_cast<uint8_t *>(avFrameDesc),
-                            sizeof(AVD3D11FrameDescriptor *), freeTextureAndData, tex.Get(), 0);
+                            sizeof(AVD3D11FrameDescriptor *), [](void *opaque, uint8_t *data) {
+        static_cast<ID3D11Texture2D *>(opaque)->Release();
+        av_free(data);
+    }, tex.Get(), 0);
 }
 
 ComPtr<ID3D11Texture2D> copyTexture(const AVD3D11VADeviceContext *hwDevCtx, const AVFrame *src)
@@ -374,6 +371,9 @@ AVFrameUPtr copyFromHwPoolD3D11(AVFrameUPtr src)
         destTex = copyTexture(hwDevCtx, src.get());
         hwDevCtx->unlock(hwDevCtx->lock_ctx);
     }
+
+    if (!destTex)
+        return src;
 
     dest->buf[0] = wrapTextureAsBuffer(destTex);
     dest->data[0] = reinterpret_cast<uint8_t *>(destTex.Detach());

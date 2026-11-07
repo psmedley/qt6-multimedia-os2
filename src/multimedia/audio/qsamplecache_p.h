@@ -15,132 +15,164 @@
 // We mean it.
 //
 
-#include <QtCore/qmap.h>
+#include <QtMultimedia/qaudioformat.h>
+#include <QtCore/private/qexpected_p.h>
+#include <QtCore/private/qglobal_p.h>
+#include <QtCore/qfuture.h>
 #include <QtCore/qmutex.h>
 #include <QtCore/qobject.h>
 #include <QtCore/qpointer.h>
 #include <QtCore/qset.h>
+#include <QtCore/qspan.h>
 #include <QtCore/qthread.h>
 #include <QtCore/qurl.h>
-#include <QtCore/private/qglobal_p.h>
-#include <QtMultimedia/qaudioformat.h>
+
+#include <memory>
+#include <optional>
 
 QT_BEGIN_NAMESPACE
 
-class QIODevice;
-class QNetworkAccessManager;
-class QSampleCache;
-class QWaveDecoder;
-
-class Q_MULTIMEDIA_EXPORT QSample : public QObject
+enum class QSampleLoadError : uint8_t
 {
-    Q_OBJECT
+    IoError,
+    FormatError,
+    DecoderError,
+    NotSupported,
+};
+
+namespace QtMultimediaPrivate {
+
+enum class SampleRate : int;
+inline std::optional<SampleRate> asSampleRate(std::optional<int> arg)
+{
+    if (!arg)
+        return std::nullopt;
+    return SampleRate(*arg);
+}
+
+} // namespace QtMultimediaPrivate
+
+class QSampleCache;
+
+class Q_MULTIMEDIA_EXPORT QSample
+{
 public:
     friend class QSampleCache;
-    enum State
-    {
+    using SampleRate = QtMultimediaPrivate::SampleRate;
+
+    enum State : uint8_t {
         Creating,
-        Loading,
         Error,
         Ready,
     };
+    using SharedSamplePromise = QSharedPointer<QPromise<q23::expected<QSample *, QSample::State>>>;
+    ~QSample();
 
     State state() const;
-    // These are not (currently) locked because they are only meant to be called after these
-    // variables are updated to their final states
     const QByteArray& data() const { Q_ASSERT(state() == Ready); return m_soundData; }
-    const QAudioFormat& format() const { Q_ASSERT(state() == Ready); return m_audioFormat; }
-    void release();
+    QSpan<const float> dataAsFloatSpan() const
+    {
+        Q_ASSERT(state() == Ready);
+        Q_ASSERT(m_audioFormat.sampleFormat() == QAudioFormat::Float);
+        return QSpan<const float>(reinterpret_cast<const float *>(m_soundData.constData()),
+                                  m_audioFormat.framesForBytes(m_soundData.size())
+                                          * m_audioFormat.channelCount());
+    }
 
-Q_SIGNALS:
-    void error(QPointer<QSample> self);
-    void ready(QPointer<QSample> self);
+    const QAudioFormat &format() const
+    {
+        Q_ASSERT(state() == Ready);
+        return m_audioFormat;
+    }
+    qsizetype frameCount() const
+    {
+        Q_ASSERT(state() == Ready);
+        return m_audioFormat.framesForBytes(m_soundData.size());
+    }
 
-protected:
-    QSample(const QUrl& url, QSampleCache *parent);
+    void setError();
+    void setData(QByteArray, QAudioFormat);
 
-private Q_SLOTS:
-    void load();
-    void handleLoadingError(int errorCode = -1);
-    void decoderError();
-    void readSample();
-    void decoderReady();
+    QSample(QUrl url, QSampleCache *parent);
+    QSample(QUrl url, QSampleCache *parent, std::optional<SampleRate> targetSampleRate);
+
+    // For testing only
+    QSample(QByteArray data, QAudioFormat format)
+        : m_parent(nullptr), m_soundData(std::move(data)), m_audioFormat(format), m_url(), m_state(Ready) {}
 
 private:
-    void onReady();
-    void cleanup();
-    void addRef();
-    void loadIfNecessary();
     QSample();
-    ~QSample() override;
 
-    mutable QMutex m_mutex;
     QSampleCache *m_parent;
     QByteArray   m_soundData;
     QAudioFormat m_audioFormat;
-    std::unique_ptr<QIODevice> m_stream;
-    std::unique_ptr<QWaveDecoder> m_waveDecoder;
-    QUrl         m_url;
-    qint64       m_sampleReadLength;
-    State        m_state;
-    int          m_ref;
+    const QUrl   m_url;
+    const std::optional<SampleRate> m_targetSampleRate;
+    State        m_state = State::Creating;
+
+    friend class QSampleCache;
+    void clearParent();
 };
+
+using SharedSamplePtr = std::shared_ptr<QSample>;
+using WeakSamplePtr = std::weak_ptr<QSample>;
 
 class Q_MULTIMEDIA_EXPORT QSampleCache : public QObject
 {
-    Q_OBJECT
 public:
     friend class QSample;
 
-    enum class SampleSourceType {
+    enum class SampleSourceType : uint8_t {
         File,
         NetworkManager,
+        AudioDecoder,
     };
 
-    QSampleCache(QObject *parent = nullptr);
+    static QSampleCache *instance();
+
+    explicit QSampleCache(QObject *parent = nullptr);
     ~QSampleCache() override;
 
-    QSample* requestSample(const QUrl& url);
-    void setCapacity(qint64 capacity);
+    QFuture<SharedSamplePtr>
+    requestSampleFuture(const QUrl &, std::optional<int> targetSampleRate = std::nullopt,
+                        std::optional<SampleSourceType> forceSourceType = std::nullopt);
 
-    bool isLoading() const;
-    bool isCached(const QUrl& url) const;
+    // functions below are for testing only
+    bool isCached(const QUrl &url, std::optional<int> targetSampleRate = std::nullopt) const;
 
-    SampleSourceType sampleSourceType() const { return m_sampleSourceType; }
+    using SampleLoadResult = q23::expected<std::pair<QByteArray, QAudioFormat>, QSampleLoadError>;
 
-    // For tests only
-    void setSampleSourceType(SampleSourceType sampleSourceType)
-    {
-        m_sampleSourceType = sampleSourceType;
-    }
+    static SampleLoadResult loadSample(QSpan<const char>);
+    static SampleLoadResult loadSampleViaDecoder(std::variant<QUrl, QByteArray>);
+    static QFuture<SampleLoadResult> loadSampleAsyncViaDecoder(QByteArray);
 
 private:
     std::unique_ptr<QIODevice> createStreamForSample(QSample &sample);
-
-private:
-    QMap<QUrl, QSample*> m_samples;
-    QSet<QSample*> m_staleSamples;
-
-#if QT_CONFIG(network)
-    std::unique_ptr<QNetworkAccessManager> m_networkAccessManager;
-    SampleSourceType m_sampleSourceType = SampleSourceType::NetworkManager;
-#else
-    SampleSourceType m_sampleSourceType = SampleSourceType::File;
+#if QT_CONFIG(thread)
+    QThreadPool *threadPool();
 #endif
 
+private:
+    using SharedSamplePromise = std::shared_ptr<QPromise<SharedSamplePtr>>;
+
     mutable QRecursiveMutex m_mutex;
-    qint64 m_capacity;
-    qint64 m_usage;
-    QThread m_loadingThread;
+    using SampleRate = QtMultimediaPrivate::SampleRate;
 
-    void refresh(qint64 usageChange);
-    bool notifyUnreferencedSample(QSample* sample);
-    void removeUnreferencedSample(QSample* sample);
-    void unloadSample(QSample* sample);
+    using SampleKey = std::pair<QUrl, std::optional<SampleRate>>;
+    std::map<SampleKey, WeakSamplePtr> m_loadedSamples;
+    std::map<SampleKey, std::pair<SharedSamplePtr, QList<SharedSamplePromise>>> m_pendingSamples;
 
-    void loadingRelease();
-    int m_loadingRefCount;
-    QMutex m_loadingMutex;
+    void removeUnreferencedSample(const QUrl &, std::optional<SampleRate> targetSampleRate);
+
+#if QT_CONFIG(thread)
+    static SampleLoadResult loadSample(const QUrl &,
+                                       std::optional<SampleSourceType> = std::nullopt);
+#  ifndef Q_OS_WASM
+    QThreadPool m_threadPool{ this };
+#  endif
+#endif
+    QFuture<SampleLoadResult> loadSampleAsync(const QUrl &,
+                                              std::optional<SampleSourceType> = std::nullopt);
 };
 
 QT_END_NAMESPACE

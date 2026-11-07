@@ -2,52 +2,40 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "avfvideobuffer_p.h"
-#include <rhi/qrhi.h>
-#include <CoreVideo/CVMetalTexture.h>
-#include <CoreVideo/CVMetalTextureCache.h>
+
+#include <QtMultimedia/private/qavfhelpers_p.h>
+#include <QtMultimedia/private/qvideotexturehelper_p.h>
 #include <QtGui/qopenglcontext.h>
+#include <QtGui/rhi/qrhi.h>
 #include <QtCore/qloggingcategory.h>
 
-#include <private/qvideotexturehelper_p.h>
-#include "qavfhelpers_p.h"
+#include <CoreVideo/CVMetalTexture.h>
+#include <CoreVideo/CVMetalTextureCache.h>
 
 #import <AVFoundation/AVFoundation.h>
 #import <Metal/Metal.h>
 
 QT_USE_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcVideoBuffer, "qt.multimedia.darwin.videobuffer")
+Q_STATIC_LOGGING_CATEGORY(qLcVideoBuffer, "qt.multimedia.darwin.videobuffer")
 
-AVFVideoBuffer::AVFVideoBuffer(AVFVideoSinkInterface *sink, CVImageBufferRef buffer)
-    : QHwVideoBuffer(sink->rhi() ? QVideoFrame::RhiTextureHandle : QVideoFrame::NoHandle,
-                     sink->rhi()),
+AVFVideoBuffer::AVFVideoBuffer(AVFVideoSinkInterface *sink, QCFType<CVImageBufferRef> buffer)
+    : QHwVideoBuffer(sink->rhi() ? QVideoFrame::RhiTextureHandle : QVideoFrame::NoHandle),
+#if QT_CONFIG(opengl)
       sink(sink),
-      m_buffer(buffer)
+#endif
+      m_buffer(std::move(buffer))
 {
-//    m_type = QVideoFrame::NoHandle;
-//    qDebug() << "RHI" << m_rhi;
-    CVPixelBufferRetain(m_buffer);
     const bool rhiIsOpenGL = sink && sink->rhi() && sink->rhi()->backend() == QRhi::OpenGLES2;
     m_format = QAVFHelpers::videoFormatForImageBuffer(m_buffer, rhiIsOpenGL);
 
-    if (m_rhi && m_rhi->backend() == QRhi::Metal)
-        metalCache = CVMetalTextureCacheRef(CFRetain(sink->cvMetalTextureCache));
+    if (sink && sink->rhi() && sink->rhi()->backend() == QRhi::Metal)
+        metalCache = sink->cvMetalTextureCache;
 }
 
 AVFVideoBuffer::~AVFVideoBuffer()
 {
     Q_ASSERT(m_mode == QVideoFrame::NotMapped);
-    for (int i = 0; i < 3; ++i)
-        if (cvMetalTexture[i])
-            CFRelease(cvMetalTexture[i]);
-#if defined(Q_OS_MACOS)
-    if (cvOpenGLTexture)
-        CVOpenGLTextureRelease(cvOpenGLTexture);
-#elif defined(Q_OS_IOS)
-    if (cvOpenGLESTexture)
-        CFRelease(cvOpenGLESTexture);
-#endif
-    CVPixelBufferRelease(m_buffer);
 }
 
 AVFVideoBuffer::MapData AVFVideoBuffer::map(QVideoFrame::MapMode mode)
@@ -124,28 +112,24 @@ static MTLPixelFormat rhiTextureFormatToMetalFormat(QRhiTexture::Format f)
 }
 
 
-quint64 AVFVideoBuffer::textureHandle(QRhi &, int plane)
+quint64 AVFVideoBuffer::textureHandle(QRhi &rhi, int plane)
 {
     auto *textureDescription = QVideoTextureHelper::textureDescription(m_format.pixelFormat());
     int bufferPlanes = CVPixelBufferGetPlaneCount(m_buffer);
-//    qDebug() << "texture handle" << plane << m_rhi << (m_rhi->backend() == QRhi::Metal) << bufferPlanes;
     if (plane > 0 && plane >= bufferPlanes)
         return 0;
-    if (!m_rhi)
-        return 0;
-    if (m_rhi->backend() == QRhi::Metal) {
+
+    if (rhi.backend() == QRhi::Metal) {
         if (!cvMetalTexture[plane]) {
             size_t width = CVPixelBufferGetWidth(m_buffer);
             size_t height = CVPixelBufferGetHeight(m_buffer);
-            QSize planeSize = textureDescription->rhiPlaneSize(QSize(width, height), plane, m_rhi);
+            QSize planeSize = textureDescription->rhiPlaneSize(QSize(width, height), plane, &rhi);
 
-            if (!metalCache) {
-                qWarning("cannot create texture, Metal texture cache was released?");
-                return {};
-            }
+            if (!metalCache)
+                return 0;
 
             // Create a CoreVideo pixel buffer backed Metal texture image from the texture cache.
-            const auto pixelFormat = rhiTextureFormatToMetalFormat(textureDescription->rhiTextureFormat(plane, m_rhi));
+            const auto pixelFormat = rhiTextureFormatToMetalFormat(textureDescription->rhiTextureFormat(plane, &rhi));
             if (pixelFormat != MTLPixelFormatInvalid) {
                 // Passing invalid pixel format makes Metal API validation
                 // to crash (and also makes no sense at all).
@@ -162,12 +146,12 @@ quint64 AVFVideoBuffer::textureHandle(QRhi &, int plane)
                     qCWarning(qLcVideoBuffer) << "texture creation failed" << ret;
             } else {
                 qCWarning(qLcVideoBuffer) << "requested invalid pixel format:"
-                                          << textureDescription->rhiTextureFormat(plane, m_rhi);
+                                          << textureDescription->rhiTextureFormat(plane, &rhi);
             }
         }
 
         return cvMetalTexture[plane] ? quint64(CVMetalTextureGetTexture(cvMetalTexture[plane])) : 0;
-    } else if (m_rhi->backend() == QRhi::OpenGLES2) {
+    } else if (rhi.backend() == QRhi::OpenGLES2) {
 #if QT_CONFIG(opengl)
 #ifdef Q_OS_MACOS
         CVOpenGLTextureCacheFlush(sink->cvOpenGLTextureCache, 0);
@@ -179,7 +163,7 @@ quint64 AVFVideoBuffer::textureHandle(QRhi &, int plane)
                         nil,
                         &cvOpenGLTexture);
         if (cvret != kCVReturnSuccess)
-            qWarning() << "OpenGL texture creation failed" << cvret;
+            qCWarning(qLcVideoBuffer) << "OpenGL texture creation failed" << cvret;
 
         Q_ASSERT(CVOpenGLTextureGetTarget(cvOpenGLTexture) == GL_TEXTURE_RECTANGLE);
         // Get an OpenGL texture name from the CVPixelBuffer-backed OpenGL texture image.
@@ -202,7 +186,7 @@ quint64 AVFVideoBuffer::textureHandle(QRhi &, int plane)
                         0,
                         &cvOpenGLESTexture);
         if (cvret != kCVReturnSuccess)
-            qWarning() << "OpenGL ES texture creation failed" << cvret;
+            qCWarning(qLcVideoBuffer) << "OpenGL ES texture creation failed" << cvret;
 
         // Get an OpenGL texture name from the CVPixelBuffer-backed OpenGL texture image.
         return CVOpenGLESTextureGetName(cvOpenGLESTexture);

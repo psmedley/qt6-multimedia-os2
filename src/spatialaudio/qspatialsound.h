@@ -4,14 +4,14 @@
 #define QSPATIALSOUND_H
 
 #include <QtSpatialAudio/qtspatialaudioglobal.h>
-#include <QtCore/QObject>
 #include <QtGui/qvector3d.h>
 #include <QtGui/qquaternion.h>
+#include <QtCore/qobject.h>
 
 QT_BEGIN_NAMESPACE
 
 class QAudioEngine;
-class QAmbientSoundPrivate;
+class QSpatialAudioSoundPrivate;
 
 class QSpatialSoundPrivate;
 class Q_SPATIALAUDIO_EXPORT QSpatialSound : public QObject
@@ -116,10 +116,11 @@ public Q_SLOTS:
     void stop();
 
 private:
-    void setEngine(QAudioEngine *engine);
-    friend class QAmbientSoundPrivate;
-    friend class QSpatialSoundPrivate;
-    QSpatialSoundPrivate *d = nullptr;
+    Q_DECLARE_PRIVATE(QSpatialSound)
+    friend class QSpatialAudioSoundPrivate;
+
+    // ### Qt7: remove unused member
+    QT6_ONLY(void *unused = nullptr;) // for ABI compatibility
 };
 
 QT_END_NAMESPACE

@@ -3,7 +3,8 @@
 
 // TESTED_COMPONENT=src/multimedia
 
-#include <QtTest/QtTest>
+#include <QtTest/qtest.h>
+#include <QtTest/qsignalspy.h>
 #include <QDebug>
 
 #include "qmockintegration.h"
@@ -11,7 +12,6 @@
 #include "qmocksurfacecapture.h"
 #include "qatomic.h"
 
-QT_USE_NAMESPACE
 
 Q_ENABLE_MOCK_MULTIMEDIA_PLUGIN
 

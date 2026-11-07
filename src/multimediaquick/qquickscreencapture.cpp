@@ -5,21 +5,69 @@
 
 QT_BEGIN_NAMESPACE
 
-QQuickScreenCatpure::QQuickScreenCatpure(QObject *parent) : QScreenCapture(parent)
+static qreal screenFrameRateToReal(std::optional<qreal> frameRate)
 {
-    connect(this, &QScreenCapture::screenChanged, this, [this](QScreen *screen) {
-        emit QQuickScreenCatpure::screenChanged(new QQuickScreenInfo(this, screen));
+    return frameRate.value_or(-1.f);
+}
+
+QQuickScreenCapture::QQuickScreenCapture(QObject *parent) : QScreenCapture(parent)
+{
+    connect(this, &QScreenCapture::screenChanged, this, [this] {
+        emit QQuickScreenCapture::screenChanged(ensureQmlScreen());
     });
 }
 
-void QQuickScreenCatpure::qmlSetScreen(const QQuickScreenInfo *info)
+void QQuickScreenCapture::qmlSetScreen(QQuickScreenInfo *qmlScreen)
 {
-    setScreen(info ? info->wrappedScreen() : nullptr);
+    setScreen(qmlScreen ? qmlScreen->wrappedScreen() : nullptr);
 }
 
-QQuickScreenInfo *QQuickScreenCatpure::qmlScreen()
+QQuickScreenInfo *QQuickScreenCapture::ensureQmlScreen()
 {
-    return new QQuickScreenInfo(this, screen());
+    // Note QQuickApplication may recreate QQuickScreenInfo
+    // so we implement creating our own instance.
+    // TODO: perhaps, we should return null QQuickScreenInfo for null QScreen
+    if (!m_qmlScreen || m_qmlScreen->wrappedScreen() != screen()) {
+        m_ownQmlScreen = std::make_unique<QQuickScreenInfo>(this, screen());
+        m_qmlScreen = m_ownQmlScreen.get();
+    }
+
+    return m_qmlScreen;
+}
+
+/*!
+    \since 6.12
+    \qmlproperty real QtMultimedia::ScreenCapture::maximumFrameRate
+
+    The screen capture frame rate upper limit.
+
+    This can be set to override the capture frame rate used by default based on
+    e.g. display refresh rate, but only as an upper limit since screen capture
+    produces frames at a variable rate. Setting this higher than the display
+    refresh rate is not recommended and can cause errors.
+
+    If -1, a platform-dependent default is used.
+
+    Any changes to this property are applied the next time the ScreenCapture
+    goes active.
+*/
+
+void QQuickScreenCapture::qmlSetMaximumFrameRate(qreal frameRate)
+{
+    if (qFuzzyCompare(frameRate, static_cast<qreal>(-1.f)))
+        setMaximumFrameRate(std::nullopt);
+    else if (frameRate > 0.f)
+        setMaximumFrameRate(frameRate);
+}
+
+qreal QQuickScreenCapture::qmlMaximumFrameRate() const
+{
+    return screenFrameRateToReal(maximumFrameRate());
+}
+
+void QQuickScreenCapture::qmlResetMaximumFrameRate()
+{
+    setMaximumFrameRate(std::nullopt);
 }
 
 QT_END_NAMESPACE

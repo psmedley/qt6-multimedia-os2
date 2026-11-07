@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsgvideotexture_p.h"
-#include <QtQuick/qsgtexturematerial.h>
+
 #include <QtQuick/qsgmaterial.h>
+#include <QtQuick/qsgtexturematerial.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -13,7 +14,7 @@ class QSGVideoTexturePrivate
 
 private:
     QSGVideoTexture *q_ptr = nullptr;
-    QRhiTexture::Format m_format;
+    QRhiTexture::Format m_format{};
     QSize m_size;
     QByteArray m_data;
     QRhiTexture *m_texture = nullptr;

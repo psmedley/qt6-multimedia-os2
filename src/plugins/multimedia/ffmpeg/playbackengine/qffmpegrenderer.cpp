@@ -1,45 +1,35 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "playbackengine/qffmpegrenderer_p.h"
-#include <qloggingcategory.h>
+#include "qffmpegrenderer_p.h"
+
+#include <QtCore/qloggingcategory.h>
 
 QT_BEGIN_NAMESPACE
 
 namespace QFFmpeg {
 
-static Q_LOGGING_CATEGORY(qLcRenderer, "qt.multimedia.ffmpeg.renderer");
+Q_STATIC_LOGGING_CATEGORY(qLcRenderer, "qt.multimedia.ffmpeg.renderer");
 
-Renderer::Renderer(const TimeController &tc)
-    : m_timeController(tc),
-      m_lastFrameEnd(tc.currentPosition()),
-      m_lastPosition(m_lastFrameEnd.get()),
-      m_seekPos(tc.currentPosition().get())
+Renderer::Renderer(const PlaybackEngineObjectID &id, const TimeController &tc)
+    : PlaybackEngineObject(id), m_sessionCtx{ tc }
 {
-}
-
-void Renderer::syncSoft(TimePoint tp, TrackPosition trackPos)
-{
-    QMetaObject::invokeMethod(this, [this, tp, trackPos]() {
-        m_timeController.syncSoft(tp, trackPos);
-        scheduleNextStep(true);
-    });
 }
 
 TrackPosition Renderer::seekPosition() const
 {
-    return TrackPosition(m_seekPos);
+    return TrackPosition(m_sessionCtx.seekPos);
 }
 
 TrackPosition Renderer::lastPosition() const
 {
-    return TrackPosition(m_lastPosition);
+    return TrackPosition(m_sessionCtx.lastPosition);
 }
 
 void Renderer::setPlaybackRate(float rate)
 {
-    QMetaObject::invokeMethod(this, [this, rate]() {
-        m_timeController.setPlaybackRate(rate);
+    invokePriorityMethod([this, rate]() {
+        m_sessionCtx.timeController.setPlaybackRate(rate);
         onPlaybackRateChanged();
         scheduleNextStep();
     });
@@ -48,14 +38,14 @@ void Renderer::setPlaybackRate(float rate)
 void Renderer::doForceStep()
 {
     if (m_isStepForced.testAndSetOrdered(false, true))
-        QMetaObject::invokeMethod(this, [this]() {
+        invokePriorityMethod([this]() {
             // maybe set m_forceStepMaxPos
 
             if (isAtEnd()) {
                 setForceStepDone();
             }
             else {
-                m_explicitNextFrameTime = RealClock::now();
+                m_sessionCtx.explicitNextFrameTime = SteadyClock::now();
                 scheduleNextStep();
             }
         });
@@ -66,83 +56,97 @@ bool Renderer::isStepForced() const
     return m_isStepForced;
 }
 
-void Renderer::start(const TimeController &tc)
+void Renderer::setTimeController(const TimeController &tc)
 {
-    QMetaObject::invokeMethod(this, [this, tc]() {
-        m_timeController = tc;
-        m_started = true;
+    Q_ASSERT(tc.isStarted());
+    invokePriorityMethod([this, tc]() {
+        m_sessionCtx.timeController = tc;
         scheduleNextStep();
     });
 }
 
-void Renderer::onFinalFrameReceived()
+void Renderer::seek(quint64 sessionId, const TimeController &tc, const LoopOffset &offset)
 {
-    render({});
+    updateSession(sessionId, [this, tc, offset]() {
+        m_sessionCtx = { tc, offset.loopIndex };
+        // don't clean m_isStepForced, otherwise a single frame might not be forced on pause
+
+        seekInternal();
+    });
+}
+
+void Renderer::onFinalFrameReceived(PlaybackEngineObjectID sourceID)
+{
+    if (checkSessionID(sourceID.sessionID))
+        render({});
 }
 
 void Renderer::render(Frame frame)
 {
-    const auto isFrameOutdated = frame.isValid() && frame.absoluteEnd() < seekPosition();
-
-    if (isFrameOutdated) {
-        qCDebug(qLcRenderer) << "frame outdated! absEnd:" << frame.absoluteEnd().get() << "absPts"
-                             << frame.absolutePts().get() << "seekPos:" << seekPosition().get();
-        emit frameProcessed(frame);
+    if (frame.isValid() && !checkSessionID(frame.sourceID().sessionID)) {
+        qCDebug(qLcRenderer) << "Frame session outdated. Source id:" << frame.sourceID() << "current id:" << id();
+        // else don't need to report
         return;
     }
 
-    m_frames.enqueue(frame);
+    const bool frameOutdated = frame.isValid() && frame.absoluteEnd() < seekPosition();
 
-    if (m_frames.size() == 1)
+    if (frameOutdated) {
+        qCDebug(qLcRenderer) << "frame outdated! absEnd:" << frame.absoluteEnd().get() << "absPts"
+                             << frame.absolutePts().get() << "seekPos:" << seekPosition().get();
+
+        emit frameProcessed(std::move(frame));
+        return;
+    }
+
+    m_sessionCtx.frames.enqueue(std::move(frame));
+
+    if (m_sessionCtx.frames.size() == 1)
         scheduleNextStep();
 }
 
 void Renderer::onPauseChanged()
 {
-    m_timeController.setPaused(isPaused());
+    m_sessionCtx.timeController.setPaused(isPaused());
     PlaybackEngineObject::onPauseChanged();
 }
 
 bool Renderer::canDoNextStep() const
 {
-    if (m_frames.empty())
+    if (m_sessionCtx.frames.empty())
         return false;
+    // do the step even if the TC is not started;
+    // may be changed if the case is found.
     if (m_isStepForced)
         return true;
-    if (!m_started)
+    if (!m_sessionCtx.timeController.isStarted())
         return false;
     return PlaybackEngineObject::canDoNextStep();
 }
 
 float Renderer::playbackRate() const
 {
-    return m_timeController.playbackRate();
+    return m_sessionCtx.timeController.playbackRate();
 }
 
-std::chrono::milliseconds Renderer::timerInterval() const
+Renderer::TimePoint Renderer::nextTimePoint() const
 {
     using namespace std::chrono_literals;
 
-    if (m_frames.empty())
-        return 0ms;
+    if (m_sessionCtx.frames.empty())
+        return PlaybackEngineObject::nextTimePoint();
 
-    auto calculateInterval = [](const TimePoint &nextTime) {
-        using namespace std::chrono;
+    if (m_sessionCtx.explicitNextFrameTime)
+        return *m_sessionCtx.explicitNextFrameTime;
 
-        const milliseconds delay = duration_cast<milliseconds>(nextTime - RealClock::now());
-        return std::max(0ms, std::chrono::duration_cast<milliseconds>(delay));
-    };
+    if (m_sessionCtx.frames.front().isValid())
+        return m_sessionCtx.timeController.timeFromPosition(
+                m_sessionCtx.frames.front().absolutePts());
 
-    if (m_explicitNextFrameTime)
-        return calculateInterval(*m_explicitNextFrameTime);
+    if (m_sessionCtx.lastFrameEnd > TrackPosition(0))
+        return m_sessionCtx.timeController.timeFromPosition(m_sessionCtx.lastFrameEnd);
 
-    if (m_frames.front().isValid())
-        return calculateInterval(m_timeController.timeFromPosition(m_frames.front().absolutePts()));
-
-    if (m_lastFrameEnd > TrackPosition(0))
-        return calculateInterval(m_timeController.timeFromPosition(m_lastFrameEnd));
-
-    return 0ms;
+    return PlaybackEngineObject::nextTimePoint();
 }
 
 bool Renderer::setForceStepDone()
@@ -150,65 +154,68 @@ bool Renderer::setForceStepDone()
     if (!m_isStepForced.testAndSetOrdered(true, false))
         return false;
 
-    m_explicitNextFrameTime.reset();
+    m_sessionCtx.explicitNextFrameTime.reset();
     emit forceStepDone();
     return true;
 }
 
 void Renderer::doNextStep()
 {
-    auto frame = m_frames.front();
+    Frame frame = m_sessionCtx.frames.front();
 
     if (setForceStepDone()) {
         // if (frame.isValid() && frame.pts() > m_forceStepMaxPos) {
-        //    scheduleNextStep(false);
+        //    scheduleNextStep();
         //    return;
         // }
     }
 
     const auto result = renderInternal(frame);
+    const bool frameIsValid = frame.isValid();
 
     if (result.done) {
-        m_explicitNextFrameTime.reset();
-        m_frames.dequeue();
+        m_sessionCtx.explicitNextFrameTime.reset();
+        m_sessionCtx.frames.dequeue();
 
-        if (frame.isValid()) {
-            m_lastPosition.storeRelease(std::max(frame.absolutePts(), lastPosition()).get());
+        if (frameIsValid) {
+            m_sessionCtx.lastPosition.storeRelease(
+                    std::max(frame.absolutePts(), lastPosition()).get());
 
             // TODO: get rid of m_lastFrameEnd or m_seekPos
-            m_lastFrameEnd = frame.absoluteEnd();
-            m_seekPos.storeRelaxed(m_lastFrameEnd.get());
+            m_sessionCtx.lastFrameEnd = frame.absoluteEnd();
+            m_sessionCtx.seekPos.storeRelaxed(m_sessionCtx.lastFrameEnd.get());
 
             const auto loopIndex = frame.loopOffset().loopIndex;
-            if (m_loopIndex < loopIndex) {
-                m_loopIndex = loopIndex;
-                emit loopChanged(id(), frame.loopOffset().loopStartTimeUs, m_loopIndex);
+            if (m_sessionCtx.loopIndex < loopIndex) {
+                m_sessionCtx.loopIndex = loopIndex;
+                emit loopChanged(id(), frame.loopOffset().loopStartTimeUs, m_sessionCtx.loopIndex);
             }
 
-            emit frameProcessed(frame);
+            emit frameProcessed(std::move(frame));
         } else {
-            m_lastPosition.storeRelease(std::max(m_lastFrameEnd, lastPosition()).get());
+            m_sessionCtx.lastPosition.storeRelease(
+                    std::max(m_sessionCtx.lastFrameEnd, lastPosition()).get());
         }
     } else {
-        m_explicitNextFrameTime = RealClock::now() + result.recheckInterval;
+        m_sessionCtx.explicitNextFrameTime = SteadyClock::now() + result.recheckInterval;
     }
 
-    setAtEnd(result.done && !frame.isValid());
+    setAtEnd(result.done && !frameIsValid);
 
-    scheduleNextStep(false);
+    scheduleNextStep();
 }
 
 std::chrono::microseconds Renderer::frameDelay(const Frame &frame, TimePoint timePoint) const
 {
     return std::chrono::duration_cast<std::chrono::microseconds>(
-            timePoint - m_timeController.timeFromPosition(frame.absolutePts()));
+            timePoint - m_sessionCtx.timeController.timeFromPosition(frame.absolutePts()));
 }
 
 void Renderer::changeRendererTime(std::chrono::microseconds offset)
 {
-    const auto now = RealClock::now();
-    const auto pos = m_timeController.positionFromTime(now);
-    m_timeController.sync(now + offset, pos);
+    const auto now = SteadyClock::now();
+    const auto pos = m_sessionCtx.timeController.positionFromTime(now);
+    m_sessionCtx.timeController.sync(now + offset, pos);
     emit synchronized(id(), now + offset, pos);
 }
 

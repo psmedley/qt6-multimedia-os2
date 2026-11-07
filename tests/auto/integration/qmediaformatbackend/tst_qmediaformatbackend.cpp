@@ -1,16 +1,19 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
 #include <QtMultimedia/qmediaformat.h>
-#include <QtMultimedia/private/qplatformmediaintegration_p.h>
-#include <private/mediabackendutils_p.h>
-#include <private/formatutils_p.h>
-#include <private/osdetection_p.h>
-#include <set>
-#include <map>
 
-QT_USE_NAMESPACE
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+
+#include <QtMultimediaTestLib/private/formatutils_p.h>
+#include <QtMultimediaTestLib/private/mediabackendutils_p.h>
+#include <QtMultimediaTestLib/private/qintegrationtestbase_p.h>
+#include <QtMultimediaTestLib/private/osdetection_p.h>
+
+#include <QtTest/qtest.h>
+
+#include <map>
+#include <set>
 
 using namespace Qt::StringLiterals;
 
@@ -32,37 +35,34 @@ std::set<QMediaFormat::VideoCodec> supportedVideoEncoders(QMediaFormat::FileForm
 
     if constexpr (isWindows) {
         videoEncoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,      QMediaFormat::VideoCodec::H264,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::WMV,
         };
         videoEncoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
             QMediaFormat::VideoCodec::MPEG4,      QMediaFormat::VideoCodec::H264,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::MotionJPEG, QMediaFormat::VideoCodec::AV1,
         };
         videoEncoders[QMediaFormat::FileFormat::Matroska] = {
-            QMediaFormat::VideoCodec::MPEG1,
-            QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::MPEG1, QMediaFormat::VideoCodec::MPEG2,
+            QMediaFormat::VideoCodec::MPEG4, QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::AV1,
         };
         videoEncoders[QMediaFormat::FileFormat::MPEG4] = {
             QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
             QMediaFormat::VideoCodec::MPEG4,      QMediaFormat::VideoCodec::H264,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::MotionJPEG, QMediaFormat::VideoCodec::AV1,
         };
         videoEncoders[QMediaFormat::FileFormat::QuickTime] = {
             QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
             QMediaFormat::VideoCodec::MPEG4,      QMediaFormat::VideoCodec::H264,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::MotionJPEG, QMediaFormat::VideoCodec::AV1,
+        };
+        videoEncoders[QMediaFormat::FileFormat::WebM] = {
+            QMediaFormat::VideoCodec::AV1,
         };
     } else if constexpr (isAndroid) {
         videoEncoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::VideoCodec::MPEG1,
-            QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::WMV,
         };
         videoEncoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::VideoCodec::MPEG1,
@@ -90,10 +90,8 @@ std::set<QMediaFormat::VideoCodec> supportedVideoEncoders(QMediaFormat::FileForm
         };
     } else if constexpr (isLinux) {
         videoEncoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::VideoCodec::MPEG1,
-            QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::WMV,
+
         };
         videoEncoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::VideoCodec::MPEG1,
@@ -121,9 +119,8 @@ std::set<QMediaFormat::VideoCodec> supportedVideoEncoders(QMediaFormat::FileForm
         };
     } else if constexpr (isMacOS) {
         videoEncoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,      QMediaFormat::VideoCodec::H264,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::WMV,
+
         };
         videoEncoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
@@ -157,32 +154,35 @@ std::set<QMediaFormat::VideoCodec> supportedVideoDecoders(QMediaFormat::FileForm
 
     if constexpr (isWindows) {
         videoDecoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,      QMediaFormat::VideoCodec::H264,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::WMV,
         };
         videoDecoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
             QMediaFormat::VideoCodec::MPEG4,      QMediaFormat::VideoCodec::H264,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::MotionJPEG, QMediaFormat::VideoCodec::AV1,
         };
         videoDecoders[QMediaFormat::FileFormat::Matroska] = {
             QMediaFormat::VideoCodec::MPEG1, QMediaFormat::VideoCodec::MPEG2,
             QMediaFormat::VideoCodec::MPEG4, QMediaFormat::VideoCodec::H264,
             QMediaFormat::VideoCodec::H265,  QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::AV1,
         };
         videoDecoders[QMediaFormat::FileFormat::MPEG4] = {
             QMediaFormat::VideoCodec::MPEG1, QMediaFormat::VideoCodec::MPEG2,
             QMediaFormat::VideoCodec::MPEG4, QMediaFormat::VideoCodec::H264,
             QMediaFormat::VideoCodec::H265,  QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::AV1,
         };
         videoDecoders[QMediaFormat::FileFormat::Ogg] = {};
         videoDecoders[QMediaFormat::FileFormat::QuickTime] = {
             QMediaFormat::VideoCodec::MPEG1, QMediaFormat::VideoCodec::MPEG2,
             QMediaFormat::VideoCodec::MPEG4, QMediaFormat::VideoCodec::H264,
             QMediaFormat::VideoCodec::H265,  QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::AV1,
         };
-        videoDecoders[QMediaFormat::FileFormat::WebM] = {};
+        videoDecoders[QMediaFormat::FileFormat::WebM] = {
+            QMediaFormat::VideoCodec::AV1,
+        };
         videoDecoders[QMediaFormat::FileFormat::Mpeg4Audio] = {};
         videoDecoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::VideoCodec::WMV,
@@ -193,10 +193,7 @@ std::set<QMediaFormat::VideoCodec> supportedVideoDecoders(QMediaFormat::FileForm
         videoDecoders[QMediaFormat::FileFormat::Wave] = {};
     } else if constexpr (isAndroid) {
         videoDecoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::VideoCodec::MPEG1,
-            QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::WMV,
         };
         videoDecoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::VideoCodec::MPEG1,
@@ -234,10 +231,7 @@ std::set<QMediaFormat::VideoCodec> supportedVideoDecoders(QMediaFormat::FileForm
         videoDecoders[QMediaFormat::FileFormat::Wave] = {};
     } else if constexpr (isLinux) {
         videoDecoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::VideoCodec::MPEG1,
-            QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::WMV,
         };
         videoDecoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::VideoCodec::MPEG1,
@@ -275,9 +269,7 @@ std::set<QMediaFormat::VideoCodec> supportedVideoDecoders(QMediaFormat::FileForm
         videoDecoders[QMediaFormat::FileFormat::Wave] = {};
     } else if constexpr (isMacOS) {
         videoDecoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
-            QMediaFormat::VideoCodec::MPEG4,      QMediaFormat::VideoCodec::H264,
-            QMediaFormat::VideoCodec::MotionJPEG,
+            QMediaFormat::VideoCodec::WMV,
         };
         videoDecoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::VideoCodec::MPEG1,      QMediaFormat::VideoCodec::MPEG2,
@@ -318,11 +310,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioEncoders(QMediaFormat::FileForm
     std::map<QMediaFormat::FileFormat, std::set<QMediaFormat::AudioCodec>> audioEncoders;
 
     if constexpr (isWindows) {
-        audioEncoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::AudioCodec::MP3,  QMediaFormat::AudioCodec::AAC,
-            QMediaFormat::AudioCodec::AC3,  QMediaFormat::AudioCodec::EAC3,
-            QMediaFormat::AudioCodec::FLAC, QMediaFormat::AudioCodec::Wave,
-        };
+        audioEncoders[QMediaFormat::FileFormat::WMV] = {};
         audioEncoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::AudioCodec::MP3,  QMediaFormat::AudioCodec::AAC,
             QMediaFormat::AudioCodec::AC3,  QMediaFormat::AudioCodec::EAC3,
@@ -359,11 +347,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioEncoders(QMediaFormat::FileForm
         audioEncoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::AudioCodec::AAC,
         };
-        audioEncoders[QMediaFormat::FileFormat::WMA] = {
-            QMediaFormat::AudioCodec::MP3,  QMediaFormat::AudioCodec::AAC,
-            QMediaFormat::AudioCodec::AC3,  QMediaFormat::AudioCodec::EAC3,
-            QMediaFormat::AudioCodec::FLAC, QMediaFormat::AudioCodec::Wave,
-        };
+        audioEncoders[QMediaFormat::FileFormat::WMA] = {};
         audioEncoders[QMediaFormat::FileFormat::MP3] = {
             QMediaFormat::AudioCodec::MP3,
         };
@@ -374,11 +358,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioEncoders(QMediaFormat::FileForm
             QMediaFormat::AudioCodec::Wave,
         };
     } else if constexpr (isAndroid) {
-        audioEncoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
-        };
+        audioEncoders[QMediaFormat::FileFormat::WMV] = {};
         audioEncoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
             QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
@@ -411,11 +391,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioEncoders(QMediaFormat::FileForm
         audioEncoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::AudioCodec::AAC,
         };
-        audioEncoders[QMediaFormat::FileFormat::WMA] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
-        };
+        audioEncoders[QMediaFormat::FileFormat::WMA] = {};
         audioEncoders[QMediaFormat::FileFormat::MP3] = {};
         audioEncoders[QMediaFormat::FileFormat::FLAC] = {
             QMediaFormat::AudioCodec::FLAC,
@@ -424,11 +400,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioEncoders(QMediaFormat::FileForm
             QMediaFormat::AudioCodec::Wave,
         };
     } else if constexpr (isLinux) {
-        audioEncoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
-        };
+        audioEncoders[QMediaFormat::FileFormat::WMV] = {};
         audioEncoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
             QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
@@ -461,11 +433,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioEncoders(QMediaFormat::FileForm
         audioEncoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::AudioCodec::AAC,
         };
-        audioEncoders[QMediaFormat::FileFormat::WMA] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
-        };
+        audioEncoders[QMediaFormat::FileFormat::WMA] = {};
         audioEncoders[QMediaFormat::FileFormat::MP3] = {};
         audioEncoders[QMediaFormat::FileFormat::FLAC] = {
             QMediaFormat::AudioCodec::FLAC,
@@ -474,11 +442,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioEncoders(QMediaFormat::FileForm
             QMediaFormat::AudioCodec::Wave,
         };
     } else if constexpr (isMacOS) {
-        audioEncoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
-        };
+        audioEncoders[QMediaFormat::FileFormat::WMV] = {};
         audioEncoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
             QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
@@ -511,11 +475,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioEncoders(QMediaFormat::FileForm
         audioEncoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::AudioCodec::AAC,
         };
-        audioEncoders[QMediaFormat::FileFormat::WMA] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
-        };
+        audioEncoders[QMediaFormat::FileFormat::WMA] = {};
         audioEncoders[QMediaFormat::FileFormat::MP3] = {};
         audioEncoders[QMediaFormat::FileFormat::FLAC] = {
             QMediaFormat::AudioCodec::FLAC,
@@ -533,9 +493,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
 
     if constexpr (isWindows) {
         audioDecoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::AudioCodec::MP3,  QMediaFormat::AudioCodec::AAC,
-            QMediaFormat::AudioCodec::AC3,  QMediaFormat::AudioCodec::EAC3,
-            QMediaFormat::AudioCodec::FLAC, QMediaFormat::AudioCodec::Wave,
+            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::AudioCodec::MP3,  QMediaFormat::AudioCodec::AAC,
@@ -552,7 +510,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
             QMediaFormat::AudioCodec::MP3,  QMediaFormat::AudioCodec::AAC,
             QMediaFormat::AudioCodec::AC3,  QMediaFormat::AudioCodec::EAC3,
             QMediaFormat::AudioCodec::FLAC, QMediaFormat::AudioCodec::Wave,
-            QMediaFormat::AudioCodec::WMA,  QMediaFormat::AudioCodec::ALAC,
+            QMediaFormat::AudioCodec::ALAC,
         };
         audioDecoders[QMediaFormat::FileFormat::Ogg] = {
             QMediaFormat::AudioCodec::FLAC,
@@ -572,12 +530,9 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
         audioDecoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::AudioCodec::AAC,
-            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::WMA] = {
-            QMediaFormat::AudioCodec::MP3,  QMediaFormat::AudioCodec::AAC,
-            QMediaFormat::AudioCodec::AC3,  QMediaFormat::AudioCodec::EAC3,
-            QMediaFormat::AudioCodec::FLAC, QMediaFormat::AudioCodec::Wave,
+            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::MP3] = {
             QMediaFormat::AudioCodec::MP3,
@@ -590,9 +545,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
     } else if constexpr (isAndroid) {
         audioDecoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
+            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
@@ -611,7 +564,6 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
         audioDecoders[QMediaFormat::FileFormat::Ogg] = {
             QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::QuickTime] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
@@ -626,12 +578,9 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
         audioDecoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::AudioCodec::AAC,
-            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::WMA] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
+            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::MP3] = {};
         audioDecoders[QMediaFormat::FileFormat::FLAC] = {
@@ -642,9 +591,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
     } else if constexpr (isLinux) {
         audioDecoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
+            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
@@ -663,7 +610,6 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
         audioDecoders[QMediaFormat::FileFormat::Ogg] = {
             QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::QuickTime] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
@@ -678,12 +624,9 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
         audioDecoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::AudioCodec::AAC,
-            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::WMA] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
+            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::MP3] = {};
         audioDecoders[QMediaFormat::FileFormat::FLAC] = {
@@ -694,9 +637,7 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
     } else if constexpr (isMacOS) {
         audioDecoders[QMediaFormat::FileFormat::WMV] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
+            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::AVI] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
@@ -715,7 +656,6 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
         audioDecoders[QMediaFormat::FileFormat::Ogg] = {
             QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::QuickTime] = {
             QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
@@ -730,12 +670,9 @@ std::set<QMediaFormat::AudioCodec> supportedAudioDecoders(QMediaFormat::FileForm
         };
         audioDecoders[QMediaFormat::FileFormat::AAC] = {
             QMediaFormat::AudioCodec::AAC,
-            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::WMA] = {
-            QMediaFormat::AudioCodec::AAC,  QMediaFormat::AudioCodec::AC3,
-            QMediaFormat::AudioCodec::EAC3, QMediaFormat::AudioCodec::FLAC,
-            QMediaFormat::AudioCodec::Wave,
+            QMediaFormat::AudioCodec::WMA,
         };
         audioDecoders[QMediaFormat::FileFormat::MP3] = {};
         audioDecoders[QMediaFormat::FileFormat::FLAC] = {
@@ -756,11 +693,16 @@ QString enumToString(T enumValue)
             .arg(metaEnum.scope(), metaEnum.name(), metaEnum.valueToKey(qToUnderlying(enumValue)));
 }
 
-class tst_qmediaformatbackend : public QObject
+class tst_qmediaformatbackend : public QIntegrationTestBase
 {
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        if (!initIntegrationTestCase())
+            return;
+    }
 
     void isSupported_returnsTrue_whenFormatAndVideoCodecIsSupported_data()
     {
@@ -912,6 +854,13 @@ private slots:
                 && format.fileFormat() != QMediaFormat::UnspecifiedFormat
                 && format.audioCodec() != QMediaFormat::AudioCodec::Unspecified;
 
+        // This check should be removed once FFmpeg starts associating non-experimental
+        // audio codecs with WebM format.
+        if (format.fileFormat() == QMediaFormat::FileFormat::WebM)
+            resolveShouldDoNothing = format.isSupported(QMediaFormat::Encode)
+                    && format.fileFormat() != QMediaFormat::UnspecifiedFormat
+                    && format.audioCodec() == QMediaFormat::AudioCodec::Unspecified;
+
         if (resolveFlags == QMediaFormat::RequiresVideo)
             resolveShouldDoNothing = resolveShouldDoNothing
                     && format.videoCodec() != QMediaFormat::VideoCodec::Unspecified;
@@ -959,7 +908,13 @@ private slots:
         format.resolveForEncoding(resolveFlags);
 
         QCOMPARE_NE(format.fileFormat(), QMediaFormat::FileFormat::UnspecifiedFormat);
-        QCOMPARE_NE(format.audioCodec(), QMediaFormat::AudioCodec::Unspecified);
+        // Currently FFmpeg provides only experimental audio codecs (Opus, Vorbis) for WebM format
+        // that are disabled by default. This check should be removed once FFmpeg starts providing
+        // non-experimental codecs for WebM format.
+        if (format.fileFormat() == QMediaFormat::FileFormat::WebM)
+            QCOMPARE_EQ(format.audioCodec(), QMediaFormat::AudioCodec::Unspecified);
+        else
+            QCOMPARE_NE(format.audioCodec(), QMediaFormat::AudioCodec::Unspecified);
         if (resolveFlags == QMediaFormat::NoFlags)
             QCOMPARE_EQ(format.videoCodec(), QMediaFormat::VideoCodec::Unspecified);
         else

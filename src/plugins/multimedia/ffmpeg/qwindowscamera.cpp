@@ -5,11 +5,12 @@
 #include "qsemaphore.h"
 #include "qmutex.h"
 
+#include <private/qcameradevice_p.h>
 #include <private/qmemoryvideobuffer_p.h>
-#include <private/qwindowsmfdefs_p.h>
 #include <private/qwindowsmultimediautils_p.h>
 #include <private/qvideoframe_p.h>
 #include <private/qcomobject_p.h>
+#include <private/qwmf_support_p.h>
 
 #include <QtCore/private/qsystemerror_p.h>
 
@@ -19,10 +20,37 @@
 #include <mfreadwrite.h>
 
 #include <system_error>
+#include <utility>
 
 QT_BEGIN_NAMESPACE
 
-using namespace QWindowsMultimediaUtils;
+namespace QFFmpeg {
+
+qsizetype indexOfClosestCameraFormat(QSpan<const QCameraFormat> candidates,
+                                     const QCameraFormat &requested)
+{
+    qsizetype closest = -1;
+    std::pair<float, float> closestDistance{};
+
+    for (qsizetype i = 0; i != candidates.size(); ++i) {
+        const QCameraFormat &candidate = candidates[i];
+        if (candidate.pixelFormat() != requested.pixelFormat()
+            || candidate.resolution() != requested.resolution()) {
+            continue;
+        }
+
+        const std::pair distance{ qAbs(candidate.maxFrameRate() - requested.maxFrameRate()),
+                                  qAbs(candidate.minFrameRate() - requested.minFrameRate()) };
+        if (closest < 0 || distance < closestDistance) {
+            closest = i;
+            closestDistance = distance;
+        }
+    }
+
+    return closest;
+}
+
+namespace {
 
 class CameraReaderCallback : public QComObject<IMFSourceReaderCallback>
 {
@@ -45,8 +73,8 @@ private:
     QMutex m_mutex;
 };
 
-static ComPtr<IMFSourceReader> createCameraReader(IMFMediaSource *mediaSource,
-                                                             const ComPtr<CameraReaderCallback> &callback)
+ComPtr<IMFSourceReader> createCameraReader(IMFMediaSource *mediaSource,
+                                           const ComPtr<CameraReaderCallback> &callback)
 {
     ComPtr<IMFSourceReader> sourceReader;
     ComPtr<IMFAttributes> readerAttributes;
@@ -65,13 +93,14 @@ static ComPtr<IMFSourceReader> createCameraReader(IMFMediaSource *mediaSource,
     return sourceReader;
 }
 
-static ComPtr<IMFMediaSource> createCameraSource(const QString &deviceId)
+ComPtr<IMFMediaSource> createCameraSource(const QString &deviceId)
 {
     ComPtr<IMFMediaSource> mediaSource;
     ComPtr<IMFAttributes> sourceAttributes;
     HRESULT hr = MFCreateAttributes(sourceAttributes.GetAddressOf(), 2);
     if (SUCCEEDED(hr)) {
-        hr = sourceAttributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, QMM_MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+        hr = sourceAttributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                                       MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
         if (SUCCEEDED(hr)) {
             hr = sourceAttributes->SetString(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
                                              reinterpret_cast<LPCWSTR>(deviceId.utf16()));
@@ -86,7 +115,7 @@ static ComPtr<IMFMediaSource> createCameraSource(const QString &deviceId)
     return mediaSource;
 }
 
-static int calculateVideoFrameStride(IMFMediaType *videoType, int width)
+int calculateVideoFrameStride(IMFMediaType *videoType, int width)
 {
     Q_ASSERT(videoType);
 
@@ -103,7 +132,7 @@ static int calculateVideoFrameStride(IMFMediaType *videoType, int width)
     return 0;
 }
 
-static bool setCameraReaderFormat(IMFSourceReader *sourceReader, IMFMediaType *videoType)
+bool setCameraReaderFormat(IMFSourceReader *sourceReader, IMFMediaType *videoType)
 {
     Q_ASSERT(sourceReader);
     Q_ASSERT(videoType);
@@ -116,37 +145,38 @@ static bool setCameraReaderFormat(IMFSourceReader *sourceReader, IMFMediaType *v
     return SUCCEEDED(hr);
 }
 
-static ComPtr<IMFMediaType> findVideoType(IMFSourceReader *reader,
-                                                     const QCameraFormat &format)
+ComPtr<IMFMediaType> findVideoType(IMFSourceReader *reader, const QCameraFormat &format)
 {
+    std::vector<ComPtr<IMFMediaType>> mediaTypes;
+    std::vector<QCameraFormat> candidates;
+
     for (DWORD i = 0;; ++i) {
-        ComPtr<IMFMediaType> candidate;
+        ComPtr<IMFMediaType> mediaType;
         HRESULT hr = reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, i,
-                                                candidate.GetAddressOf());
+                                                mediaType.GetAddressOf());
         if (FAILED(hr))
             break;
 
-        GUID subtype = GUID_NULL;
-        if (FAILED(candidate->GetGUID(MF_MT_SUBTYPE, &subtype)))
+        const std::optional<QCameraFormat> candidate =
+                QWMF::cameraFormatFromMediaType(mediaType.Get());
+        if (!candidate)
             continue;
 
-        if (format.pixelFormat() != pixelFormatFromMediaSubtype(subtype))
-            continue;
-
-        UINT32 width = 0u;
-        UINT32 height = 0u;
-        if (FAILED(MFGetAttributeSize(candidate.Get(), MF_MT_FRAME_SIZE, &width, &height)))
-            continue;
-
-        if (format.resolution() != QSize{ int(width), int(height) })
-            continue;
-
-        return candidate;
+        mediaTypes.push_back(std::move(mediaType));
+        candidates.push_back(std::move(*candidate));
     }
-    return {};
+
+    const qsizetype index = indexOfClosestCameraFormat(candidates, format);
+    if (index < 0)
+        return {};
+
+    return mediaTypes.at(index);
 }
 
-class ActiveCamera {
+} // namespace
+
+class ActiveCamera
+{
 public:
     static std::unique_ptr<ActiveCamera> create(QWindowsCamera &wc, const QCameraDevice &device, const QCameraFormat &format)
     {
@@ -175,6 +205,8 @@ public:
         if (videoType) {
             if (setCameraReaderFormat(m_reader.Get(), videoType.Get())) {
                 m_frameFormat = { format.resolution(), format.pixelFormat() };
+                m_frameFormat.setColorRange(QCameraFormatPrivate::getColorRange(format));
+                m_frameFormat.setColorSpace(QCameraFormatPrivate::getColorSpace(format));
                 m_videoFrameStride =
                         calculateVideoFrameStride(videoType.Get(), format.resolution().width());
             }
@@ -197,10 +229,9 @@ public:
             ComPtr<IMFMediaBuffer> mediaBuffer;
             if (SUCCEEDED(sample->ConvertToContiguousBuffer(mediaBuffer.GetAddressOf()))) {
 
-                DWORD bufLen = 0;
-                BYTE *buffer = nullptr;
-                if (SUCCEEDED(mediaBuffer->Lock(&buffer, nullptr, &bufLen))) {
-                    QByteArray bytes(reinterpret_cast<char*>(buffer), qsizetype(bufLen));
+                auto result = QWMF::withLockedBuffer(mediaBuffer,
+                                                     [&](QSpan<BYTE> data, QSpan<BYTE> /*max*/) {
+                    QByteArray bytes(data);
                     auto buffer = std::make_unique<QMemoryVideoBuffer>(std::move(bytes),
                                                                        m_videoFrameStride);
                     QVideoFrame frame =
@@ -213,9 +244,11 @@ public:
                     if (SUCCEEDED(sample->GetSampleDuration(&duration)))
                         frame.setEndTime((timestamp + duration) / 10);
 
-                    emit m_windowsCamera.newVideoFrame(frame);
-                    mediaBuffer->Unlock();
-                }
+                    return frame;
+                });
+
+                if (result)
+                    emit m_windowsCamera.newVideoFrame(result.value());
             }
         }
 
@@ -231,15 +264,16 @@ public:
     ~ActiveCamera()
     {
         flush();
-        m_readerCallback->setActiveCamera(nullptr);
+        if (m_readerCallback)
+            m_readerCallback->setActiveCamera(nullptr);
     }
 
 private:
-    explicit ActiveCamera(QWindowsCamera &wc) : m_windowsCamera(wc), m_flushWait(0) {};
+    explicit ActiveCamera(QWindowsCamera &wc) : m_windowsCamera(wc), m_flushWait(0) { }
 
     void flush()
     {
-        if (SUCCEEDED(m_reader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM))) {
+        if (m_reader && SUCCEEDED(m_reader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM))) {
             m_flushWait.acquire();
         }
     }
@@ -262,7 +296,7 @@ STDMETHODIMP CameraReaderCallback::OnReadSample(HRESULT status, DWORD, DWORD, LO
     if (m_activeCamera)
         m_activeCamera->onReadSample(status, timestamp, sample);
 
-    return status;
+    return S_OK;
 }
 
 STDMETHODIMP CameraReaderCallback::OnFlush(DWORD)
@@ -328,5 +362,7 @@ bool QWindowsCamera::setCameraFormat(const QCameraFormat &format)
 
     return ok;
 }
+
+} // namespace QFFmpeg
 
 QT_END_NAMESPACE

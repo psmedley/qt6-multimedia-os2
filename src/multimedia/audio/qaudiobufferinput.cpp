@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qaudiobufferinput.h"
-#include "qplatformaudiobufferinput_p.h"
-#include "qmediainputencoderinterface_p.h"
-#include "qmediaframeinput_p.h"
+
+#include <QtMultimedia/private/qmediaframeinput_p.h>
+#include <QtMultimedia/private/qmediainputencoderinterface_p.h>
+#include <QtMultimedia/private/qplatformaudiobufferinput_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -82,12 +83,7 @@ private:
 
     QAudioBufferInput is only supported with the FFmpeg backend.
 
-    Custom audio buffers can be recorded by connecting a \l QAudioBufferInput and a
-    \l QMediaRecorder to a \l QMediaCaptureSession. For a pull mode implementation,
-    call \l sendAudioBuffer() in response to the \l readyToSendAudioBuffer() signal.
-    In the snippet below this is done by connecting the signal to a slot in a custom
-    media generator class. The slot function emits another signal with a new audio
-    buffer, which is connected to  \l sendAudioBuffer():
+    \include qmediainput-pull-mode.qdocinc {pull-mode} {QAudioBufferInput} {audio buffer} {sendAudioBuffer} {readyToSendAudioBuffer}
 
     \snippet custommediainputsnippets/custommediainputsnippets.cpp QAudioBufferInput setup
 

@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #include "qffmpegencoderoptions_p.h"
 
-#include "qffmpegmediaformatinfo_p.h"
+#include <QtFFmpegMediaPluginImpl/private/qffmpegmediaformatinfo_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegrecordingengineutils_p.h>
 
 #include <QtMultimedia/qaudioformat.h>
+#include <QtCore/private/qflatmap_p.h>
 
 #if QT_CONFIG(vaapi)
 #include <va/va.h>
@@ -53,14 +55,19 @@ static int bitrateForSettings(const QMediaEncoderSettings &settings, bool hdr = 
     QSize s = settings.videoResolution();
     double bitrate = bitsPerPixel[int(settings.videoCodec())][settings.quality()]*s.width()*s.height();
 
+    // Frame rate can be 0 with variable-rate sources
+    const double frameRate = settings.videoFrameRate() > 0.
+            ? settings.videoFrameRate()
+            : static_cast<double>(QFFmpeg::DefaultVideoFrameRate);
+
     if (settings.videoCodec() != QMediaFormat::VideoCodec::MotionJPEG) {
         // We assume that doubling the framerate requires 1.5 times the amount of data (not twice, as intraframe
         // differences will be smaller). 4 times the frame rate uses thus 2.25 times the data, etc.
-        float rateMultiplier = log2(settings.videoFrameRate()/30.);
+        float rateMultiplier = log2(frameRate / 30.);
         bitrate *= pow(1.5, rateMultiplier);
     } else {
         // MotionJPEG doesn't optimize between frames, so we have a linear dependency on framerate
-        bitrate *= settings.videoFrameRate()/30.;
+        bitrate *= frameRate / 30.;
     }
 
     // HDR requires 10bits per pixel instead of 8, so apply a factor of 1.25.
@@ -119,6 +126,44 @@ static void apply_libvpx(const QMediaEncoderSettings &settings, AVCodecContext *
         av_dict_set(opts, "b", nullptr, 0);
     }
     av_dict_set(opts, "row-mt", "1", 0); // better multithreading
+}
+
+static void apply_mpeg4(const QMediaEncoderSettings &settings, AVCodecContext *codec,
+                        AVDictionary **opts)
+{
+    // compare https://trac.ffmpeg.org/wiki/Encode/MPEG-4
+
+    QMediaRecorder::EncodingMode encodingMode = settings.encodingMode();
+    switch (encodingMode) {
+    case QMediaRecorder::ConstantBitRateEncoding:
+    case QMediaRecorder::QMediaRecorder::AverageBitRateEncoding: {
+        codec->bit_rate = settings.videoBitRate();
+        if (encodingMode == QMediaRecorder::ConstantBitRateEncoding)
+            codec->rc_min_rate = codec->rc_max_rate = settings.videoBitRate();
+
+        break;
+    }
+    case QMediaRecorder::ConstantQualityEncoding: {
+        constexpr auto scales = std::array{
+            31, // VeryLowQuality
+            23, // LowQuality
+            16, // NormalQuality
+            9, // HighQuality
+            1, // VeryHighQuality
+        };
+        av_dict_set_int(opts, "qscale", scales[settings.quality()], 0);
+        codec->global_quality = scales[settings.quality()] * FF_QP2LAMBDA;
+        codec->flags |= AV_CODEC_FLAG_QSCALE;
+        break;
+    }
+    case QMediaRecorder::TwoPassEncoding: {
+        qWarning("Two pass encoding is not supported for MPEG4");
+        break;
+    }
+    default: {
+        Q_UNREACHABLE_RETURN();
+    }
+    }
 }
 
 #ifdef Q_OS_DARWIN
@@ -278,7 +323,7 @@ static void apply_mediacodec(const QMediaEncoderSettings &settings, AVCodecConte
     case QMediaFormat::VideoCodec::H264: {
         const char *levels[] = { "2.2", "3.2", "4.2", "5.2", "6.2" };
         av_dict_set(opts, "level", levels[settings.quality()], 1);
-        codec->profile = FF_PROFILE_H264_HIGH;
+        codec->profile = AV_PROFILE_H264_HIGH;
         break;
     }
     case QMediaFormat::VideoCodec::H265: {
@@ -290,7 +335,7 @@ static void apply_mediacodec(const QMediaEncoderSettings &settings, AVCodecConte
             av_dict_set(opts, "level", levels[settings.quality()], 1);
         }
 
-        codec->profile = FF_PROFILE_HEVC_MAIN;
+        codec->profile = AV_PROFILE_HEVC_MAIN;
         break;
     }
     default:
@@ -301,69 +346,68 @@ static void apply_mediacodec(const QMediaEncoderSettings &settings, AVCodecConte
 
 namespace QFFmpeg {
 
-using ApplyOptions = void (*)(const QMediaEncoderSettings &settings, AVCodecContext *codec, AVDictionary **opts);
+using ApplyVideoCodecOptions = void (*)(const QMediaEncoderSettings &settings,
+                                        AVCodecContext *codec, AVDictionary **opts);
 
-const struct {
-    const char *name;
-    ApplyOptions apply;
-} videoCodecOptionTable[] = { { "libx264", apply_x264 },
-                              { "libx265xx", apply_x265 },
-                              { "libvpx", apply_libvpx },
-                              { "libvpx_vp9", apply_libvpx },
-                              { "libopenh264", apply_openh264 },
-                              { "h264_nvenc", apply_nvenc },
-                              { "hevc_nvenc", apply_nvenc },
-                              { "av1_nvenc", apply_nvenc },
+using namespace Qt::StringLiterals;
+
+using VideoCodecOptionsTableType =
+        QFlatMap<QLatin1StringView, ApplyVideoCodecOptions, std::less<>,
+                 std::vector<QLatin1StringView>, std::vector<ApplyVideoCodecOptions>>;
+
+const VideoCodecOptionsTableType videoCodecOptionTable{
+    { "libx264"_L1, apply_x264 },
+    { "libx265"_L1, apply_x265 },
+    { "libvpx"_L1, apply_libvpx },
+    { "libvpx_vp9"_L1, apply_libvpx },
+    { "libopenh264"_L1, apply_openh264 },
+    { "h264_nvenc"_L1, apply_nvenc },
+    { "hevc_nvenc"_L1, apply_nvenc },
+    { "av1_nvenc"_L1, apply_nvenc },
+    { "mpeg4"_L1, apply_mpeg4 },
 #ifdef Q_OS_DARWIN
-                              { "h264_videotoolbox", apply_videotoolbox },
-                              { "hevc_videotoolbox", apply_videotoolbox },
-                              { "prores_videotoolbox", apply_videotoolbox },
-                              { "vp9_videotoolbox", apply_videotoolbox },
+    { "h264_videotoolbox"_L1, apply_videotoolbox },
+    { "hevc_videotoolbox"_L1, apply_videotoolbox },
+    { "prores_videotoolbox"_L1, apply_videotoolbox },
+    { "vp9_videotoolbox"_L1, apply_videotoolbox },
 #endif
 #if QT_CONFIG(vaapi)
-                              { "mpeg2_vaapi", apply_vaapi },
-                              { "mjpeg_vaapi", apply_vaapi },
-                              { "h264_vaapi", apply_vaapi },
-                              { "hevc_vaapi", apply_vaapi },
-                              { "vp8_vaapi", apply_vaapi },
-                              { "vp9_vaapi", apply_vaapi },
+    { "mpeg2_vaapi"_L1, apply_vaapi },
+    { "mjpeg_vaapi"_L1, apply_vaapi },
+    { "h264_vaapi"_L1, apply_vaapi },
+    { "hevc_vaapi"_L1, apply_vaapi },
+    { "vp8_vaapi"_L1, apply_vaapi },
+    { "vp9_vaapi"_L1, apply_vaapi },
 #endif
 #ifdef Q_OS_WINDOWS
-                              { "hevc_mf", apply_mf },
-                              { "h264_mf", apply_mf },
+    { "hevc_mf"_L1, apply_mf },
+    { "h264_mf"_L1, apply_mf },
 #endif
 #ifdef Q_OS_ANDROID
-                              { "hevc_mediacodec", apply_mediacodec },
-                              { "h264_mediacodec", apply_mediacodec },
+    { "hevc_mediacodec"_L1, apply_mediacodec },
+    { "h264_mediacodec"_L1, apply_mediacodec },
 #endif
-                              { nullptr, nullptr } };
 
-const struct {
-    const char *name;
-    ApplyOptions apply;
-} audioCodecOptionTable[] = {
-    { nullptr, nullptr }
 };
 
-void applyVideoEncoderOptions(const QMediaEncoderSettings &settings, const QByteArray &codecName, AVCodecContext *codec, AVDictionary **opts)
+void applyVideoEncoderOptions(const QMediaEncoderSettings &settings, QLatin1StringView codecName,
+                              AVCodecContext *codec, AVDictionary **opts)
 {
     av_dict_set(opts, "threads", "auto", 0); // we always want automatic threading
 
-    auto *table = videoCodecOptionTable;
-    while (table->name) {
-        if (codecName == table->name) {
-            table->apply(settings, codec, opts);
-            return;
-        }
+    auto entry = videoCodecOptionTable.find(codecName);
 
-        ++table;
-    }
+    if (entry != videoCodecOptionTable.end())
+        entry->second(settings, codec, opts);
 }
 
-void applyAudioEncoderOptions(const QMediaEncoderSettings &settings, const QByteArray &codecName, AVCodecContext *codec, AVDictionary **opts)
+void applyAudioEncoderOptions(const QMediaEncoderSettings &settings,
+                              QLatin1StringView /*codecName*/, AVCodecContext *codec,
+                              AVDictionary ** /*opts*/)
 {
     codec->thread_count = -1; // we always want automatic threading
-    if (settings.encodingMode() == QMediaRecorder::ConstantBitRateEncoding || settings.encodingMode() == QMediaRecorder::AverageBitRateEncoding)
+    if (settings.encodingMode() == QMediaRecorder::ConstantBitRateEncoding
+        || settings.encodingMode() == QMediaRecorder::AverageBitRateEncoding)
         codec->bit_rate = settings.audioBitRate();
 
     if (settings.audioSampleRate() != -1)
@@ -380,17 +424,6 @@ void applyAudioEncoderOptions(const QMediaEncoderSettings &settings, const QByte
         codec->channels = qPopulationCount(codec->channel_layout);
 #endif
     }
-
-    auto *table = audioCodecOptionTable;
-    while (table->name) {
-        if (codecName == table->name) {
-            table->apply(settings, codec, opts);
-            return;
-        }
-
-        ++table;
-    }
-
 }
 
 } // namespace QFFmpeg

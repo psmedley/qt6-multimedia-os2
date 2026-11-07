@@ -12,7 +12,7 @@
 
 QT_BEGIN_NAMESPACE
 
-static Q_LOGGING_CATEGORY(qLcMetaData, "qt.multimedia.ffmpeg.metadata")
+Q_STATIC_LOGGING_CATEGORY(qLcMetaData, "qt.multimedia.ffmpeg.metadata")
 
 namespace  {
 
@@ -28,8 +28,6 @@ constexpr ffmpegTagToMetaDataKey ffmpegTagToMetaDataKey[] = {
     { "description", QMediaMetaData::Description },
     { "genre", QMediaMetaData::Genre },
     { "date", QMediaMetaData::Date },
-    { "year", QMediaMetaData::Date },
-    { "creation_time", QMediaMetaData::Date },
 
     { "language", QMediaMetaData::Language },
 
@@ -71,12 +69,37 @@ static const char *keyToTag(QMediaMetaData::Key key)
     return nullptr;
 }
 
+static QDateTime getRecordingTime(const AVDictionary *tags)
+{
+    constexpr std::array prioritizedDateTags = {
+        "date",                             // Time of work creation provided by FFmpeg
+        "com.apple.quicktime.creationdate", // QuickTime creation time
+        "year",                             // Year of work, prioritized after more specific times
+        "creation_time",                    // Time of file creation or encoding, prioritized last
+    };
+
+    AVDictionaryEntry *entry = nullptr;
+
+    for (const char *dateTag : prioritizedDateTags) {
+        using namespace std::string_view_literals;
+        entry = av_dict_get(tags, dateTag, nullptr, 0);
+        if (!entry)
+            continue;
+        else if (entry->key == "year"sv)
+            return QDateTime(QDate(QByteArray(entry->value).toInt(), 1, 1), QTime(0, 0, 0));
+        else
+            return QDateTime::fromString(QString::fromUtf8(entry->value), Qt::ISODate);
+    }
+
+    return QDateTime();
+}
+
 //internal
 void QFFmpegMetaData::addEntry(QMediaMetaData &metaData, AVDictionaryEntry *entry)
 {
     qCDebug(qLcMetaData) << "   checking:" << entry->key << entry->value;
     QByteArray tag(entry->key);
-    QMediaMetaData::Key key = tagToKey(tag.toLower());
+    QMediaMetaData::Key key = tagToKey(tag.toLower().constData());
     if (key == QMediaMetaData::Key(-1))
         return;
     qCDebug(qLcMetaData) << "       adding" << key;
@@ -91,18 +114,9 @@ void QFFmpegMetaData::addEntry(QMediaMetaData &metaData, AVDictionaryEntry *entr
     case qMetaTypeId<QStringList>():
         map->insert(key, QString::fromUtf8(entry->value).split(QLatin1Char(',')));
         return;
-    case qMetaTypeId<QDateTime>(): {
-        QDateTime date;
-        if (!qstrcmp(entry->key, "year")) {
-            if (map->keys().contains(QMediaMetaData::Date))
-                return;
-            date = QDateTime(QDate(QByteArray(entry->value).toInt(), 1, 1), QTime(0, 0, 0));
-        } else {
-            date = QDateTime::fromString(QString::fromUtf8(entry->value), Qt::ISODate);
-        }
-        map->insert(key, date);
+    case qMetaTypeId<QDateTime>():
+        // Dates have their own handling
         return;
-    }
     case qMetaTypeId<QUrl>():
         map->insert(key, QUrl::fromEncoded(entry->value));
         return;
@@ -130,6 +144,11 @@ QMediaMetaData QFFmpegMetaData::fromAVMetaData(const AVDictionary *tags)
     AVDictionaryEntry *entry = nullptr;
     while ((entry = av_dict_get(tags, "", entry, AV_DICT_IGNORE_SUFFIX)))
         addEntry(metaData, entry);
+
+    // Get date from provided tags in order of priority
+    QDateTime date = getRecordingTime(tags);
+    if (!date.isNull())
+        metaData.insert(QMediaMetaData::Date, date);
 
     return metaData;
 }

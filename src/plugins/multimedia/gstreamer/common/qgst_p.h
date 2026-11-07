@@ -32,6 +32,12 @@
 #include <gst/app/gstappsrc.h>
 #include <gst/video/video-info.h>
 
+#if QT_CONFIG(gstreamer_gl_egl) && QT_CONFIG(linux_dmabuf)
+#  define QT_GSTREAMER_SUPPORTS_GST_VIDEO_FORMAT_DMA_DRM GST_CHECK_VERSION(1, 24, 0)
+#else
+#  define QT_GSTREAMER_SUPPORTS_GST_VIDEO_FORMAT_DMA_DRM 0
+#endif
+
 #include "qgst_handle_types_p.h"
 
 #include <type_traits>
@@ -171,10 +177,55 @@ DestinationType *qGstCheckedCast(SourceType *arg)
     return Traits::cast(arg);
 }
 
+GstVideoFormat qGstVideoFormatFromPixelFormat(QVideoFrameFormat::PixelFormat format);
+QVideoFrameFormat::PixelFormat qPixelFormatFromGstVideoFormat(GstVideoFormat format);
+
 class QSize;
 class QGstStructureView;
 class QGstCaps;
 class QCameraFormat;
+
+struct QGstVideoInfo
+{
+    GstVideoInfo gstVideoInfo = {};
+    std::optional<guint64> dmaDrmModifier;
+};
+
+struct QGstStructure : QUniqueGstStructureHandle
+{
+    using QUniqueGstStructureHandle::QUniqueGstStructureHandle;
+
+    explicit QGstStructure(const char *name)
+        : QUniqueGstStructureHandle{ gst_structure_new_empty(name) }
+    {
+    }
+
+    void setInt(const char *field, int value)
+    {
+        gst_structure_set(get(), field, G_TYPE_INT, value, nullptr);
+    }
+
+    void setString(const char *field, const char *value)
+    {
+        gst_structure_set(get(), field, G_TYPE_STRING, value, nullptr);
+    }
+
+    void setIntRange(const char *field, int min, int max)
+    {
+        gst_structure_set(get(), field, GST_TYPE_INT_RANGE, min, max, nullptr);
+    }
+
+    void setFractionRange(const char *field, Fraction min, Fraction max)
+    {
+        gst_structure_set(get(), field, GST_TYPE_FRACTION_RANGE, min.numerator,
+                          min.denominator, max.numerator, max.denominator, nullptr);
+    }
+
+    void setValue(const char *field, const GValue *value)
+    {
+        gst_structure_set_value(get(), field, value);
+    }
+};
 
 template <typename T> struct QGRange
 {
@@ -309,7 +360,7 @@ public:
     QGstTagListHandle tags() const;
 
     QSize resolution() const;
-    QVideoFrameFormat::PixelFormat pixelFormat() const;
+    QList<QVideoFrameFormat::PixelFormat> pixelFormats() const;
     QGRange<float> frameRateRange() const;
     std::optional<QGRange<QSize>> resolutionRange() const;
     QGstreamerMessage getMessage();
@@ -347,9 +398,10 @@ public:
     GstCaps *caps() const;
 
     MemoryFormat memoryFormat() const;
-    std::optional<std::pair<QVideoFrameFormat, GstVideoInfo>> formatAndVideoInfo() const;
+    std::optional<QGstVideoInfo> videoInfo() const;
 
-    void addPixelFormats(const QList<QVideoFrameFormat::PixelFormat> &formats, const char *modifier = nullptr);
+    void addPixelFormats(const QList<QVideoFrameFormat::PixelFormat> &formats,
+                         const char* capsFeatures = nullptr);
     void setResolution(QSize);
 
     static QGstCaps create();
@@ -575,6 +627,8 @@ public:
     static QGstElementFactoryHandle findFactory(const char *);
     static QGstElementFactoryHandle findFactory(const QByteArray &name);
 
+    QByteArrayView factoryName() const;
+
     QGstPad staticPad(const char *name) const;
     QGstPad src() const;
     QGstPad sink() const;
@@ -652,6 +706,7 @@ public:
     QGstElement getParent() const;
     QGstBin getParentBin() const;
     QGstPipeline getPipeline() const;
+    QGstBin getRootBin() const;
 
     void removeFromParent();
     void dumpPipelineGraph(const char *filename) const;
@@ -850,7 +905,7 @@ public:
 
     bool syncChildrenState();
 
-    void dumpGraph(const char *fileNamePrefix) const;
+    void dumpGraph(const char *fileNamePrefix, bool includeTimestamp = true) const;
 
     QGstElement findByName(const char *);
 
@@ -970,6 +1025,10 @@ void qForeachStreamInCollection(const QGstStreamCollectionHandle &collection, Fu
 {
     qForeachStreamInCollection(collection.get(), std::forward<Functor>(f));
 }
+
+QVideoFrameFormat qVideoFrameFormatFromGstVideoInfo(const QGstVideoInfo &vidInfo);
+QGstCaps::MemoryFormat qMemoryFormatFromGstBuffer(GstBuffer *buffer);
+QVideoFrame qCreateFrameFromGstBuffer(QGstBufferHandle buffer, const QGstVideoInfo &videoInfo);
 
 QT_END_NAMESPACE
 

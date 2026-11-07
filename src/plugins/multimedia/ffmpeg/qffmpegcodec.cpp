@@ -3,7 +3,6 @@
 
 #include "qffmpegcodec_p.h"
 #include "qffmpeg_p.h"
-#include "qffmpegmediaformatinfo_p.h"
 
 #include <QtCore/qloggingcategory.h>
 
@@ -36,12 +35,12 @@ QSpan<const T> makeSpan(const T *values)
 
 #if QT_FFMPEG_HAS_AVCODEC_GET_SUPPORTED_CONFIG
 
-static Q_LOGGING_CATEGORY(qLcFFmpegUtils, "qt.multimedia.ffmpeg.utils");
+Q_STATIC_LOGGING_CATEGORY(qLcFFmpegUtils, "qt.multimedia.ffmpeg.utils");
 
 void logGetCodecConfigError(const AVCodec *codec, AVCodecConfig config, int error)
 {
     qCWarning(qLcFFmpegUtils) << "Failed to retrieve config" << config << "for codec" << codec->name
-                              << "with error" << error << err2str(error);
+                              << "with error" << error << AVError(error);
 }
 
 template <typename T>
@@ -267,34 +266,15 @@ std::vector<const AVCodecHWConfig *> Codec::hwConfigs() const noexcept
     return configs;
 }
 
-CodecIterator CodecIterator::begin()
-{
-    CodecIterator iterator;
-    iterator.m_codec = av_codec_iterate(&iterator.m_state);
-    return iterator;
-}
-
-CodecIterator CodecIterator::end()
-{
-    return { };
-}
-
-CodecIterator &CodecIterator::operator++() noexcept
+const AVCodecHWConfig *Codec::hwConfigForPixelFormat(AVPixelFormat pix) const noexcept
 {
     Q_ASSERT(m_codec);
-    m_codec = av_codec_iterate(&m_state);
-    return *this;
-}
 
-Codec CodecIterator::operator*() const noexcept
-{
-    Q_ASSERT(m_codec); // Avoid dereferencing end() iterator
-    return Codec{ m_codec };
-}
-
-bool CodecIterator::operator!=(const CodecIterator &other) const noexcept
-{
-    return m_codec != other.m_codec;
+    for (int index = 0; auto config = avcodec_get_hw_config(m_codec, index); ++index) {
+        if (config->pix_fmt == pix)
+            return config;
+    }
+    return nullptr;
 }
 
 QSpan<const AVPixelFormat> makeSpan(const AVPixelFormat *values)

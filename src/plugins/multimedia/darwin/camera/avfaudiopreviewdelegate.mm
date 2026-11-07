@@ -1,10 +1,12 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "avfcamerasession_p.h"
 #include "avfaudiopreviewdelegate_p.h"
 
+#include <camera/avfcamerasession_p.h>
+
 #include <QtCore/qdebug.h>
+#include <QtCore/private/qcore_mac_p.h>
 
 QT_USE_NAMESPACE
 
@@ -20,7 +22,6 @@ QT_USE_NAMESPACE
 - (id)init
 {
     if (self = [super init]) {
-        m_session = nil;
         m_audioBufferSynchronizer = [[AVSampleBufferRenderSynchronizer alloc] init];
         m_audioRenderer = [[AVSampleBufferAudioRenderer alloc] init];
         [m_audioBufferSynchronizer addRenderer:m_audioRenderer];
@@ -41,11 +42,11 @@ QT_USE_NAMESPACE
         return;
     }
 
-    CFRetain(sampleBuffer);
+    auto buffer = QCFType<CMSampleBufferRef>::constructFromGet(sampleBuffer);
 
     dispatch_async(m_audioPreviewQueue, ^{
-        [self renderAudioSampleBuffer:sampleBuffer];
-        CFRelease(sampleBuffer);
+        [self renderAudioSampleBuffer:buffer];
+        return;
     });
 }
 

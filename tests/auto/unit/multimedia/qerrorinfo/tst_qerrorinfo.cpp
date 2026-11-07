@@ -3,11 +3,10 @@
 
 // TESTED_COMPONENT=src/multimedia
 
-#include <QtTest/QtTest>
+#include <QtTest/qtest.h>
 #include <QSignalSpy>
 #include <private/qerrorinfo_p.h>
 
-QT_USE_NAMESPACE
 
 enum class TestError { ErrorA, ErrorB, NoError };
 

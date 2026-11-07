@@ -14,7 +14,6 @@ QWasmAudioInput::QWasmAudioInput(QAudioInput *parent)
     : QObject(parent), QPlatformAudioInput(parent)
 {
     m_wasMuted = false;
-    setDeviceSourceStream("");
 }
 
 QWasmAudioInput::~QWasmAudioInput()
@@ -47,56 +46,16 @@ bool QWasmAudioInput::isMuted() const
 
 void QWasmAudioInput::setAudioDevice(const QAudioDevice &audioDevice)
 {
-    if (device == audioDevice)
-        return;
-
-    device = audioDevice;
-    setDeviceSourceStream(device.id().toStdString());
+    if (m_deviceId != audioDevice.id().toStdString()) {
+            m_deviceId = audioDevice.id().toStdString();
+            JsMediaInputStream::replaceAudioStreamDevice(m_deviceId);
+    }
 }
 
 void QWasmAudioInput::setVolume(float volume)
 {
     Q_UNUSED(volume)
   // TODO seems no easy way to set input volume
-}
-
-void QWasmAudioInput::setDeviceSourceStream(const std::string &id)
-{
-    qCDebug(qWasmAudioInput) << Q_FUNC_INFO << id;
-    emscripten::val navigator = emscripten::val::global("navigator");
-    emscripten::val mediaDevices = navigator["mediaDevices"];
-
-    if (mediaDevices.isNull() || mediaDevices.isUndefined()) {
-        qWarning() << "No media devices found";
-        return;
-    }
-
-    qstdweb::PromiseCallbacks getUserMediaCallback{
-        // default
-        .thenFunc =
-                [this](emscripten::val stream) {
-                    qCDebug(qWasmAudioInput) << "getUserMediaSuccess";
-                    m_mediaStream = stream;
-                },
-        .catchFunc =
-                [](emscripten::val error) {
-                    qCDebug(qWasmAudioInput)
-                            << "addCameraSourceElement getUserMedia  fail"
-                            << QString::fromStdString(error["name"].as<std::string>())
-                            << QString::fromStdString(error["message"].as<std::string>());
-                }
-    };
-
-    emscripten::val constraints = emscripten::val::object();
-    constraints.set("audio", true);
-    if (!id.empty()) {
-        emscripten::val exactDeviceId = emscripten::val::object();
-        exactDeviceId.set("exact", id);
-        constraints.set("deviceId", exactDeviceId);
-    }
-    // we do it this way as this prompts user for mic permissions
-    qstdweb::Promise::make(mediaDevices, QStringLiteral("getUserMedia"),
-                           std::move(getUserMediaCallback), constraints);
 }
 
 emscripten::val QWasmAudioInput::mediaStream()

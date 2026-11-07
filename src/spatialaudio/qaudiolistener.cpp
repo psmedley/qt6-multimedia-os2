@@ -1,16 +1,16 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-3.0-only
+
 #include "qaudiolistener.h"
-#include "qaudioengine_p.h"
-#include "resonance_audio.h"
-#include <qaudiosink.h>
-#include <qurl.h>
-#include <qdebug.h>
-#include <qaudiodecoder.h>
+
+#include <QtMultimedia/qaudiosink.h>
+#include <QtSpatialAudio/private/qaudioengine_p.h>
+#include <QtCore/private/qobject_p.h>
+
 
 QT_BEGIN_NAMESPACE
 
-class QAudioListenerPrivate
+class QAudioListenerPrivate : public QObjectPrivate
 {
 public:
     QAudioEngine *engine = nullptr;
@@ -33,11 +33,26 @@ public:
 
 /*!
     Creates a listener for the spatial audio engine for \a engine.
+
+    \note Must be called with a valid QAudioEngine
  */
-QAudioListener::QAudioListener(QAudioEngine *engine)
-    : d(new QAudioListenerPrivate)
+QAudioListener::QAudioListener(QAudioEngine *engine) : QObject(*new QAudioListenerPrivate)
 {
-    setEngine(engine);
+    Q_D(QAudioListener);
+    if (!engine) {
+        qWarning() << "Cannot create QAudioListener without a valid QAudioEngine";
+        return;
+    }
+
+    d->engine = engine;
+    auto *ed = QAudioEnginePrivate::get(d->engine);
+    bool hasListener = ed->listenerPosition().has_value();
+    if (hasListener) {
+        qWarning() << "Ignoring attempt to add a second listener to the spatial audio engine.";
+        d->engine = nullptr;
+    } else {
+        ed->setListenerPosition(d->pos);
+    }
 }
 
 /*!
@@ -45,9 +60,12 @@ QAudioListener::QAudioListener(QAudioEngine *engine)
  */
 QAudioListener::~QAudioListener()
 {
-    // Unregister this listener from the engine
-    setEngine(nullptr);
-    delete d;
+    Q_D(QAudioListener);
+    if (!d->engine)
+        return;
+
+    auto *ed = QAudioEnginePrivate::get(d->engine);
+    ed->setListenerPosition(std::nullopt);
 }
 
 /*!
@@ -58,18 +76,12 @@ QAudioListener::~QAudioListener()
  */
 void QAudioListener::setPosition(QVector3D pos)
 {
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (!ep)
-        return;
-    pos *= ep->distanceScale;
-    if (d->pos == pos)
-        return;
-
+    Q_D(QAudioListener);
     d->pos = pos;
-    if (ep && ep->resonanceAudio->api) {
-        ep->resonanceAudio->api->SetHeadPosition(pos.x(), pos.y(), pos.z());
-        ep->listenerPositionDirty = true;
-    }
+
+    auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (ep)
+        ep->setListenerPosition(pos);
 }
 
 /*!
@@ -77,10 +89,8 @@ void QAudioListener::setPosition(QVector3D pos)
  */
 QVector3D QAudioListener::position() const
 {
-    auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (!ep)
-        return QVector3D();
-    return d->pos/ep->distanceScale;
+    Q_D(const QAudioListener);
+    return d->pos;
 }
 
 /*!
@@ -88,10 +98,11 @@ QVector3D QAudioListener::position() const
  */
 void QAudioListener::setRotation(const QQuaternion &q)
 {
+    Q_D(QAudioListener);
     d->rotation = q;
     auto *ep = QAudioEnginePrivate::get(d->engine);
-    if (ep && ep->resonanceAudio->api)
-        ep->resonanceAudio->api->SetHeadRotation(d->rotation.x(), d->rotation.y(), d->rotation.z(), d->rotation.scalar());
+    if (ep)
+        ep->setListenerRotation(q);
 }
 
 /*!
@@ -99,28 +110,8 @@ void QAudioListener::setRotation(const QQuaternion &q)
  */
 QQuaternion QAudioListener::rotation() const
 {
+    Q_D(const QAudioListener);
     return d->rotation;
-}
-
-/*!
-    \internal
- */
-void QAudioListener::setEngine(QAudioEngine *engine)
-{
-    if (d->engine) {
-        auto *ed = QAudioEnginePrivate::get(d->engine);
-        ed->listener = nullptr;
-    }
-    d->engine = engine;
-    if (d->engine) {
-        auto *ed = QAudioEnginePrivate::get(d->engine);
-        if (ed->listener) {
-            qWarning() << "Ignoring attempt to add a second listener to the spatial audio engine.";
-            d->engine = nullptr;
-            return;
-        }
-        ed->listener = this;
-    }
 }
 
 /*!
@@ -128,6 +119,7 @@ void QAudioListener::setEngine(QAudioEngine *engine)
  */
 QAudioEngine *QAudioListener::engine() const
 {
+    Q_D(const QAudioListener);
     return d->engine;
 }
 

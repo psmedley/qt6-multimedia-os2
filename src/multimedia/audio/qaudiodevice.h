@@ -5,16 +5,14 @@
 #ifndef QAUDIODEVICEINFO_H
 #define QAUDIODEVICEINFO_H
 
-#include <QtCore/qobject.h>
+#include <QtMultimedia/qaudioformat.h>
+#include <QtMultimedia/qtaudio.h>
+#include <QtMultimedia/qtmultimediaglobal.h>
 #include <QtCore/qbytearray.h>
+#include <QtCore/qlist.h>
+#include <QtCore/qobject.h>
 #include <QtCore/qstring.h>
 #include <QtCore/qstringlist.h>
-#include <QtCore/qlist.h>
-
-#include <QtMultimedia/qtmultimediaglobal.h>
-
-#include <QtMultimedia/qtaudio.h>
-#include <QtMultimedia/qaudioformat.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -68,10 +66,13 @@ public:
     QList<QAudioFormat::SampleFormat> supportedSampleFormats() const;
     QAudioFormat::ChannelConfig channelConfiguration() const;
 
+#if QT_DEPRECATED_SINCE(6, 10)
+    QT_DEPRECATED_VERSION_X_6_10("The method is internal and deprecated")
     const QAudioDevicePrivate *handle() const { return d.get(); }
+#endif
 private:
     friend class QAudioDevicePrivate;
-    QAudioDevice(QAudioDevicePrivate *p);
+    explicit QAudioDevice(QAudioDevicePrivate *p);
     QExplicitlySharedDataPointer<QAudioDevicePrivate> d;
 };
 

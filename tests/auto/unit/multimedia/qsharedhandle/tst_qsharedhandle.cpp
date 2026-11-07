@@ -7,7 +7,6 @@
 
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
-QT_USE_NAMESPACE
 
 struct MockResource
 {
@@ -70,7 +69,7 @@ struct GlobalResource
         return 0;
     }
 
-    int openResourceCount() const { return m_openResourceRefCounts.size(); }
+    int openResourceCount() const { return int(m_openResourceRefCounts.size()); }
 
     std::map<int, int> m_openResourceRefCounts;
     int m_allocator = 0;
@@ -171,6 +170,7 @@ private slots:
 
         QT_WARNING_PUSH
         QT_WARNING_DISABLE_CLANG("-Wself-move")
+        QT_WARNING_DISABLE_GCC("-Wself-move")
         source = std::move(source); // NOLINT(clang-diagnostic-self-move)
         QT_WARNING_POP
 

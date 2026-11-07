@@ -10,9 +10,10 @@ This page discusses considerations for using Qt Multimedia on Linux.
 
 \section1 Audio backend requirements
 
-Qt Multimedia audio features on Linux requires PulseAudio. The experimental ALSA backend will be
-deprecated in future versions of Qt. Until then, community contributions are required to fix issues
-with this backend.
+Qt Multimedia audio features on Linux require PipeWire or PulseAudio. PipeWire is the recommended
+backend on all modern Linux distributions, but PulseAudio will be used if PipeWire is not available.
+The experimental ALSA backend will be deprecated in future versions of Qt. Until then, community
+contributions are required to fix issues with this backend.
 
 For applications that use the GStreamer backend on embedded Linux, see
 \l{Qt Multimedia GStreamer backend} for additional PulseAudio requirements.
@@ -29,5 +30,21 @@ The screen capture feature requires the installation of:
 Due to restrictions of the Wayland protocol, the current screen can only be selected through
 the wizard displayed by the operation system when \c QScreenCapture instance is activated.
 For additional details, refer to the \l QScreenCapture class documentation.
+
+\section1 Hardware encoding/decoding drivers
+
+Hardware-accelerated video encoding and decoding on Linux requires platform-specific drivers. While
+Qt Multimedia may fall back to software encoding/decoding if the necessary drivers are not available,
+installing hardware support drivers can significantly improve performance and reduce CPU usage.
+
+Install the appropriate driver package for your hardware:
+
+\list
+    \li \c intel-media-va-driver — Intel Gen 8+ (Broadwell 2014+), Arc A-series, and newer processors
+    \li \c intel-media-va-driver-non-free — Intel media driver with additional proprietary codecs
+    \li \c i965-va-driver — Older Intel hardware (Sandy Bridge, Ivy Bridge, Haswell)
+    \li \c mesa-va-drivers — VA-API support for AMD GPUs
+    \li \c nvidia-driver — NVIDIA proprietary graphics driver (e.g., \c nvidia-driver-525 or later)
+\endlist
 
 */

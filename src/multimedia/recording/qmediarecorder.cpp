@@ -38,7 +38,8 @@ QT_BEGIN_NAMESPACE
     \l QMediaCaptureSession. You can generate:
     \list
         \li Audio. Use \l QAudioInput or \l QAudioBufferInput.
-        \li Video. Use \l QCamera, \l QScreenCapture, \l QWindowCapture, or \l QVideoFrameInput.
+        \li Video. Use \l QCamera, \l QScreenCapture, \l QWindowCapture, \l QVideoFrameInput,
+            or \l QGStreamerVideoSource (on embedded Linux with the \c gstreamer media backend).
     \endlist
 
     To record media, connect a generator to a corresponding media capture session.
@@ -121,9 +122,11 @@ QT_BEGIN_NAMESPACE
 */
 QMediaRecorderPrivate::QMediaRecorderPrivate()
 {
+#if QT_CONFIG(mimetype)
     // Force an early initialization of the mime database
     // to avoid a delay when recording for the first time.
     encoderSettings.mimeType();
+#endif
 }
 
 QString QMediaRecorderPrivate::msgFailedStartRecording()
@@ -193,7 +196,7 @@ void QMediaRecorder::setCaptureSession(QMediaCaptureSession *session)
 
     Setting the location can fail, for example when the service supports only
     local file system locations but a network URL was passed. If the operation
-    fails an \l errorOccured() signal is emitted.
+    fails, the \l errorOccurred() signal is emitted.
 
     The output location can be empty, a directory, or a file. The path to a
     directory or file can be relative or absolute. The \l record() method
@@ -210,7 +213,7 @@ void QMediaRecorder::setCaptureSession(QMediaCaptureSession *session)
 
     Setting the location can fail, for example when the service supports only
     local file system locations but a network URL was passed. If the operation
-    fails, the \l errorOccured() signal is emitted.
+    fails, the \l errorOccurred() signal is emitted.
 
     The output location is ignored if a writable \l outputDevice
     has been assigned to the recorder.
@@ -412,13 +415,14 @@ qint64 QMediaRecorder::duration() const
 #if QT_DEPRECATED_SINCE(6, 9)
 /*!
     \fn void QMediaRecorder::encoderSettingsChanged()
+    \deprecated [6.9] Use specific signals instead.
 
     Signals when the encoder settings change.
 */
 #endif
 
 /*!
-    \qmlmethod QtMultimedia::MediaRecorder::record()
+    \qmlmethod void QtMultimedia::MediaRecorder::record()
     \brief Starts recording.
 
     While the recorder state is changed immediately to
@@ -497,7 +501,8 @@ QT_WARNING_POP
         if (settings.videoResolution() != d->encoderSettings.videoResolution())
             emit videoResolutionChanged();
 
-        if (!qFuzzyCompare(settings.videoFrameRate(), d->encoderSettings.videoFrameRate()))
+        if (!QtPrivate::fuzzyCompare(settings.videoFrameRate(),
+                                     d->encoderSettings.videoFrameRate()))
             emit videoFrameRateChanged();
 
         if (settings.videoBitRate() != d->encoderSettings.videoBitRate())
@@ -514,7 +519,7 @@ QT_WARNING_POP
     }
 }
 /*!
-    \qmlmethod QtMultimedia::MediaRecorder::pause()
+    \qmlmethod void QtMultimedia::MediaRecorder::pause()
     \brief Pauses recording.
 
     The recorder state is changed to QMediaRecorder.PausedState.
@@ -538,7 +543,7 @@ void QMediaRecorder::pause()
         d->control->pause();
 }
 /*!
-    \qmlmethod QtMultimedia::MediaRecorder::stop()
+    \qmlmethod void QtMultimedia::MediaRecorder::stop()
     \brief Stops the recording.
 
     The recorder will stop the recording. Processing pending video and audio data might
@@ -808,7 +813,7 @@ QMediaCaptureSession *QMediaRecorder::captureSession() const
 
 /*!
 
-    \qmlproperty MediaFormat QtMultimedia::MediaRecorder::mediaFormat
+    \qmlproperty mediaFormat QtMultimedia::MediaRecorder::mediaFormat
 
     \brief This property holds the current MediaFormat of the recorder.
 */
@@ -818,7 +823,7 @@ QMediaCaptureSession *QMediaRecorder::captureSession() const
     \brief This property holds the current \l QMediaFormat of the recorder.
 
     The value of this property may change when invoking \l record(). If this happens, the
-    \l mediaFormatChanged signal will be emitted. This will always happen if the
+    mediaFormatChanged() signal will be emitted. This will always happen if the
     \l QMediaFormat::audioCodec or \l QMediaFormat::fileFormat properties are set to unspecified.
     If a video source (\l QCamera, \l QScreenCapture, or \l QVideoFrameInput) is connected to the
     \l QMediaCaptureSession, \l QMediaFormat::videoCodec must also be specified.
@@ -827,36 +832,35 @@ QMediaCaptureSession *QMediaRecorder::captureSession() const
 
     The \l QMediaFormat::fileFormat property value may also change to an \c audio only format if a
     video format was requested, but \l QMediaCaptureSession does not have a video source connected.
-    For example, if \l QMediaFormat::fileFormat is set to \l QMediaFormat::FileFormat::MPEG4, it may
-    be changed to \l QMediaFormat::FileFormat::Mpeg4Audio.
+    For example, if \l QMediaFormat::fileFormat is set to \l QMediaFormat::MPEG4, it may
+    be changed to \l QMediaFormat::Mpeg4Audio.
 
-    Applications can determine if \l mediaFormat will change before recording starts by calling the
+    Applications can determine if \c mediaFormat will change before recording starts by calling the
     \l QMediaFormat::isSupported() function. When recording without any video inputs,
     \l record() will not be changed the \l QMediaFormat if the following is true:
     \list
         \li \l QMediaFormat::fileFormat is specified
         \li \l QMediaFormat::audioCodec is specified
         \li \l QMediaFormat::videoCodec is \b{unspecified}
-        \li \l QMediaFormat::isSupported returns \c true
+        \li \l QMediaFormat::isSupported() returns \c true
     \endlist
-    When recording with video input, \l mediaFormat will not be changed if the following is true:
+    When recording with video input, \c mediaFormat will not be changed if the following is true:
     \list
         \li \l QMediaFormat::fileFormat is specified
         \li \l QMediaFormat::audioCodec is specified
         \li \l QMediaFormat::videoCodec is specified
-        \li \l QMediaFormat::isSupported returns \c true
+        \li \l QMediaFormat::isSupported() returns \c true
     \endlist
 
     \note The \l QMediaRecorder does not take the file name extension from the \l outputLocation
     property into account when determining the \l QMediaFormat::fileFormat, and will not adjust the
     extension of the \l outputLocation \l QUrl to match the selected file format if an extension is
     specified. Applications should therefore make sure to set the
-    \l QMediaRecorder::mediaFormat::fileFormat to match the file extension, or not specify a file
-    extension. If no file extension is specified, the \l actualLocation file extension will be
-    updated to match the file format used for recording.
+    \l {QMediaFormat::fileFormat}{QMediaRecorder::mediaFormat::fileFormat} to match the file
+    extension, or not specify a file extension. If no file extension is specified, the
+    \l actualLocation file extension will be updated to match the file format used for recording.
 
-    \sa QMediaFormat::isSupported()
-    \sa QMediaRecorder::actualLocation
+    \sa QMediaFormat::isSupported(), actualLocation
 */
 QMediaFormat QMediaRecorder::mediaFormat() const
 {
@@ -879,6 +883,12 @@ void QMediaRecorder::setMediaFormat(const QMediaFormat &format)
     \since 6.6
     \brief This property holds the encoding mode.
     \sa QMediaRecorder::EncodingMode
+*/
+
+/*!
+    \property QMediaRecorder::encodingMode
+    \brief the encoding mode.
+    \sa EncodingMode
 */
 
 /*!
@@ -934,8 +944,13 @@ QMediaRecorder::Quality QMediaRecorder::quality() const
 void QMediaRecorder::setQuality(Quality quality)
 {
     Q_D(QMediaRecorder);
+
+    quality = std::clamp(quality, QMediaRecorder::Quality::VeryLowQuality,
+                         QMediaRecorder::Quality::VeryHighQuality);
+
     if (d->encoderSettings.quality() == quality)
         return;
+
     d->encoderSettings.setQuality(quality);
     emit qualityChanged();
 }
@@ -949,6 +964,14 @@ void QMediaRecorder::setQuality(Quality quality)
     on what is available from the video source and the limitations of the codec.
 */
 
+/*!
+    \property QMediaRecorder::videoResolution
+    \since 6.6
+    \brief the resolution of the encoded video.
+
+    An empty QSize indicates the recorder will choose an optimal resolution based
+    on what is available from the video source and the limitations of the codec.
+*/
 
 /*!
     Returns the resolution of the encoded video.
@@ -989,14 +1012,35 @@ void QMediaRecorder::setVideoResolution(const QSize &size)
 /*!
     \qmlproperty real QtMultimedia::MediaRecorder::videoFrameRate
     \since 6.6
-    \brief This property holds the video frame rate.
+    \brief This property holds the video frame rate used in encoding.
 
-    A value of 0 indicates the recorder should make an optimal choice based on what is available
-    from the video source and the limitations of the codec.
+    If this property is set to a positive frame rate, MediaRecorder attempts to
+    encode at that rate. If the video source's and recoder's frame rates are
+    different, frames from the source may be dropped or duplicated to
+    reach the target rate.
+
+    If left at the default value (-1) or set to another non-positive value,
+    MediaRecorder attempts to make the optimal choice based on the video source
+    and codec limitations.
 */
 
 /*!
-    Returns the video frame rate.
+    \property QMediaRecorder::videoFrameRate
+    \since 6.6
+    \brief the video frame rate used in encoding.
+
+    If this property is set to a positive frame rate, QMediaRecorder attempts to
+    encode at that rate. If the video source's and recoder's frame rates are
+    different, frames from the source may be dropped or duplicated to
+    reach the target rate.
+
+    If left at the default value (-1) or set to another non-positive value,
+    QMediaRecorder attempts to make the optimal choice based on the video source
+    and codec limitations.
+*/
+
+/*!
+    Returns the video encoding frame rate.
 */
 qreal QMediaRecorder::videoFrameRate() const
 {
@@ -1007,13 +1051,10 @@ qreal QMediaRecorder::videoFrameRate() const
 /*!
     \fn void QMediaRecorder::videoFrameRateChanged()
 
-    Signals when the recording video frame rate changes.
+    Signals when the video encoding frame rate changes.
 */
 /*!
-    Sets the video \a frameRate.
-
-    A value of 0 indicates the recorder should make an optimal choice based on what is available
-    from the video source and the limitations of the codec.
+    Sets the video encoding \a frameRate.
 */
 void QMediaRecorder::setVideoFrameRate(qreal frameRate)
 {
@@ -1028,6 +1069,12 @@ void QMediaRecorder::setVideoFrameRate(qreal frameRate)
     \qmlproperty int QtMultimedia::MediaRecorder::videoBitRate
     \since 6.6
     \brief This property holds the bit rate of the compressed video stream in bits per second.
+*/
+
+/*!
+    \property QMediaRecorder::videoBitRate
+    \since 6.6
+    \brief the bit rate of the compressed video stream in bits per second.
 */
 
 /*!
@@ -1063,6 +1110,10 @@ void QMediaRecorder::setVideoBitRate(int bitRate)
 */
 
 /*!
+    \property QMediaRecorder::audioBitRate
+    \brief the bit rate of the compressed audio stream in bits per second.
+*/
+/*!
     Returns the bit rate of the compressed audio stream in bits per second.
 */
 int QMediaRecorder::audioBitRate() const
@@ -1092,6 +1143,11 @@ void QMediaRecorder::setAudioBitRate(int bitRate)
     \qmlproperty int QtMultimedia::MediaRecorder::audioChannelCount
     \since 6.6
     \brief This property holds the number of audio channels.
+*/
+
+/*!
+    \property QMediaRecorder::audioChannelCount
+    \brief the number of audio channels.
 */
 
 /*!
@@ -1127,6 +1183,11 @@ void QMediaRecorder::setAudioChannelCount(int channels)
     \qmlproperty int QtMultimedia::MediaRecorder::audioSampleRate
     \since 6.6
     \brief This property holds the audio sample rate in Hz.
+*/
+
+/*!
+    \property QMediaRecorder::audioSampleRate
+    \brief the audio sample rate in Hz.
 */
 
 /*!

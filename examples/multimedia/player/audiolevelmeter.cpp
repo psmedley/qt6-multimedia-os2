@@ -9,12 +9,18 @@
 #include <QToolButton>
 #include <QBoxLayout>
 
+using namespace Qt::StringLiterals;
+
 // Converts a float sample value to dB and clamps it between DB_MIN and DB_MAX
-static float floatToDb(float f) {
+static float amplitudeToDb(float f)
+{
     if (f <= 0)
         return DB_MIN;
-    else
-        return std::clamp(float(20.0) * std::log10(f), DB_MIN, DB_MAX);
+    return std::clamp(float(20.0) * std::log10(f), DB_MIN, DB_MAX);
+}
+
+static bool isSilent(float db) {
+    return db < DB_SILENCE;
 }
 
 AudioLevelMeter::AudioLevelMeter(QWidget *parent) : QWidget(parent)
@@ -42,7 +48,7 @@ AudioLevelMeter::AudioLevelMeter(QWidget *parent) : QWidget(parent)
     mainLayout->addLayout(meterChannelLayout);
 
     // Peak label
-    m_peakLabel = new QLabel("-", this);
+    m_peakLabel = new QLabel(u"-"_s, this);
     m_peakLabel->setAlignment(Qt::AlignCenter);
     QFont font = QApplication::font();
     font.setPointSize(10);
@@ -54,7 +60,7 @@ AudioLevelMeter::AudioLevelMeter(QWidget *parent) : QWidget(parent)
     m_onOffButton = new QToolButton(this);
     mainLayout->addWidget(m_onOffButton);
     m_onOffButton->setMaximumWidth(WIDGET_WIDTH);
-    m_onOffButton->setText("On");
+    m_onOffButton->setText(u"On"_s);
     m_onOffButton->setCheckable(true);
     m_onOffButton->setChecked(true);
     connect(m_onOffButton, &QToolButton::clicked, this, &AudioLevelMeter::toggleOnOff);
@@ -71,6 +77,7 @@ AudioLevelMeter::AudioLevelMeter(QWidget *parent) : QWidget(parent)
     m_peakLabelHoldTimer.setSingleShot(true);
 
     // Buffer analyzer and worker thread that analyzes incoming buffers
+    m_analyzerThread.setObjectName("AnalyzerThread");
     m_bufferAnalyzer = new BufferAnalyzer;
     m_bufferAnalyzer->moveToThread(&m_analyzerThread);
     connect(&m_analyzerThread, &QThread::finished, m_bufferAnalyzer, &QObject::deleteLater);
@@ -163,12 +170,8 @@ void AudioLevelMeter::updatePeakLabel(float peak)
         return;
 
     m_peakLabelHoldTimer.start(PEAK_LABEL_HOLD_TIME);
-
-    if (qFuzzyCompare(peak, m_highestPeak))
-        return;
-
     m_highestPeak = peak;
-    float dB = floatToDb(m_highestPeak);
+    float dB = amplitudeToDb(m_highestPeak);
     m_peakLabel->setText(QString::number(dB, 'f', 1));
 }
 
@@ -177,7 +180,7 @@ void AudioLevelMeter::resetPeakLabel()
 {
     if (!m_isOn) {
         m_highestPeak = 0.0f;
-        m_peakLabel->setText("");
+        m_peakLabel->setText({});
         return;
     }
 
@@ -188,7 +191,8 @@ void AudioLevelMeter::resetPeakLabel()
 // Clears internal data used to calculate RMS values
 void AudioLevelMeter::clearAllRmsData()
 {
-    for (MeterChannel *channel : m_channels)
+    const QList<MeterChannel *> meterChannels = m_channels;
+    for (MeterChannel *channel : std::as_const(meterChannels))
         channel->clearRmsData();
 }
 
@@ -229,7 +233,7 @@ void AudioLevelMeter::toggleOnOff()
         deactivate();
     else
         activate();
-    m_onOffButton->setText(m_isOn ? "On" : "Off");
+    m_onOffButton->setText(m_isOn ? u"On"_s : u"Off"_s);
 }
 
 // Updates the number of visible MeterChannel widgets
@@ -268,7 +272,7 @@ void MeterChannel::clearRmsData()
 void MeterChannel::decayPeak()
 {
     float peak = m_peak;
-    if (qFuzzyCompare(peak, DB_MIN))
+    if (isSilent(peak))
         return;
 
     float cubicEaseInFactor = m_peakDecayRate * m_peakDecayRate * m_peakDecayRate;
@@ -286,7 +290,7 @@ void MeterChannel::decayPeak()
 void MeterChannel::decayRms()
 {
     float rms = m_rms;
-    if (qFuzzyCompare(rms, DB_MIN))
+    if (isSilent(rms))
         return;
 
     float cubicEaseInFactor = m_rmsDecayRate * m_rmsDecayRate * m_rmsDecayRate;
@@ -303,7 +307,7 @@ void MeterChannel::decayRms()
 // Updates m_peak and resets m_peakDecayRate if sampleValue > m_peak
 void MeterChannel::updatePeak(float sampleValue)
 {
-    float dB = floatToDb(sampleValue);
+    float dB = amplitudeToDb(sampleValue);
     if (dB > m_peak) {
         m_peakDecayRate = 0;
         m_peak = dB;
@@ -318,7 +322,7 @@ void MeterChannel::updateRms(float sumOfSquaresForOneBuffer, milliseconds durati
     m_sumOfSquares += sumOfSquaresForOneBuffer;
 
     // Remove the oldest sumOfSquares to stay within the RMS window
-    if (m_sumOfSquaresQueue.size() * duration.count() > RMS_WINDOW.count()) {
+    if (int64_t(m_sumOfSquaresQueue.size() * duration.count()) > int64_t(RMS_WINDOW.count())) {
         m_sumOfSquares -= m_sumOfSquaresQueue.front();
         m_sumOfSquaresQueue.pop();
     }
@@ -330,7 +334,7 @@ void MeterChannel::updateRms(float sumOfSquaresForOneBuffer, milliseconds durati
     // Calculate the new RMS value
     if (m_sumOfSquares > 0 && m_sumOfSquaresQueue.size() > 0) {
         float newRms = std::sqrt(m_sumOfSquares / (frameCount * m_sumOfSquaresQueue.size()));
-        float dB = floatToDb(newRms);
+        float dB = amplitudeToDb(newRms);
         if (dB > m_rms) {
             m_rmsDecayRate = 0;
             m_rms = dB;
@@ -342,7 +346,7 @@ void MeterChannel::updateRms(float sumOfSquaresForOneBuffer, milliseconds durati
 void MeterChannel::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
-    if (qFuzzyCompare(m_peak, DB_MIN) && qFuzzyCompare(m_rms, DB_MIN))
+    if (isSilent(m_peak) && isSilent(m_rms))
         return; // Nothing to paint
 
     float peakLevel = normalize(m_peak);

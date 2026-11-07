@@ -6,9 +6,11 @@
 \ingroup cmake-commands-qtmultimedia
 
 \title qt_add_ios_ffmpeg_libraries
-\keyword qt6_add_ios_ffmpeg_libraries
+\keyword qt_add_ios_ffmpeg_libraries()
 
 \summary {Auxiliary function which embeds FFmpeg binaries in iOS app bundle.}
+
+\include cmake-find-package-multimedia.qdocinc {find-package-only}
 
 \cmakecommandsince 6.8
 \preliminarycmakecommand
@@ -23,9 +25,15 @@ qt_add_ios_ffmpeg_libraries(target)
 
 \section1 Description
 
- FFmpeg binaries from the online installer must be embedded into the application's
- bundle. To embed FFmpeg binaries, you can add the \c qt_add_ios_ffmpeg_libraries command
- to the app's CMakeLists.txt file.
+ FFmpeg binaries from the online installer must be embedded into the
+ application's bundle. To embed FFmpeg binaries, you can add the
+ \c qt_add_ios_ffmpeg_libraries command to an executable target within the
+ project's CMakeLists.txt file.
+
+ The function must be called on an executable target. It cannot be used on
+ library targets or interface targets. If your project is a library that
+ links to Qt Multimedia, the executable that it is linked into must
+ call this function.
 
  This command will set several properties for the application target:
 
@@ -44,5 +52,10 @@ qt_add_ios_ffmpeg_libraries(target)
  \badcode
  set(QT_NO_FFMPEG_XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY ON)
  \endcode
+
+ \note \c qt_add_ios_ffmpeg_libraries requires CMake 3.28 or later.
+
+ \note This command does nothing if the FFmpeg backend was not built for this Qt for iOS
+ package.
 */
 

@@ -3,40 +3,48 @@
 
 #include "qandroidaudiodevice_p.h"
 
-#include "qopenslesengine_p.h"
+#include <private/qaudioformat_p.h>
+#include <private/qaudiodevice_p.h>
+
+#include <QtCore/qjniobject.h>
 
 QT_BEGIN_NAMESPACE
 
-QOpenSLESDeviceInfo::QOpenSLESDeviceInfo(QByteArray device,
-                                         QString desc,
-                                         QAudioDevice::Mode mode,
-                                         bool isDefaultDevice)
-    : QAudioDevicePrivate(std::move(device), mode, std::move(desc))
-    , m_engine(QOpenSLESEngine::instance())
+namespace {
+
+QAudioDevicePrivate::AudioDeviceFormat
+createAndroidAudioDeviceFormatFromPreferred(const QAudioFormat &preferredFormat)
 {
-    isDefault = isDefaultDevice;
+    QAudioDevicePrivate::AudioDeviceFormat format;
 
-    auto channels = m_engine->supportedChannelCounts(mode);
-    if (channels.size()) {
-        minimumChannelCount = channels.first();
-        maximumChannelCount = channels.last();
-    }
+    format.preferredFormat = preferredFormat;
 
-    auto sampleRates = m_engine->supportedSampleRates(mode);
-    if (sampleRates.size()) {
-        minimumSampleRate = sampleRates.first();
-        maximumSampleRate = sampleRates.last();
-    }
-    if (mode == QAudioDevice::Input)
-        supportedSampleFormats.append(QAudioFormat::UInt8);
-    supportedSampleFormats.append(QAudioFormat::Int16);
+    // Report support for everything that Qt supports, as Android should be able to resample and
+    // up/downmix if needed
+    format.minimumChannelCount = 1;
+    format.maximumChannelCount = 32;
+    format.minimumSampleRate = QtMultimediaPrivate::allSupportedSampleRates.front();
+    format.maximumSampleRate = QtMultimediaPrivate::allSupportedSampleRates.back();
+    format.supportedSampleFormats = qAllSupportedSampleFormats();
+    format.channelConfiguration = preferredFormat.channelConfig();
 
-    preferredFormat.setChannelCount(2);
-    preferredFormat.setSampleRate(48000);
-    QAudioFormat::SampleFormat f = QAudioFormat::Int16;
-    if (!supportedSampleFormats.contains(f))
-        f = supportedSampleFormats.value(0, QAudioFormat::Unknown);
-    preferredFormat.setSampleFormat(f);
+    return format;
+}
+
+} // namespace
+
+QAndroidAudioDevice::QAndroidAudioDevice(QByteArray device, QString desc, QAudioDevice::Mode mode,
+                                         QAudioFormat format, bool isBluetoothDevice,
+                                         bool isDefaultDevice)
+    : QAudioDevicePrivate{ std::move(device), mode, std::move(desc), isDefaultDevice,
+                           createAndroidAudioDeviceFormatFromPreferred(format) },
+      m_isBluetoothDevice(isBluetoothDevice)
+{
+}
+
+bool QAndroidAudioDevice::isBluetoothDevice() const
+{
+    return m_isBluetoothDevice;
 }
 
 QT_END_NAMESPACE

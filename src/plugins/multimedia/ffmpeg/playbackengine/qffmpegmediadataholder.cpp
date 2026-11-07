@@ -6,20 +6,19 @@
 #include "qffmpegmediametadata_p.h"
 #include "qffmpegmediaformatinfo_p.h"
 #include "qffmpegioutils_p.h"
-#include "qiodevice.h"
-#include "qdatetime.h"
-#include "qloggingcategory.h"
 
-#include <math.h>
+#include <QtMultimedia/qplaybackoptions.h>
+#include <QtMultimedia/private/qmediametadata_p.h>
+#include <QtCore/qiodevice.h>
+#include <QtCore/qdatetime.h>
+#include <QtCore/qloggingcategory.h>
+#include <QtCore/private/qminimalflatset_p.h>
+
 #include <optional>
-
-extern "C" {
-#include "libavutil/display.h"
-}
 
 QT_BEGIN_NAMESPACE
 
-static Q_LOGGING_CATEGORY(qLcMediaDataHolder, "qt.multimedia.ffmpeg.mediadataholder")
+Q_STATIC_LOGGING_CATEGORY(qLcMediaDataHolder, "qt.multimedia.ffmpeg.mediadataholder")
 
 namespace QFFmpeg {
 
@@ -42,6 +41,15 @@ static std::optional<TrackDuration> streamDuration(const AVStream &stream)
     }
 
     return {};
+}
+
+static std::optional<TrackPosition> streamStart(const AVStream &stream,
+                                                const AVDemuxerContextUPtr &context)
+{
+    if (stream.start_time != AV_NOPTS_VALUE)
+        return toTrackPosition(AVStreamPosition(stream.start_time), &stream, context.get());
+    else
+        return {};
 }
 
 static QTransform displayMatrixToTransform(const int32_t *displayMatrix)
@@ -181,18 +189,26 @@ QPlatformMediaPlayer::TrackType MediaDataHolder::trackTypeFromMediaType(int medi
 }
 
 namespace {
-QMaybe<AVFormatContextUPtr, MediaDataHolder::ContextError>
-loadMedia(const QUrl &mediaUrl, QIODevice *stream, const std::shared_ptr<ICancelToken> &cancelToken)
+q23::expected<AVDemuxerContextUPtr, MediaDataHolder::ContextError>
+loadMedia(const QUrl &mediaUrl, QIODevice *stream, const QPlaybackOptions &playbackOptions,
+          const std::shared_ptr<ICancelToken> &cancelToken)
 {
+    using std::chrono::duration_cast;
+    using std::chrono::microseconds;
+    using std::chrono::milliseconds;
+
     const QByteArray url = mediaUrl.toString(QUrl::PreferLocalFile).toUtf8();
 
-    AVFormatContextUPtr context{ avformat_alloc_context() };
+    AVDemuxerContextUPtr context{ avformat_alloc_context() };
 
     if (stream) {
         if (!stream->isOpen()) {
             if (!stream->open(QIODevice::ReadOnly))
-                return MediaDataHolder::ContextError{
-                    QMediaPlayer::ResourceError, QLatin1String("Could not open source device.")
+                return q23::unexpected{
+                    MediaDataHolder::ContextError{
+                            QMediaPlayer::ResourceError,
+                            QLatin1String("Could not open source device."),
+                    },
                 };
         }
 
@@ -212,12 +228,65 @@ loadMedia(const QUrl &mediaUrl, QIODevice *stream, const std::shared_ptr<ICancel
     }
 
     AVDictionaryHolder dict;
-    constexpr auto NetworkTimeoutUs = "5000000";
-    av_dict_set(dict, "timeout", NetworkTimeoutUs, 0);
+    using RtmpProtocols =
+            QMinimalVarLengthFlatSet<std::basic_string_view<char16_t>, 6, std::less<>>;
+
+    static const RtmpProtocols rtmpProtocols{
+        u"rtmp", u"rtmpe", u"rtmps", u"rtmpt", u"rtmpse", u"rtmpte",
+    };
+
+    // for rtmp streams, the `timout` parameter implies acting as a server:
+    // https://ffmpeg.org/ffmpeg-protocols.html#rtmp
+    // This is not the semantics of QPlaybackOptions::networkTimeout, and will cause failures when
+    // opening streams
+    const bool setNetworkTimeout = !rtmpProtocols.contains(mediaUrl.scheme());
+
+    if (setNetworkTimeout) {
+        const milliseconds timeout = playbackOptions.networkTimeout();
+        av_dict_set_int(dict, "timeout", duration_cast<microseconds>(timeout).count(), 0);
+        qCDebug(qLcMediaDataHolder) << "Using custom network timeout:" << timeout;
+    }
+
+    {
+        const int probeSize = playbackOptions.probeSize();
+        if (probeSize != -1) {
+            constexpr int minProbeSizeFFmpeg = 32;
+            if (probeSize >= minProbeSizeFFmpeg) {
+                av_dict_set_int(dict, "probesize", probeSize, 0);
+                qCDebug(qLcMediaDataHolder) << "Using custom probesize" << probeSize;
+            } else
+                qCWarning(qLcMediaDataHolder) << "Invalid probe size, using default";
+        }
+    }
 
     const QByteArray protocolWhitelist = qgetenv("QT_FFMPEG_PROTOCOL_WHITELIST");
     if (!protocolWhitelist.isNull())
         av_dict_set(dict, "protocol_whitelist", protocolWhitelist.data(), 0);
+
+    if (mediaUrl.scheme().compare(u"rtsp") == 0) {
+        const QByteArray rtspTransport = qgetenv("QT_FFMPEG_RTSP_TRANSPORT").trimmed();
+        if (!rtspTransport.isEmpty()) {
+            av_dict_set(dict, "rtsp_transport", rtspTransport.constData(), 0);
+            qCDebug(qLcMediaDataHolder) << "Using custom RTSP transport:" << rtspTransport;
+        }
+    }
+
+    if (playbackOptions.playbackIntent() == QPlaybackOptions::PlaybackIntent::LowLatencyStreaming) {
+        av_dict_set(dict, "fflags", "nobuffer", 0);
+        av_dict_set_int(dict, "flush_packets", 1, 0);
+        qCDebug(qLcMediaDataHolder) << "Enabled low latency streaming";
+    }
+
+    // QTBUG-145590: for hls streams, we want to disable http persistent connections to allow FFmpeg
+    // (before FFmpeg 8?) to mix raw and encrypted streams
+    // compare  https://trac.ffmpeg.org/ticket/10599
+    if (avformat_version() < AV_VERSION_INT(62, 12, 100))
+        av_dict_set_int(dict, "http_persistent", 0, 0);
+
+    // QTBUG-150720: FFmpeg >= 9.0 defaults its tls protocol to peer certificate verification,
+    // but we do not yet supply a CA bundle on Android, so every https:// source fails to open.
+    // Disable verification as a temporary stopgap until a proper CA bundle is wired up.
+    av_dict_set_int(dict, "tls_verify", 0, 0);
 
     context->interrupt_callback.opaque = cancelToken.get();
     context->interrupt_callback.callback = [](void *opaque) {
@@ -242,16 +311,19 @@ loadMedia(const QUrl &mediaUrl, QIODevice *stream, const std::shared_ptr<ICancel
             code = QMediaPlayer::FormatError;
 
         qCWarning(qLcMediaDataHolder)
-                << "Could not open media. FFmpeg error description:" << err2str(ret);
+                << "Could not open media. FFmpeg error description:" << AVError(ret);
 
-        return MediaDataHolder::ContextError{ code, QMediaPlayer::tr("Could not open file") };
+        return q23::unexpected{
+            MediaDataHolder::ContextError{ code, QMediaPlayer::tr("Could not open file") },
+        };
     }
 
     ret = avformat_find_stream_info(context.get(), nullptr);
     if (ret < 0) {
-        return MediaDataHolder::ContextError{
-            QMediaPlayer::FormatError,
-            QMediaPlayer::tr("Could not find stream information for media file")
+        return q23::unexpected{
+            MediaDataHolder::ContextError{
+                    QMediaPlayer::FormatError,
+                    QMediaPlayer::tr("Could not find stream information for media file") },
         };
     }
 
@@ -265,17 +337,19 @@ loadMedia(const QUrl &mediaUrl, QIODevice *stream, const std::shared_ptr<ICancel
 } // namespace
 
 MediaDataHolder::Maybe MediaDataHolder::create(const QUrl &url, QIODevice *stream,
+                                               const QPlaybackOptions &options,
                                                const std::shared_ptr<ICancelToken> &cancelToken)
 {
-    QMaybe context = loadMedia(url, stream, cancelToken);
+    q23::expected context = loadMedia(url, stream, options, cancelToken);
     if (context) {
         // MediaDataHolder is wrapped in a shared pointer to interop with signal/slot mechanism
-        return QSharedPointer<MediaDataHolder>{ new MediaDataHolder{ std::move(context.value()), cancelToken } };
+        return std::make_shared<MediaDataHolder>(
+                MediaDataHolder{ std::move(context.value()), cancelToken });
     }
-    return context.error();
+    return q23::unexpected{ context.error() };
 }
 
-MediaDataHolder::MediaDataHolder(AVFormatContextUPtr context,
+MediaDataHolder::MediaDataHolder(AVDemuxerContextUPtr context,
                                  const std::shared_ptr<ICancelToken> &cancelToken)
     : m_cancelToken{ cancelToken }
 {
@@ -283,6 +357,8 @@ MediaDataHolder::MediaDataHolder(AVFormatContextUPtr context,
 
     m_context = std::move(context);
     m_isSeekable = !(m_context->ctx_flags & AVFMTCTX_UNSEEKABLE);
+
+    std::optional<TrackDuration> mediaDuration;
 
     for (unsigned int i = 0; i < m_context->nb_streams; ++i) {
 
@@ -312,19 +388,54 @@ MediaDataHolder::MediaDataHolder(AVFormatContextUPtr context,
                 m_requestedStreams[trackType] = m_streamMap[trackType].size();
         }
 
-        if (auto duration = streamDuration(*stream)) {
-            m_duration = qMax(m_duration, *duration);
+        if (auto duration = streamDuration(*stream))
             metaData.insert(QMediaMetaData::Duration, toUserDuration(*duration).get());
-        }
 
         m_streamMap[trackType].append({ (int)i, isDefault, metaData });
     }
 
     // With some media files, streams may be lacking duration info. Let's
     // get it from ffmpeg's duration estimation instead.
-    if (m_duration == TrackDuration(0) && m_context->duration > 0ll) {
-        m_duration = toTrackDuration(AVContextDuration(m_context->duration));
+    if (m_context->duration > 0ll)
+        mediaDuration = toTrackDuration(AVContextDuration(m_context->duration));
+
+    if (!mediaDuration) {
+        std::optional<AVContextDuration> contextStart = contextStartOffset(m_context.get());
+
+        std::optional<TrackPosition> startPosition = [&]() -> std::optional<TrackPosition> {
+            if (contextStart)
+                return toTrackDuration(*contextStart).asTimePoint();
+            return std::nullopt;
+        }();
+
+        std::optional<TrackPosition> endPosition;
+
+        QSpan streams{ m_context->streams, qsizetype(m_context->nb_streams) };
+        for (const AVStream *stream : streams) {
+            std::optional<TrackPosition> currentStreamStartPosition =
+                    streamStart(*stream, m_context);
+            std::optional<TrackDuration> currentStreamDuration = streamDuration(*stream);
+            std::optional<TrackPosition> currentStreamEndPosition =
+                    [&]() -> std::optional<TrackPosition> {
+                if (currentStreamStartPosition && currentStreamDuration)
+                    return *currentStreamStartPosition + *currentStreamDuration;
+                return std::nullopt;
+            }();
+
+            if (startPosition)
+                startPosition = std::min(*startPosition,
+                                         currentStreamStartPosition.value_or(*startPosition));
+            else
+                startPosition = currentStreamStartPosition;
+
+            endPosition = std::max(endPosition, currentStreamEndPosition);
+        }
+
+        if (endPosition && startPosition)
+            mediaDuration = *endPosition - *startPosition;
     }
+
+    m_duration = mediaDuration.value_or(TrackDuration::zero());
 
     for (auto trackType :
          { QPlatformMediaPlayer::VideoStream, QPlatformMediaPlayer::AudioStream }) {
@@ -392,8 +503,7 @@ void MediaDataHolder::updateMetaData()
     if (!m_cachedThumbnail.has_value())
         m_cachedThumbnail = getAttachedPicture(m_context.get());
 
-    if (!m_cachedThumbnail->isNull())
-        m_metaData.insert(QMediaMetaData::ThumbnailImage, m_cachedThumbnail.value());
+    QtMultimediaPrivate::setCoverArtImage(m_metaData, *m_cachedThumbnail);
 
     for (auto trackType :
          { QPlatformMediaPlayer::AudioStream, QPlatformMediaPlayer::VideoStream }) {

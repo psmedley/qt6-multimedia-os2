@@ -15,15 +15,19 @@
 // We mean it.
 //
 
-#include <qmediametadata.h>
-#include "mfidl.h"
+#include <QtMultimedia/qmediametadata.h>
 
-QT_USE_NAMESPACE
+#include <mfidl.h>
+
+
+struct IMFMetadata;
 
 class MFMetaData
 {
 public:
     static QMediaMetaData fromNative(IMFMediaSource* mediaSource);
+    static QMediaMetaData fromNative(IPropertyStore *content);
+    static QMediaMetaData fromNative(IMFMetadata *metadata);
     static void toNative(const QMediaMetaData &metaData, IPropertyStore *content);
 };
 

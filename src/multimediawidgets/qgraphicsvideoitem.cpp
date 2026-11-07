@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qgraphicsvideoitem.h"
-#include "qvideosink.h"
 
-#include <qobject.h>
-#include <qvideoframe.h>
-#include <qvideoframeformat.h>
+#include <QtMultimedia/qvideosink.h>
+#include <QtMultimedia/qvideoframe.h>
+#include <QtMultimedia/qvideoframeformat.h>
 
+#include <QtCore/qobject.h>
 #include <QtCore/qcoreevent.h>
-#include <QtCore/qpointer.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -99,7 +98,8 @@ QGraphicsVideoItem::QGraphicsVideoItem(QGraphicsItem *parent)
     d_ptr->q_ptr = this;
     d_ptr->sink = new QVideoSink(this);
 
-    connect(d_ptr->sink, SIGNAL(videoFrameChanged(const QVideoFrame &)), this, SLOT(_q_present(const QVideoFrame &)));
+    connect(d_ptr->sink, SIGNAL(videoFrameChanged(QVideoFrame)),
+            this, SLOT(_q_present(QVideoFrame)));
 }
 
 /*!
@@ -256,5 +256,3 @@ void QGraphicsVideoItem::timerEvent(QTimerEvent *event)
 QT_END_NAMESPACE
 
 #include "moc_qgraphicsvideoitem.cpp"
-
-

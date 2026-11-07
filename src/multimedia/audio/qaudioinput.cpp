@@ -1,11 +1,12 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include <qaudioinput.h>
-#include <qaudiodevice.h>
-#include <qmediadevices.h>
-#include <private/qplatformaudioinput_p.h>
-#include <private/qplatformmediaintegration_p.h>
+#include "qaudioinput.h"
+
+#include <QtMultimedia/private/qplatformaudioinput_p.h>
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+#include <QtMultimedia/qaudiodevice.h>
+#include <QtMultimedia/qmediadevices.h>
 
 #include <utility>
 
@@ -34,7 +35,7 @@
     \endqml
 
     You can use AudioInput together with a QtMultiMedia::CaptureSession to capture audio from an
-   audio input device.
+    audio input device.
 
     \sa Camera, AudioOutput
 */
@@ -49,6 +50,12 @@
     This class represents an input channel that can be used together with
     QMediaCaptureSession. It enables the selection of the physical input device
     to be used, muting the channel, and changing the channel's volume.
+
+    \note On WebAssembly platform, due to its asynchronous nature,
+    QMediaDevices::audioInputsChanged() signal is emitted when the list of
+    audio inputs is ready. User permissions are required. Works only on secure https contexts.
+
+    \sa QAudioOutput
 */
 
 QAudioInput::QAudioInput(QObject *parent) : QAudioInput(QMediaDevices::defaultAudioInput(), parent)
@@ -100,7 +107,7 @@ float QAudioInput::volume() const
 
 void QAudioInput::setVolume(float volume)
 {
-    volume = qBound(0., volume, 1.);
+    volume = qBound(0.f, volume, 1.f);
     if (d->volume == volume)
         return;
     d->volume = volume;

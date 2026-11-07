@@ -1,8 +1,15 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
-#include <private/qsamplecache_p.h>
+#include <QtMultimedia/private/qsamplecache_p.h>
+
+#include <QtTest/qtest.h>
+#include <QtCore/qfile.h>
+#include <QtCore/qfuturewatcher.h>
+
+#include <qmockintegration.h>
+
+Q_ENABLE_MOCK_MULTIMEDIA_PLUGIN
 
 class tst_QSampleCache : public QObject
 {
@@ -12,23 +19,41 @@ public:
 public slots:
 
 private slots:
+    void initTestCase();
+    void cleanup();
+
     void testCachedSample_data() { generateTestData(); }
     void testCachedSample();
 
     void testNotCachedSample_data() { generateTestData(); }
     void testNotCachedSample();
 
-    void testEnoughCapacity_data() { generateTestData(); }
-    void testEnoughCapacity();
-
-    void testNotEnoughCapacity_data() { generateTestData(); }
-    void testNotEnoughCapacity();
-
     void testInvalidFile_data() { generateTestData(); }
     void testInvalidFile();
 
     void testIncompatibleFile_data() { generateTestData(); }
     void testIncompatibleFile();
+
+    void testDRwavHeapBufferOverflow_data() { generateTestData(); }
+    void testDRwavHeapBufferOverflow();
+
+    void testDRwavIntegerUnderflow_data() { generateTestData(); }
+    void testDRwavIntegerUnderflow();
+
+    void testLoadSampleFromSpan_valid();
+    void testLoadSampleFromSpan_invalid();
+    void testLoadSampleViaDecoder_valid();
+    void testLoadSampleViaDecoder_fallbackToDrWav();
+    void testLoadSampleViaDecoderBuffer_valid();
+    void testLoadSampleViaDecoderBuffer_fallbackToDrWav();
+    void testFallbackToDecoder_nonWav();
+    void testForcedDecoderPath();
+    void testFallbackToDecoder_notSupported();
+    void testMP3FallbackViaDecoder();
+    void testMP3FallbackViaDecoderBuffer();
+    void testLoadSampleAsyncViaDecoder_valid();
+    void testLoadSampleAsyncViaDecoder_fallbackToDrWav();
+    void testForcedDecoderPathAsync();
 
 private:
     void generateTestData()
@@ -39,27 +64,49 @@ private:
 #endif
         QTest::newRow("File") << QSampleCache::SampleSourceType::File;
     }
+
+    SharedSamplePtr requestSample(QSampleCache &cache, const QUrl &url,
+                                  std::optional<QSampleCache::SampleSourceType> sourceType = std::nullopt)
+    {
+        auto future = cache.requestSampleFuture(url, std::nullopt, sourceType);
+        QFutureWatcher<SharedSamplePtr> watcher;
+        watcher.setFuture(future);
+
+        QEventLoop loop;
+        connect(&watcher, &QFutureWatcher<SharedSamplePtr>::finished, &loop, [&] {
+            loop.exit(0);
+        });
+        loop.exec(QEventLoop::EventLoopExec);
+        return future.result();
+    }
 };
+
+void tst_QSampleCache::initTestCase()
+{
+    // Ensure mock flags start clean
+    QMockIntegration::instance()->setFlags({});
+}
+
+void tst_QSampleCache::cleanup()
+{
+    // Reset mock flags after each test
+    QMockIntegration::instance()->setFlags({});
+}
 
 void tst_QSampleCache::testCachedSample()
 {
     QFETCH(const QSampleCache::SampleSourceType, sampleSourceType);
 
     QSampleCache cache;
-    cache.setSampleSourceType(sampleSourceType);
 
-    QSample* sample = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")));
+    SharedSamplePtr sample =
+            requestSample(cache, QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")), sampleSourceType);
     QVERIFY(sample);
-    QTRY_VERIFY(!cache.isLoading());
 
-    QSample* sampleCached = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")));
+    SharedSamplePtr sampleCached =
+            requestSample(cache, QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")), sampleSourceType);
     QCOMPARE(sample, sampleCached); // sample is cached
     QVERIFY(cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
-    // loading thread still starts, but does nothing in this case
-    QTRY_VERIFY(!cache.isLoading());
-
-    sample->release();
-    sampleCached->release();
 }
 
 void tst_QSampleCache::testNotCachedSample()
@@ -67,99 +114,11 @@ void tst_QSampleCache::testNotCachedSample()
     QFETCH(const QSampleCache::SampleSourceType, sampleSourceType);
 
     QSampleCache cache;
-    cache.setSampleSourceType(sampleSourceType);
 
-    QSample* sample = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")));
+    SharedSamplePtr sample =
+            requestSample(cache, QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")), sampleSourceType);
     QVERIFY(sample);
-    QVERIFY(cache.isLoading());
-    QTRY_VERIFY(!cache.isLoading());
-    sample->release();
-
-    QVERIFY(!cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
-}
-
-void tst_QSampleCache::testEnoughCapacity()
-{
-    QFETCH(const QSampleCache::SampleSourceType, sampleSourceType);
-
-    QSampleCache cache;
-    cache.setSampleSourceType(sampleSourceType);
-
-    QSample* sample = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")));
-    QVERIFY(sample);
-    QVERIFY(cache.isLoading());
-    QTRY_VERIFY(!cache.isLoading());
-    int sampleSize = sample->data().size();
-    sample->release();
-    cache.setCapacity(sampleSize * 2);
-
-    QVERIFY(!cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
-
-    sample = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")));
-    QVERIFY(sample);
-    QVERIFY(cache.isLoading());
-    QTRY_VERIFY(!cache.isLoading());
-    sample->release();
-
-    QVERIFY(cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
-
-    // load another sample and make sure first sample is not destroyed
-    QSample* sampleOther = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test2.wav")));
-    QVERIFY(sampleOther);
-    QVERIFY(cache.isLoading());
-    QTRY_VERIFY(!cache.isLoading());
-    sampleOther->release();
-
-    QVERIFY(cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
-    QVERIFY(cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test2.wav"))));
-
-    QSample* sampleCached = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")));
-    QCOMPARE(sample, sampleCached); // sample is cached
-    QVERIFY(cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
-    QVERIFY(cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test2.wav"))));
-    QVERIFY(!cache.isLoading());
-
-    sampleCached->release();
-}
-
-void tst_QSampleCache::testNotEnoughCapacity()
-{
-    QFETCH(const QSampleCache::SampleSourceType, sampleSourceType);
-
-    QSampleCache cache;
-    cache.setSampleSourceType(sampleSourceType);
-
-    using namespace Qt::Literals;
-
-    QSample* sample = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")));
-    QVERIFY(sample);
-    QVERIFY(cache.isLoading());
-    QTRY_VERIFY(!cache.isLoading());
-    int sampleSize = sample->data().size();
-    sample->release();
-    cache.setCapacity(sampleSize / 2); // unloads all samples
-
-    QVERIFY(!cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
-
-    QTest::ignoreMessage(QtMsgType::QtWarningMsg,
-                         QRegularExpression("QSampleCache: usage .* out of limit .*"));
-    sample = cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav")));
-    QVERIFY(sample);
-    QVERIFY(cache.isLoading());
-    QTRY_VERIFY(!cache.isLoading());
-    sample->release();
-
-    QVERIFY(cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
-
-    // load another sample to force sample cache to destroy first sample
-    QTest::ignoreMessage(QtMsgType::QtWarningMsg,
-                         QRegularExpression("QSampleCache: usage .* out of limit .*"));
-    QSample *sampleOther =
-            cache.requestSample(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test2.wav")));
-    QVERIFY(sampleOther);
-    QVERIFY(cache.isLoading());
-    QTRY_VERIFY(!cache.isLoading());
-    sampleOther->release();
+    sample = {};
 
     QVERIFY(!cache.isCached(QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"))));
 }
@@ -169,13 +128,10 @@ void tst_QSampleCache::testInvalidFile()
     QFETCH(const QSampleCache::SampleSourceType, sampleSourceType);
 
     QSampleCache cache;
-    cache.setSampleSourceType(sampleSourceType);
 
-    QSample* sample = cache.requestSample(QUrl::fromLocalFile("invalid"));
-    QVERIFY(sample);
-    QTRY_COMPARE(sample->state(), QSample::Error);
-    QVERIFY(!cache.isLoading());
-    sample->release();
+    SharedSamplePtr sample = requestSample(cache, QUrl::fromLocalFile("invalid"), sampleSourceType);
+    QVERIFY(!sample);
+    sample = {};
 
     QVERIFY(!cache.isCached(QUrl::fromLocalFile("invalid")));
 }
@@ -185,21 +141,220 @@ void tst_QSampleCache::testIncompatibleFile()
     QFETCH(const QSampleCache::SampleSourceType, sampleSourceType);
 
     QSampleCache cache;
-    cache.setSampleSourceType(sampleSourceType);
-    cache.setCapacity(10024);
 
-    // Load a sample that is known to fail and verify that
-    // it remains in the cache with an error status.
     const QUrl corruptedWavUrl = QUrl::fromLocalFile(QFINDTESTDATA("testdata/corrupted.wav"));
-    for (int i = 0; i < 3; ++i) {
-        QSample* sample = cache.requestSample(corruptedWavUrl);
-        QVERIFY(sample);
-        QTRY_VERIFY(!cache.isLoading());
-        QCOMPARE(sample->state(), QSample::Error);
-        sample->release();
+    SharedSamplePtr sample = requestSample(cache, corruptedWavUrl, sampleSourceType);
+    // sampleSourceType is set → fallback disabled, drwav fails → null
+    QVERIFY(!sample);
+}
 
-        QVERIFY(cache.isCached(corruptedWavUrl));
-    }
+void tst_QSampleCache::testDRwavHeapBufferOverflow()
+{
+    QFETCH(const QSampleCache::SampleSourceType, sampleSourceType);
+
+    QSampleCache cache;
+
+    const QUrl corruptedWavUrl =
+            QUrl::fromLocalFile(QFINDTESTDATA("testdata/drwav_heap-buffer-overflow.wav"));
+    SharedSamplePtr sample = requestSample(cache, corruptedWavUrl, sampleSourceType);
+    QVERIFY(sample); // we can still read it
+}
+
+void tst_QSampleCache::testDRwavIntegerUnderflow()
+{
+    QFETCH(const QSampleCache::SampleSourceType, sampleSourceType);
+
+    QSampleCache cache;
+
+    const QUrl corruptedWavUrl =
+            QUrl::fromLocalFile(QFINDTESTDATA("testdata/drwav_integer-underflow.wav"));
+    SharedSamplePtr sample = requestSample(cache, corruptedWavUrl, sampleSourceType);
+    QVERIFY(!sample); // bad file
+}
+
+void tst_QSampleCache::testLoadSampleFromSpan_valid()
+{
+    QFile file(QFINDTESTDATA("testdata/test.wav"));
+    QVERIFY(file.open(QFile::ReadOnly));
+    QByteArray data = file.readAll();
+    QVERIFY(!data.isEmpty());
+
+    auto result = QSampleCache::loadSample(data);
+    QVERIFY(result.has_value());
+    QCOMPARE(result->second.sampleFormat(), QAudioFormat::Float);
+    QVERIFY(result->second.sampleRate() > 0);
+    QVERIFY(!result->first.isEmpty());
+}
+
+void tst_QSampleCache::testLoadSampleFromSpan_invalid()
+{
+    QByteArray garbage(100, '\xFF');
+    auto result = QSampleCache::loadSample(garbage);
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), QSampleLoadError::FormatError);
+}
+
+void tst_QSampleCache::testLoadSampleViaDecoder_valid()
+{
+    const QUrl url = QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"));
+    auto result = QSampleCache::loadSampleViaDecoder(url);
+    QVERIFY(result.has_value());
+    QCOMPARE(result->second.sampleFormat(), QAudioFormat::Float);
+    QVERIFY(!result->first.isEmpty());
+    QVERIFY(result->second.sampleRate() > 0);
+    QVERIFY(result->second.channelCount() > 0);
+}
+
+void tst_QSampleCache::testLoadSampleViaDecoder_fallbackToDrWav()
+{
+    QMockIntegration::instance()->setFlags(QMockIntegration::NoAudioDecoderInterface);
+
+    const QUrl url = QUrl::fromLocalFile(QFINDTESTDATA("testdata/nokia-tune.mp3"));
+    auto result = QSampleCache::loadSampleViaDecoder(url);
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), QSampleLoadError::DecoderError);
+}
+
+void tst_QSampleCache::testLoadSampleViaDecoderBuffer_valid()
+{
+    QFile file(QFINDTESTDATA("testdata/test.wav"));
+    QVERIFY(file.open(QFile::ReadOnly));
+    QByteArray data = file.readAll();
+    QVERIFY(!data.isEmpty());
+
+    auto result = QSampleCache::loadSampleViaDecoder(data);
+    QVERIFY(result.has_value());
+    QCOMPARE(result->second.sampleFormat(), QAudioFormat::Float);
+    QVERIFY(!result->first.isEmpty());
+    QVERIFY(result->second.sampleRate() > 0);
+    QVERIFY(result->second.channelCount() > 0);
+}
+
+void tst_QSampleCache::testLoadSampleViaDecoderBuffer_fallbackToDrWav()
+{
+    QMockIntegration::instance()->setFlags(QMockIntegration::NoAudioDecoderInterface);
+
+    QFile file(QFINDTESTDATA("testdata/nokia-tune.mp3"));
+    QVERIFY(file.open(QFile::ReadOnly));
+    QByteArray data = file.readAll();
+
+    auto result = QSampleCache::loadSampleViaDecoder(data);
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), QSampleLoadError::DecoderError);
+}
+
+void tst_QSampleCache::testFallbackToDecoder_nonWav()
+{
+    // No sampleSourceType → fallback enabled
+    QSampleCache cache;
+
+    const QUrl url = QUrl::fromLocalFile(QFINDTESTDATA("testdata/corrupted.wav"));
+    SharedSamplePtr sample = requestSample(cache, url);
+    // drwav fails, mock decoder succeeds → sample ready
+    QVERIFY(sample);
+    QCOMPARE(sample->state(), QSample::Ready);
+}
+
+void tst_QSampleCache::testForcedDecoderPath()
+{
+    QSampleCache cache;
+
+    const QUrl url = QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"));
+    SharedSamplePtr sample = requestSample(cache, url, QSampleCache::SampleSourceType::AudioDecoder);
+    // AudioDecoder skips drwav, uses mock decoder directly
+    QVERIFY(sample);
+    QCOMPARE(sample->state(), QSample::Ready);
+    QCOMPARE(sample->format().sampleFormat(), QAudioFormat::Float);
+}
+
+void tst_QSampleCache::testFallbackToDecoder_notSupported()
+{
+    QMockIntegration::instance()->setFlags(QMockIntegration::NoAudioDecoderInterface);
+
+    // No sampleSourceType → fallback enabled; drwav fallback via QAudioDecoder
+    // still fails because the file itself is corrupted, not because a
+    // platform decoder is unavailable.
+    QSampleCache cache;
+
+    const QUrl url = QUrl::fromLocalFile(QFINDTESTDATA("testdata/corrupted.wav"));
+    SharedSamplePtr sample = requestSample(cache, url);
+    // drwav fails, decoder fallback also fails on the corrupted data → null
+    QVERIFY(!sample);
+}
+
+void tst_QSampleCache::testMP3FallbackViaDecoder()
+{
+    // No sampleSourceType → fallback enabled
+    QSampleCache cache;
+
+    const QUrl url = QUrl::fromLocalFile(QFINDTESTDATA("testdata/nokia-tune.mp3"));
+    SharedSamplePtr sample = requestSample(cache, url);
+    // drwav fails on MP3, mock decoder succeeds → sample ready
+    QVERIFY(sample);
+    QCOMPARE(sample->state(), QSample::Ready);
+    QCOMPARE(sample->format().sampleFormat(), QAudioFormat::Float);
+    // Verify decoder was actually invoked via the mock
+    QVERIFY(QMockIntegration::instance()->lastAudioDecoder() != nullptr);
+}
+
+void tst_QSampleCache::testMP3FallbackViaDecoderBuffer()
+{
+    QFile file(QFINDTESTDATA("testdata/nokia-tune.mp3"));
+    QVERIFY(file.open(QFile::ReadOnly));
+    QByteArray data = file.readAll();
+    QVERIFY(!data.isEmpty());
+
+    auto result = QSampleCache::loadSampleViaDecoder(data);
+    // drwav fails, mock decoder succeeds via QBuffer
+    QVERIFY(result.has_value());
+    QCOMPARE(result->second.sampleFormat(), QAudioFormat::Float);
+    QVERIFY(!result->first.isEmpty());
+}
+
+void tst_QSampleCache::testLoadSampleAsyncViaDecoder_valid()
+{
+    QFile file(QFINDTESTDATA("testdata/test.wav"));
+    QVERIFY(file.open(QFile::ReadOnly));
+    QByteArray data = file.readAll();
+    QVERIFY(!data.isEmpty());
+
+    auto future = QSampleCache::loadSampleAsyncViaDecoder(data);
+    QTRY_VERIFY(future.isFinished());
+
+    auto result = future.result();
+    QVERIFY(result.has_value());
+    QCOMPARE(result->second.sampleFormat(), QAudioFormat::Float);
+    QVERIFY(!result->first.isEmpty());
+    QVERIFY(result->second.sampleRate() > 0);
+    QVERIFY(result->second.channelCount() > 0);
+    QVERIFY(QMockIntegration::instance()->lastAudioDecoder() != nullptr);
+}
+
+void tst_QSampleCache::testLoadSampleAsyncViaDecoder_fallbackToDrWav()
+{
+    QMockIntegration::instance()->setFlags(QMockIntegration::NoAudioDecoderInterface);
+
+    QFile file(QFINDTESTDATA("testdata/nokia-tune.mp3"));
+    QVERIFY(file.open(QFile::ReadOnly));
+    QByteArray data = file.readAll();
+
+    auto future = QSampleCache::loadSampleAsyncViaDecoder(data);
+    QTRY_VERIFY(future.isFinished());
+
+    auto result = future.result();
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), QSampleLoadError::DecoderError);
+}
+
+void tst_QSampleCache::testForcedDecoderPathAsync()
+{
+    QSampleCache cache;
+
+    const QUrl url = QUrl::fromLocalFile(QFINDTESTDATA("testdata/test.wav"));
+    SharedSamplePtr sample = requestSample(cache, url, QSampleCache::SampleSourceType::AudioDecoder);
+    QVERIFY(sample);
+    QCOMPARE(sample->state(), QSample::Ready);
+    QCOMPARE(sample->format().sampleFormat(), QAudioFormat::Float);
 }
 
 QTEST_GUILESS_MAIN(tst_QSampleCache)

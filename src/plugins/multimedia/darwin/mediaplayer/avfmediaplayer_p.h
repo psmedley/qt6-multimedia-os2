@@ -15,21 +15,19 @@
 // We mean it.
 //
 
-#include <QtCore/QObject>
-#include <QtCore/QByteArray>
-#include <QtCore/QSet>
-#include <QtCore/QResource>
-#include <QtCore/QUrl>
-#include <QtCore/QTimer>
+#include <QtMultimedia/qmediaplayer.h>
+#include <QtMultimedia/qvideoframe.h>
+#include <QtMultimedia/private/qplatformmediaplayer_p.h>
+#include <QtCore/qbytearray.h>
+#include <QtCore/qobject.h>
+#include <QtCore/qresource.h>
+#include <QtCore/qset.h>
+#include <QtCore/qtimer.h>
+#include <QtCore/qurl.h>
 
-#include <private/qplatformmediaplayer_p.h>
-#include <QtMultimedia/QMediaPlayer>
-#include <QtMultimedia/QVideoFrame>
+#import <AVFoundation/AVFoundation.h>
 
-Q_FORWARD_DECLARE_OBJC_CLASS(AVAsset);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVPlayerItemTrack);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVFMediaPlayerObserver);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVAssetTrack);
+@class AVFMediaPlayerObserver;
 
 QT_BEGIN_NAMESPACE
 
@@ -42,14 +40,11 @@ class AVFMediaPlayer : public QObject, public QPlatformMediaPlayer
     Q_OBJECT
 public:
     AVFMediaPlayer(QMediaPlayer *parent);
-    virtual ~AVFMediaPlayer();
+    ~AVFMediaPlayer() override;
 
     void setVideoSink(QVideoSink *sink) override;
     void setVideoOutput(AVFVideoRendererControl *output);
     AVAsset *currentAssetHandle();
-
-    QMediaPlayer::PlaybackState state() const override;
-    QMediaPlayer::MediaStatus mediaStatus() const override;
 
     QUrl media() const override;
     QIODevice *mediaStream() const override;
@@ -60,10 +55,6 @@ public:
 
     float bufferProgress() const override;
 
-    bool isAudioAvailable() const override;
-    bool isVideoAvailable() const override;
-
-    bool isSeekable() const override;
     QMediaTimeRange availablePlaybackRanges() const override;
 
     qreal playbackRate() const override;
@@ -76,6 +67,10 @@ public:
     static void videoOrientationForAssetTrack(AVAssetTrack *track,
                                        QtVideo::Rotation &angle,
                                        bool &mirrored);
+
+    PitchCompensationAvailability pitchCompensationAvailability() const override;
+    void setPitchCompensation(bool enabled) override;
+    bool pitchCompensation() const override;
 
 public Q_SLOTS:
     void setPlaybackRate(qreal rate) override;
@@ -94,7 +89,9 @@ public Q_SLOTS:
     void processEOS();
     void processLoadStateChange(QMediaPlayer::PlaybackState newState);
     void processPositionChange();
-    void processMediaLoadError();
+    void processMediaLoadError(QMediaPlayer::Error errorCode);
+
+    void seekCompleted();
 
     void processLoadStateChange();
     void processLoadStateFailure();
@@ -105,6 +102,7 @@ public Q_SLOTS:
 
     void streamReady();
     void streamDestroyed();
+    void loadMediaStream();
     void updateTracks();
     void setActiveTrack(QPlatformMediaPlayer::TrackType type, int index) override;
     int activeTrack(QPlatformMediaPlayer::TrackType type) override;
@@ -116,18 +114,15 @@ public:
     QList<AVPlayerItemTrack *> nativeTracks[QPlatformMediaPlayer::NTrackTypes];
 
 private:
-    void setAudioAvailable(bool available);
-    void setVideoAvailable(bool available);
-    void setSeekable(bool seekable);
     void resetStream(QIODevice *stream = nullptr);
+    void applyPitchCompensation(bool enabled);
+    void resetBufferProgress();
 
     void orientationChanged(QtVideo::Rotation rotation, bool mirrored);
 
     AVFVideoRendererControl *m_videoOutput = nullptr;
     AVFVideoSink *m_videoSink = nullptr;
 
-    QMediaPlayer::PlaybackState m_state;
-    QMediaPlayer::MediaStatus m_mediaStatus;
     QIODevice *m_mediaStream;
     QUrl m_resources;
     QMediaMetaData m_metaData;
@@ -137,9 +132,7 @@ private:
 
     qint64 m_duration;
     int m_bufferProgress;
-    bool m_videoAvailable;
-    bool m_audioAvailable;
-    bool m_seekable;
+    bool m_pitchCompensationEnabled{ false };
 
     AVFMediaPlayerObserver *m_observer;
 

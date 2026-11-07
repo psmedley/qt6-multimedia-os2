@@ -1,12 +1,11 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
+#include <QtTest/qtest.h>
 #include <QDebug>
 #include <QtCore/qsysinfo.h>
 #include <private/qplatformmediaintegration_p.h>
 
-QT_USE_NAMESPACE
 
 class tst_backends : public QObject
 {
@@ -38,6 +37,8 @@ private slots:
         backends << "wasm";
 #elif defined(Q_OS_QNX)
         backends << "qnx";
+#elif defined(Q_OS_HARMONY)
+        backends << "harmonyos";
 #else
         backends << "ffmpeg";
         if constexpr (QT_CONFIG(gstreamer))

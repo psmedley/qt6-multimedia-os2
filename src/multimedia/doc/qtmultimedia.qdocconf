@@ -10,6 +10,9 @@ includepaths           += .
 
 examplesinstallpath     = multimedia
 
+# Path to the root of qtmultimedia (for automatic linking to source code)
+url.sources.rootdir     = ../../..
+
 # The following parameters are for creating a qhp file, the qhelpgenerator
 # program can convert the qhp file into a qch file which can be opened in
 # Qt Assistant and/or Qt Creator.
@@ -23,8 +26,7 @@ qhp.QtMultimedia.namespace = org.qt-project.qtmultimedia.$QT_VERSION_TAG
 qhp.QtMultimedia.indexTitle = Qt Multimedia
 qhp.QtMultimedia.virtualFolder  = qtmultimedia
 
-# For listing child nodes in Qt Creator or Assistant.
-qhp.QtMultimedia.subprojects = classes widgetclasses qmltypes examples
+qhp.QtMultimedia.subprojects = manual examples classes widgetclasses qmltypes
 
 qhp.QtMultimedia.subprojects.classes.title = Qt Multimedia Classes and Namespaces
 qhp.QtMultimedia.subprojects.classes.indexTitle = Qt Multimedia C++ Classes
@@ -43,13 +45,18 @@ qhp.QtMultimedia.subprojects.qmltypes.sortPages = true
 
 qhp.QtMultimedia.subprojects.examples.title = Examples
 qhp.QtMultimedia.subprojects.examples.indexTitle = Qt Multimedia Examples
-qhp.QtMultimedia.subprojects.examples.selectors = doc:example
+qhp.QtMultimedia.subprojects.examples.selectors = example
 qhp.QtMultimedia.subprojects.examples.sortPages = true
+
+qhp.QtMultimedia.subprojects.manual.title = Qt Multimedia
+qhp.QtMultimedia.subprojects.manual.indexTitle = Qt Multimedia module topics
+qhp.QtMultimedia.subprojects.manual.type = manual
+
+tagfile = qtmultimedia.tags
 
 exampledirs += ../../../examples/multimedia \
                ../../../examples/multimediawidgets \
-               snippets \
-               ../../multimediawidgets/doc/snippets
+               snippets
 
 headerdirs += .. \
               ../../multimediawidgets \
@@ -61,7 +68,7 @@ sourcedirs += .. \
               ../../multimediawidgets \
               ../../multimediaquick
 
-depends                 += qtcore qtdoc qtgui qtquick qtqml qtwidgets qtnetwork qmake qtcmake qtquickcontrols qtspatialaudio
+depends                 += qtcore qtdoc qtgui qtquick qtqml qtwidgets qtnetwork qmake qtcmake qtquickcontrols qtspatialaudio qtqmlcore
 
 # Ignore \since commands for versions earlier than 6.3
 ignoresince = 6.3
@@ -69,6 +76,9 @@ ignoresince = 6.3
 navigation.landingpage = "Qt Multimedia"
 navigation.cppclassespage = "Qt Multimedia C++ Classes"
 navigation.qmltypespage = "Qt Multimedia QML Types"
+# Autogenerate navigation linking based on "Qt Multimedia module topics":
+navigation.toctitles = "Qt Multimedia module topics"
+navigation.toctitles.inclusive = false
 
 # Highlighted examples in Graphics & Multimedia category
 manifestmeta.highlighted.names = \
@@ -80,3 +90,18 @@ manifestmeta.highlighted.names += "QtMultimedia/QML Camera Application"
 
 # Fail the documentation build if there are more warnings than the limit
 warninglimit = 0
+
+macro.ffmpegversion = "9.0.1"
+macro.ffmpegreponame = "ffmpeg"
+macro.androidndkversion = "26.1.10909125"
+
+macro.qtmmaudiocallbacksupportednote = "\\note This API is only available on platforms that support\
+    the callback API: Apple's CoreAudio (macOS, iOS, etc), Windows, Linux (using the PulseAudio or \
+    PipeWire backend) and Android."
+
+macro.qtmmaudiocallbacknote = "\\note The callback will be called on a soft-realtime audio thread. \
+    It is important to ensure that the callback does not block, as this can cause audio glitches or\
+    dropouts. This includes performing blocking IO, locking mutexes, allocating memories or any \
+    other operations that may block. For best practices consult Ross Bencina's article\
+    \\l{Real-time audio programming 101: time waits for nothing}. Also consider using clang's\
+    \\l{Realtime sanitizer} to validate the audio callback."

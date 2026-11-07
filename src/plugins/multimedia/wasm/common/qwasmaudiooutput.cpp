@@ -15,7 +15,9 @@
 
 QT_BEGIN_NAMESPACE
 
-static Q_LOGGING_CATEGORY(qWasmMediaAudioOutput, "qt.multimedia.wasm.audiooutput")
+using namespace Qt::Literals;
+
+Q_STATIC_LOGGING_CATEGORY(qWasmMediaAudioOutput, "qt.multimedia.wasm.audiooutput");
 
 QWasmAudioOutput::QWasmAudioOutput(QAudioOutput *parent)
     : QPlatformAudioOutput(parent)
@@ -107,6 +109,16 @@ void QWasmAudioOutput::setSource(const QUrl &url)
         m_source = url.toLocalFile();
 
         QFile mediaFile(m_source);
+        if (!mediaFile.exists()) {
+            qCDebug(qWasmMediaAudioOutput) << "Error"
+                                           << "Media file does not exist";
+            QMetaObject::invokeMethod(this, &QWasmAudioOutput::errorOccured, Qt::QueuedConnection,
+                QMediaPlayer::ResourceError,
+                QStringLiteral("Media file does not exist"));
+
+            return;
+        }
+
         if (!mediaFile.open(QIODevice::ReadOnly)) {
             qCDebug(qWasmMediaAudioOutput) << "Error"
                                            << "Media file could not be opened";
@@ -203,6 +215,17 @@ void QWasmAudioOutput::createAudioElement(const std::string &id)
     emscripten::val document = emscripten::val::global("document");
     m_audio = document.call<emscripten::val>("createElement", std::string("audio"));
 
+    if (id == "System output") { // defaul output, no perms needed
+        emscripten::val audioContext = emscripten::val::global("window")["AudioContext"].new_();
+        emscripten::val sourceNode = audioContext.call<emscripten::val>("createMediaElementSource", m_audio);
+
+       sourceNode.call<void>("connect", audioContext["destination"]);
+// or control volume // is this needed?
+        // emscripten::val volumeNode = audioContext.call<emscripten::val>("createGain");
+        // sourceNode.call<void>("connect", volumeNode);
+        // volumeNode.call<void>("connect", audioContext["destination"]);
+    }
+
     // only works in chrome and firefox.
     // Firefox this feature is behind media.setsinkid.enabled preferences
     // allows user to choose audio output device
@@ -212,7 +235,7 @@ void QWasmAudioOutput::createAudioElement(const std::string &id)
     }
 
     std::string usableId = id;
-    if (usableId.empty())
+    if (usableId.empty() || usableId == "System output")
         usableId = QMediaDevices::defaultAudioOutput().id();
 
     qstdweb::PromiseCallbacks sinkIdCallbacks{
@@ -220,9 +243,10 @@ void QWasmAudioOutput::createAudioElement(const std::string &id)
         .catchFunc =
                 [](emscripten::val) {
                     qCWarning(qWasmMediaAudioOutput) << "Error while trying to setSinkId";
-                }
+                },
+        .finallyFunc = nullptr
     };
-    qstdweb::Promise::make(m_audio, "setSinkId", std::move(sinkIdCallbacks), std::move(usableId));
+    qstdweb::Promise::make(m_audio, u"setSinkId"_s, std::move(sinkIdCallbacks), std::move(usableId));
 
     m_audio.set("id", usableId.c_str());
 }

@@ -1,15 +1,15 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:execute-external-code
 
 #include "qsymbolsresolveutils_p.h"
 
 #include <qdebug.h>
-#include <algorithm>
 #include <qloggingcategory.h>
 
 QT_BEGIN_NAMESPACE
 
-static Q_LOGGING_CATEGORY(qLcSymbolsResolver, "qt.multimedia.symbolsresolver");
+Q_STATIC_LOGGING_CATEGORY(qLcSymbolsResolver, "qt.multimedia.symbolsresolver");
 
 bool SymbolsResolver::isLazyLoadEnabled()
 {

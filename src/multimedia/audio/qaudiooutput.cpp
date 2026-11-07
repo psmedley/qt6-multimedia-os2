@@ -1,11 +1,12 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include <qaudiooutput.h>
-#include <qaudiodevice.h>
-#include <qmediadevices.h>
-#include <private/qplatformaudiooutput_p.h>
-#include <private/qplatformmediaintegration_p.h>
+#include "qaudiooutput.h"
+
+#include <QtMultimedia/private/qplatformaudiooutput_p.h>
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+#include <QtMultimedia/qaudiodevice.h>
+#include <QtMultimedia/qmediadevices.h>
 
 /*!
     \qmltype AudioOutput
@@ -31,9 +32,10 @@
     }
     \endqml
 
-    You can use AudioOutput together with a QtMultiMedia::MediaPlayer to play audio content, or you
-   can use it in conjunction with a MultiMedia::CaptureSession to monitor the audio processed by the
-   capture session.
+    You can use AudioOutput together with a \l{QtMultimedia::MediaPlayer}{MediaPlayer} to play audio
+    content, or you can use it in conjunction with a
+    \l{QtMultimedia::CaptureSession}{CaptureSession} to monitor the audio processed by the capture
+    session.
 
     \sa VideoOutput, AudioInput
 */
@@ -50,6 +52,12 @@
     QMediaPlayer or QMediaCaptureSession. It enables the selection of the
     physical output device to be used, muting the channel, and changing the
     channel's volume.
+
+    \note On WebAssembly platform, due to its asynchronous nature,
+    QMediaDevices::audioOutputsChanged() signal is emitted when the list of
+    audio outputs is ready. User permissions are required. Works only on secure https contexts.
+
+    \sa QAudioInput
 */
 QAudioOutput::QAudioOutput(QObject *parent)
     : QAudioOutput(QMediaDevices::defaultAudioOutput(), parent)
@@ -75,6 +83,12 @@ QAudioOutput::~QAudioOutput()
     setDisconnectFunction({});
     delete d;
 }
+
+/*!
+    \qmlsignal void QtMultimedia::AudioOutput::volumeChanged()
+
+    This signal is emitted when the \l{volume} property is changed.
+*/
 
 /*!
     \qmlproperty real QtMultimedia::AudioOutput::volume
@@ -118,13 +132,19 @@ float QAudioOutput::volume() const
 
 void QAudioOutput::setVolume(float volume)
 {
-    volume = qBound(0., volume, 1.);
+    volume = qBound(0.f, volume, 1.f);
     if (d->volume == volume)
         return;
     d->volume = volume;
     d->setVolume(volume);
     emit volumeChanged(volume);
 }
+
+/*!
+    \qmlsignal void QtMultimedia::AudioOutput::mutedChanged()
+
+    This signal is emitted when the \l{muted} property is changed.
+*/
 
 /*!
     \qmlproperty bool QtMultimedia::AudioOutput::muted
@@ -155,13 +175,19 @@ void QAudioOutput::setMuted(bool muted)
 }
 
 /*!
-    \qmlproperty AudioDevice QtMultimedia::AudioOutput::device
+    \qmlsignal void QtMultimedia::AudioOutput::deviceChanged()
+
+    This signal is emitted when the \l{device} property is changed.
+*/
+
+/*!
+    \qmlproperty audioDevice QtMultimedia::AudioOutput::device
 
     This property describes the audio device connected to this output.
 
     The device property represents the audio device this output is connected to.
     This property can be used to select an output device from the
-    QtMultimedia::MediaDevices::audioOutputs() list.
+    \l{QtMultimedia::MediaDevices::audioOutputs}{MediaDevices.audioOutputs} list.
 */
 
 /*!
@@ -170,7 +196,7 @@ void QAudioOutput::setMuted(bool muted)
 
     The device property represents the audio device this output is connected to.
     This property can be used to select an output device from the
-    QMediaDevices::audioOutputs() list.
+    \l{QMediaDevices::audioOutputs} list.
     You can select the system default audio output by setting this property to
     a default constructed QAudioDevice object.
 */

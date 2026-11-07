@@ -6,6 +6,7 @@ qt_internal_add_plugin(QWindowsMediaPlugin
     PLUGIN_TYPE multimedia
     SOURCES
         common/mfmetadata.cpp common/mfmetadata_p.h
+        common/qwindowsasfpicture.cpp common/qwindowsasfpicture_p.h
         decoder/mfaudiodecodercontrol.cpp decoder/mfaudiodecodercontrol_p.h
         decoder/mfdecodersourcereader.cpp decoder/mfdecodersourcereader_p.h
         decoder/mfdecodersourcereadercallback.cpp decoder/mfdecodersourcereadercallback_p.h
@@ -33,7 +34,6 @@ qt_internal_add_plugin(QWindowsMediaPlugin
         mediacapture/qwindowsmediaencoder_p.h
         qwindowsformatinfo.cpp qwindowsformatinfo_p.h
         qwindowsintegration.cpp qwindowsintegration_p.h
-        qwindowsvideodevices.cpp qwindowsvideodevices_p.h
         sourceresolver.cpp sourceresolver_p.h
     INCLUDE_DIRECTORIES
         audio
@@ -42,11 +42,14 @@ qt_internal_add_plugin(QWindowsMediaPlugin
         evr
         player
         mediacapture
+    DEFINES
+        QT_NO_CAST_FROM_ASCII
+        QT_NO_CAST_TO_ASCII
     LIBRARIES
         Qt::MultimediaPrivate
         Qt::CorePrivate
+        Qt::Concurrent
         uuid
-        WMF::WMF
         d3d9
         dxva2
         evr

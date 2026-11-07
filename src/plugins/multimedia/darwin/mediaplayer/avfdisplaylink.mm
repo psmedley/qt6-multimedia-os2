@@ -2,56 +2,60 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "avfdisplaylink_p.h"
+
 #include <QtCore/qcoreapplication.h>
 
 #ifdef QT_DEBUG_AVF
 #include <QtCore/qdebug.h>
 #endif
 
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-#import <QuartzCore/CADisplayLink.h>
+
+
 #import <Foundation/NSRunLoop.h>
-#define _m_displayLink static_cast<DisplayLinkObserver*>(m_displayLink)
-#else
+#if !defined(QT_PLATFORM_UIKIT)
+#import <AppKit/NSScreen.h>
 #endif
 
 QT_USE_NAMESPACE
 
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-@interface DisplayLinkObserver : NSObject
-
+@interface QT_MANGLE_NAMESPACE (DisplayLinkObserver) : NSObject
+{
+    AVFDisplayLink *_Nonnull m_avfDisplayLink;
+    CADisplayLink *m_displayLink;
+}
+- (id)initWithAVFDisplayLink:(AVFDisplayLink *_Nonnull)link;
+- (void)setDisplayLink:(CADisplayLink *)displayLink;
 - (void)start;
 - (void)stop;
 - (void)displayLinkNotification:(CADisplayLink *)sender;
-
 @end
 
-@implementation DisplayLinkObserver
-{
-    AVFDisplayLink *m_avfDisplayLink;
-    CADisplayLink *m_displayLink;
-}
+@implementation QT_MANGLE_NAMESPACE (DisplayLinkObserver)
 
-- (id)initWithAVFDisplayLink:(AVFDisplayLink *)link
+- (id)initWithAVFDisplayLink:(AVFDisplayLink *_Nonnull)link
 {
     self = [super init];
-
-    if (self) {
+    if (self)
         m_avfDisplayLink = link;
-        m_displayLink = [[CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkNotification:)] retain];
-    }
-
     return self;
 }
 
-- (void) dealloc
+- (void)dealloc
 {
-    if (m_displayLink) {
-        [m_displayLink release];
-        m_displayLink = nullptr;
-    }
-
+    [self setDisplayLink:nullptr];
     [super dealloc];
+}
+
+- (void)setDisplayLink:(CADisplayLink *)displayLink
+{
+    if (m_displayLink == displayLink)
+        return;
+    if (m_displayLink) {
+        [m_displayLink invalidate];
+        [m_displayLink release];
+    }
+    if (displayLink)
+        m_displayLink = [displayLink retain];
 }
 
 - (void)start
@@ -67,47 +71,48 @@ QT_USE_NAMESPACE
 - (void)displayLinkNotification:(CADisplayLink *)sender
 {
     Q_UNUSED(sender);
-    m_avfDisplayLink->displayLinkEvent(nullptr);
+    m_avfDisplayLink->displayLinkEvent();
 }
 
 @end
-#else
-static CVReturn CVDisplayLinkCallback(CVDisplayLinkRef displayLink,
-                                 const CVTimeStamp *inNow,
-                                 const CVTimeStamp *inOutputTime,
-                                 CVOptionFlags flagsIn,
-                                 CVOptionFlags *flagsOut,
-                                 void *displayLinkContext)
-{
-    Q_UNUSED(displayLink);
-    Q_UNUSED(inNow);
-    Q_UNUSED(flagsIn);
-    Q_UNUSED(flagsOut);
 
-    AVFDisplayLink *link = (AVFDisplayLink *)displayLinkContext;
-
-    link->displayLinkEvent(inOutputTime);
-    return kCVReturnSuccess;
-}
+#ifdef QT_NAMESPACE
+using DisplayLinkObserver = QT_MANGLE_NAMESPACE(DisplayLinkObserver);
 #endif
 
 AVFDisplayLink::AVFDisplayLink(QObject *parent)
     : QObject(parent)
-    , m_displayLink(nullptr)
-    , m_pendingDisplayLinkEvent(false)
-    , m_isActive(false)
 {
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-    m_displayLink = [[DisplayLinkObserver alloc] initWithAVFDisplayLink:this];
+#if defined(QT_PLATFORM_UIKIT)
+    m_observer = [[DisplayLinkObserver alloc] initWithAVFDisplayLink:this];
+    CADisplayLink *dl = [CADisplayLink displayLinkWithTarget:m_observer
+                                                    selector:@selector(displayLinkNotification:)];
+    [m_observer setDisplayLink:dl];
 #else
-    // create display link for the main display
-    CVDisplayLinkCreateWithCGDisplay(kCGDirectMainDisplay, &m_displayLink);
-    if (m_displayLink) {
-        // set the current display of a display link.
-        CVDisplayLinkSetCurrentCGDisplay(m_displayLink, kCGDirectMainDisplay);
-
-        // set the renderer output callback function
-        CVDisplayLinkSetOutputCallback(m_displayLink, &CVDisplayLinkCallback, this);
+    if (@available(macOS 15.0, *)) {
+        m_observer = [[DisplayLinkObserver alloc] initWithAVFDisplayLink:this];
+        CADisplayLink *_Nonnull dl =
+                [NSScreen.mainScreen displayLinkWithTarget:m_observer
+                                                  selector:@selector(displayLinkNotification:)];
+        [m_observer setDisplayLink:dl];
+        return;
+    }
+    if (!m_observer) {
+        QT_WARNING_PUSH
+        QT_WARNING_DISABLE_DEPRECATED
+        CVDisplayLinkCreateWithCGDisplay(kCGDirectMainDisplay, &m_cvDisplayLink);
+        if (m_cvDisplayLink) {
+            CVDisplayLinkSetCurrentCGDisplay(m_cvDisplayLink, kCGDirectMainDisplay);
+            CVDisplayLinkSetOutputCallback(m_cvDisplayLink,
+                                           [](CVDisplayLinkRef, const CVTimeStamp *,
+                                              const CVTimeStamp *, CVOptionFlags, CVOptionFlags *,
+                                              void *displayLinkContext) -> CVReturn {
+                static_cast<AVFDisplayLink *>(displayLinkContext)->displayLinkEvent();
+                return kCVReturnSuccess;
+            },
+                                           this);
+        }
+        QT_WARNING_POP
     }
 #endif
 }
@@ -118,20 +123,31 @@ AVFDisplayLink::~AVFDisplayLink()
     qDebug() << Q_FUNC_INFO;
 #endif
 
-    if (m_displayLink) {
-        stop();
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-        [_m_displayLink release];
-#else
-        CVDisplayLinkRelease(m_displayLink);
-#endif
-        m_displayLink = nullptr;
+    stop();
+
+    if (m_observer) {
+        [m_observer release];
+        m_observer = nil;
     }
+
+#if !defined(QT_PLATFORM_UIKIT)
+    if (m_cvDisplayLink) {
+        QT_WARNING_PUSH
+        QT_WARNING_DISABLE_DEPRECATED
+        CVDisplayLinkRelease(m_cvDisplayLink);
+        QT_WARNING_POP
+        m_cvDisplayLink = nullptr;
+    }
+#endif
 }
 
 bool AVFDisplayLink::isValid() const
 {
-    return m_displayLink != nullptr;
+#if !defined(QT_PLATFORM_UIKIT)
+    return m_observer || m_cvDisplayLink != nullptr;
+#else
+    return m_observer;
+#endif
 }
 
 bool AVFDisplayLink::isActive() const
@@ -141,11 +157,16 @@ bool AVFDisplayLink::isActive() const
 
 void AVFDisplayLink::start()
 {
-    if (m_displayLink && !m_isActive) {
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-        [_m_displayLink start];
-#else
-        CVDisplayLinkStart(m_displayLink);
+    if (!m_isActive) {
+        if (m_observer)
+            [m_observer start];
+#if !defined(QT_PLATFORM_UIKIT)
+        else if (m_cvDisplayLink) {
+            QT_WARNING_PUSH
+            QT_WARNING_DISABLE_DEPRECATED
+            CVDisplayLinkStart(m_cvDisplayLink);
+            QT_WARNING_POP
+        }
 #endif
         m_isActive = true;
     }
@@ -153,53 +174,41 @@ void AVFDisplayLink::start()
 
 void AVFDisplayLink::stop()
 {
-    if (m_displayLink && m_isActive) {
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-        [_m_displayLink stop];
-#else
-        CVDisplayLinkStop(m_displayLink);
+    if (m_isActive) {
+        if (m_observer)
+            [m_observer stop];
+#if !defined(QT_PLATFORM_UIKIT)
+        else if (m_cvDisplayLink) {
+            QT_WARNING_PUSH
+            QT_WARNING_DISABLE_DEPRECATED
+            CVDisplayLinkStop(m_cvDisplayLink);
+            QT_WARNING_POP
+        }
 #endif
+        m_framePending = false;
         m_isActive = false;
     }
 }
 
-void AVFDisplayLink::displayLinkEvent(const CVTimeStamp *ts)
+void AVFDisplayLink::displayLinkEvent()
 {
-    // This function is called from a
-    // thread != gui thread. So we post the event.
-    // But we need to make sure that we don't post faster
-    // than the event loop can eat:
-    m_displayLinkMutex.lock();
-    bool pending = m_pendingDisplayLinkEvent;
-    m_pendingDisplayLinkEvent = true;
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-    Q_UNUSED(ts);
-    memset(&m_frameTimeStamp, 0, sizeof(CVTimeStamp));
-#else
-    m_frameTimeStamp = *ts;
-#endif
-    m_displayLinkMutex.unlock();
-
-    if (!pending)
+    if (!m_framePending.exchange(true))
         qApp->postEvent(this, new QEvent(QEvent::User), Qt::HighEventPriority);
 }
 
 bool AVFDisplayLink::event(QEvent *event)
 {
     switch (event->type()){
-        case QEvent::User:  {
-                m_displayLinkMutex.lock();
-                m_pendingDisplayLinkEvent = false;
-                CVTimeStamp ts = m_frameTimeStamp;
-                m_displayLinkMutex.unlock();
+    case QEvent::User: {
+        if (!m_framePending.exchange(false))
+            return false;
 
-                Q_EMIT tick(ts);
+        Q_EMIT tick();
 
-                return false;
-            }
-            break;
-        default:
-            break;
+        return false;
+    }
+    default:
+        break;
     }
     return QObject::event(event);
 }

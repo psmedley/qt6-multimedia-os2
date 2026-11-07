@@ -7,6 +7,7 @@
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
 
 /*!
     \class QCameraFormat
@@ -18,9 +19,11 @@ QT_BEGIN_NAMESPACE
 
     QCameraFormat represents a certain video format supported by a camera device.
 
+    //! [format-description]
     The format is a combination of a
     \l{QVideoFrameFormat::PixelFormat}{pixel format}, resolution and a range of frame
     rates.
+    //! [format-description]
 
     QCameraFormat objects can be queried from QCameraDevice to inspect the set of
     supported video formats.
@@ -33,16 +36,14 @@ QT_BEGIN_NAMESPACE
     \ingroup qmlvaluetypes
     \inqmlmodule QtMultimedia
     \since 6.2
-    //! \nativetype QCameraFormat
+    \nativetype QCameraFormat
     \brief Describes a video format supported by a camera device.
     \ingroup multimedia_qml
     \ingroup multimedia_video_qml
 
     cameraFormat represents a certain video format supported by a camera device.
 
-    The format is a combination of a
-    \l{pixel format}{QVideoFrameFormat::PixelFormat}, resolution and a range of frame
-    rates.
+    \include qcameradevice.cpp format-description
 
     cameraFormat objects can be queried from \l cameraDevice to inspect the set of
     supported video formats.
@@ -199,24 +200,21 @@ bool QCameraFormat::operator==(const QCameraFormat &other) const
     availableCameras() and defaultCamera() functions. These are contained within
     QtMultimedia::MediaDevices.
 
-    The QCameraDevice instance retains its properties throughout its lifetime,
-    even if the corresponding physical device is disconnected or its settings are
-    modified. To keep track of updated properties, the user should load new instances
-    of QCameraDevice from \l{QMediaDevices} when the relevant signals are fired.
+    \include qdevice-retains-properties.qdocinc {retains-properties} {QCameraDevice} {QMediaDevices}
 
     This example prints the name of all available cameras:
 
-    \snippet multimedia-snippets/camera.cpp Camera listing
+    \snippet multimedia-snippets/camerasnippets.cpp Camera listing
 
     A QCameraDevice can be used to construct a QCamera. The following example
     instantiates a QCamera whose camera device is named \c {mycamera}:
 
-    \snippet multimedia-snippets/camera.cpp Camera selection
+    \snippet multimedia-snippets/camerasnippets.cpp Camera selection
 
     You can also use QCameraDevice to get general information about a camera
     device such as description and physical position on the system.
 
-    \snippet multimedia-snippets/camera.cpp Camera info
+    \snippet multimedia-snippets/camerasnippets.cpp Camera info
 
     \sa QCamera
 */
@@ -226,7 +224,7 @@ bool QCameraFormat::operator==(const QCameraFormat &other) const
     \ingroup qmlvaluetypes
     \inqmlmodule QtMultimedia
     \since 6.2
-    //! \nativetype QCameraDevice
+    \nativetype QCameraDevice
     \brief Describes a camera device.
     \ingroup multimedia_qml
     \ingroup multimedia_video_qml
@@ -234,10 +232,11 @@ bool QCameraFormat::operator==(const QCameraFormat &other) const
     The cameraDevice value type describes the properties of a camera device that
     is connected to the system.
 
-    The cameraDevice instance retains its properties throughout its lifetime,
-    even if the corresponding physical device is disconnected or its settings are
-    modified. To keep track of updated properties, the user should load new instances
-    of cameraDevice from \l{MediaDevices} when the relevant signals are fired.
+    \include qdevice-retains-properties.qdocinc {retains-properties} {cameraDevice} {MediaDevices}
+
+    Two cameraDevice instances can be compared for equality. They are
+    considered equal if they represent the same physical device,
+    regardless of whether their properties are equal or up-to-date.
 
     The list of camera devices can be queried from the \l{MediaDevices}
     type. To select a certain camera device set it as the device
@@ -271,19 +270,15 @@ QCameraDevice::QCameraDevice(const QCameraDevice &other) = default;
 QCameraDevice::~QCameraDevice() = default;
 
 /*!
-    Returns true if this QCameraDevice is equal to \a other.
+    Returns true if this \l QCameraDevice represents the same device as \a other.
+
+    Due to the behavior of the properties in QCameraDevice, two
+    QCameraDevice instances can be considered equal even if not
+    all the properties are equal.
 */
 bool QCameraDevice::operator==(const QCameraDevice &other) const
 {
-    if (d == other.d)
-        return true;
-
-    if (!d || ! other.d)
-        return false;
-
-    return (d->id == other.d->id
-            && d->description == other.d->description
-            && d->position == other.d->position);
+    return id() == other.id();
 }
 
 /*!
@@ -297,7 +292,7 @@ bool QCameraDevice::isNull() const
 /*!
     \qmlproperty string QtMultimedia::cameraDevice::id
 
-   Holds he device id of the camera
+    Holds the device id of the camera
 
     This is a unique ID to identify the camera and may not be human-readable.
 */
@@ -467,13 +462,37 @@ QCameraDevice& QCameraDevice::operator=(const QCameraDevice& other) = default;
 /*!
     \fn QCameraDevice::operator!=(const QCameraDevice &other) const
 
-    Returns true if this QCameraDevice is different from \a other.
+    Returns true if this QCameraDevice does not represent the same
+    device as \a other.
 */
 
 #ifndef QT_NO_DEBUG_STREAM
+QDebug operator<<(QDebug d, const QCameraFormat &format)
+{
+    if (format.isNull())
+        d.maybeSpace() << u"QCameraFormat(null)"_s;
+    else {
+        const char *pixelFormatCharPtr = QMetaEnum::fromType<QVideoFrameFormat::PixelFormat>()
+            .valueToKey(format.pixelFormat());
+        QString pixelFormatString = pixelFormatCharPtr
+            ? QString::fromUtf8(pixelFormatCharPtr)
+            : u"Invalid"_s;
+
+        d.maybeSpace()
+            << u"QCameraFormat(resolution=%1x%2, pixelFormat=%3, minFrameRate=%4, maxFrameRate=%5"_s
+            .arg(format.resolution().width())
+            .arg(format.resolution().height())
+            .arg(pixelFormatString)
+            .arg(format.minFrameRate())
+            .arg(format.maxFrameRate());
+    }
+
+    return d.space();
+}
+
 QDebug operator<<(QDebug d, const QCameraDevice &camera)
 {
-    d.maybeSpace() << QStringLiteral("QCameraDevice(name=%1, id=%2, position=%3)")
+    d.maybeSpace() << u"QCameraDevice(name=%1, id=%2, position=%3)"_s
                               .arg(camera.description())
                               .arg(QLatin1StringView(camera.id()))
                               .arg(QLatin1StringView(

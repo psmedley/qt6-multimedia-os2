@@ -1,14 +1,16 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-
-#include "qaudio.h"
-#include "qaudiodevice.h"
-#include "qaudiosystem_p.h"
 #include "qaudiosink.h"
 
-#include <private/qplatformaudiodevices_p.h>
-#include <private/qplatformmediaintegration_p.h>
+#include <QtMultimedia/private/qtmm_alignment_support_p.h>
+#include <QtMultimedia/private/qaudiosystem_p.h>
+#include <QtMultimedia/private/qaudiohelpers_p.h>
+#include <QtMultimedia/private/qaudiosystem_p.h>
+#include <QtMultimedia/private/qplatformaudiodevices_p.h>
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+#include <QtMultimedia/qaudio.h>
+#include <QtMultimedia/qaudiodevice.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -28,7 +30,13 @@ QT_BEGIN_NAMESPACE
     the QAudioFormat to be used for the playback (see
     the QAudioFormat class description for details).
 
-    To play a file:
+    QAudioSink can be used in two different modes:
+    \list
+        \li Using a QIODevice from an application thread
+        \li Using a callback-based interface from the audio thread
+    \endlist
+
+    \section1 QIODevice interface
 
     Starting to play an audio stream is simply a matter of calling
     start() with a QIODevice. QAudioSink will then fetch the data it
@@ -50,17 +58,48 @@ QT_BEGIN_NAMESPACE
     At any given time, the QAudioSink will be in one of four states:
     active, suspended, stopped, or idle. These states are described
     by the QtAudio::State enum.
+
+    \section2 Threading model and buffering
+
+    The QIODevice interface is designed to be used from the application thread.
+    A wait-free ringbuffer is used to communicate to the audio thread. The size
+    of this ringbuffer can be configured with setBufferSize() and defaults to
+    250ms. The state of this buffer can be queried with bytesFree(). If the
+    ringbuffer runs out of data, the audio thread will send silence to the audio
+    device and the state will change to QtAudio::IdleState and resume to QtAudio::ActiveState
+    when more data is available from the QIODevice.
+
+    \section1 Callback interface
+
+    The preferred way to achieve low audio latency is to use the callback-based interface.
+    It allows you to write audio data directly to the audio device without having to go through
+    a QIODevice. This is done by calling start() with a callback function that will be called
+    from the audio thread. This callback function will be called with a QSpan<SampleType> whenever
+    the audio backend requires data.
+
+    \snippet multimedia-snippets/audio.cpp Audio callback output class members
+    \snippet multimedia-snippets/audio.cpp Audio callback output setup sine
+
+    Unlike the QIODevice-based interface, the QAudioSink can only be in the states active,
+    suspendend and stopped. The setBufferSize() API is not available when using the callback,
+    the size of the callback argument is determined by the audio backend.
+
+    \qtmmaudiocallbacksupportednote
+    \qtmmaudiocallbacknote
+
+    \section1 State and error handling
+
     State changes are reported through the stateChanged() signal. You
     can use this signal to, for instance, update the GUI of the
     application; the mundane example here being changing the state of
     a \c { play/pause } button. You request a state change directly
     with suspend(), stop(), reset(), resume(), and start().
 
-    If an error occurs, you can fetch the \l{QtAudio::Error}{error
-    type} with the error() function. Please see the QtAudio::Error enum
-    for a description of the possible errors that are reported. When
-    QtAudio::UnderrunError is encountered, the state changes to QtAudio::IdleState,
-    when another error is encountered, the state changes to QtAudio::StoppedState.
+    The QAudioSink will enter the \l{QtAudio::}{StoppedState} when an error is encountered.
+    The \l{QtAudio::Error}{error type} can be retrieved with the error() function. Please see the
+    QtAudio::Error enum for a description of the possible errors that are reported. Calling stop()
+    or reset() will reset the error state to \l{QtAudio::Error}{NoError}.
+
     You can check for errors by connecting to the stateChanged()
     signal:
 
@@ -72,7 +111,8 @@ QT_BEGIN_NAMESPACE
 /*!
     Construct a new audio output and attach it to \a parent.
     The default audio output device is used with the output
-    \a format parameters.
+    \a format parameters. If \a format is default-initialized,
+    the format will be set to the preferred format of the audio device.
 */
 QAudioSink::QAudioSink(const QAudioFormat &format, QObject *parent)
     : QAudioSink({}, format, parent)
@@ -82,21 +122,18 @@ QAudioSink::QAudioSink(const QAudioFormat &format, QObject *parent)
 /*!
     Construct a new audio output and attach it to \a parent.
     The device referenced by \a audioDevice is used with the output
-    \a format parameters.
+    \a format parameters. If \a format is default-initialized,
+    the format will be set to the preferred format of \a audioDevice.
 */
 QAudioSink::QAudioSink(const QAudioDevice &audioDevice, const QAudioFormat &format, QObject *parent):
     QObject(parent)
 {
-    d = QPlatformMediaIntegration::instance()->audioDevices()->audioOutputDevice(format, audioDevice, parent);
+    d = QPlatformMediaIntegration::instance()->audioDevices()->audioOutputDevice(format,
+                                                                                 audioDevice, this);
     if (d)
-        connect(d, &QPlatformAudioSink::stateChanged, this, [this](QAudio::State state) {
-            // if the signal has been emitted from another thread,
-            // the state may be already changed by main one
-            if (state == d->state())
-                emit stateChanged(state);
-        });
+        connect(d, &QPlatformAudioSink::stateChanged, this, &QAudioSink::stateChanged);
     else
-        qWarning() << ("No audio device detected");
+        qWarning("No audio device detected");
 }
 
 /*!
@@ -125,6 +162,22 @@ QAudioFormat QAudioSink::format() const
     return d ? d->format() : QAudioFormat();
 }
 
+static bool validateFormatAtStart(QPlatformAudioSink *d)
+{
+    if (!d->format().isValid()) {
+        qWarning() << "QAudioSink::start: QAudioFormat not valid";
+        d->setError(QAudio::OpenError);
+        return false;
+    }
+
+    if (!d->isFormatSupported(d->format())) {
+        qWarning() << "QAudioSink::start: QAudioFormat not supported by QAudioDevice";
+        d->setError(QAudio::OpenError);
+        return false;
+    }
+    return true;
+};
+
 /*!
     Starts transferring audio data from the \a device to the system's audio output.
     The \a device must have been opened in the \l{QIODevice::ReadOnly}{ReadOnly} or
@@ -137,12 +190,14 @@ QAudioFormat QAudioSink::format() const
     If a problem occurs during this process, error() returns QtAudio::OpenError,
     state() returns QtAudio::StoppedState and the stateChanged() signal is emitted.
 
-    \sa QIODevice
+    \sa QIODevice, {QAudioSink#Callback interface}{QIODevice interface}
 */
 void QAudioSink::start(QIODevice* device)
 {
     if (!d)
         return;
+
+    d->setError(QAudio::NoError);
 
     if (!device->isReadable()) {
         qWarning() << "QAudioSink::start: QIODevice is not readable";
@@ -150,7 +205,10 @@ void QAudioSink::start(QIODevice* device)
         return;
     }
 
-    d->elapsedTime.restart();
+    if (!validateFormatAtStart(d))
+        return;
+
+    d->elapsedTime.start();
     d->start(device);
 }
 
@@ -169,14 +227,70 @@ void QAudioSink::start(QIODevice* device)
     If a problem occurs during this process, error() returns QtAudio::OpenError,
     state() returns QtAudio::StoppedState and the stateChanged() signal is emitted.
 
-    \sa QIODevice
+    \sa QIODevice, {QAudioSink#Callback interface}{QIODevice interface}
 */
 QIODevice* QAudioSink::start()
 {
     if (!d)
         return nullptr;
-    d->elapsedTime.restart();
+
+    d->setError(QAudio::NoError);
+
+    if (!validateFormatAtStart(d))
+        return nullptr;
+
+    d->elapsedTime.start();
     return d->start();
+}
+
+/*!
+    \fn template <typename Callback, QtAudio::if_audio_sink_callback<Callback> = true> void QAudioSink::start(Callback &&)
+
+    Starts the QAudioSink with a callback function that will be called on a soft-realtime audio
+    thread. The callback is a callable that takes a QSpan<SampleType> as an argument, SampleType has
+    to match the QAudioFormat::SampleFormat of the QAudioSink's format. The span needs to be filled
+    with interleaved audio data.
+
+    If the QAudioSink is able to successfully start, error() returns QtAudio::NoError.
+
+    If a problem occurs during this process, error() returns QtAudio::OpenError, state() returns
+    QtAudio::StoppedState and the stateChanged() signal is emitted.
+
+    \qtmmaudiocallbacksupportednote
+    \qtmmaudiocallbacknote
+
+    \sa {QAudioSink#Callback interface}{Callback interface}
+    \since 6.11
+*/
+
+template <typename T>
+void QAudioSink::startImpl(T &&callback)
+{
+    if (!d)
+        return;
+
+    if (!d->hasCallbackAPI()) {
+        qWarning() << "QAudioSink::start: Callback API not supported on this platform";
+        d->setError(QAudio::OpenError);
+        return;
+    }
+
+    using namespace QtMultimediaPrivate;
+    if (!validateAudioCallback(callback, format())) {
+        d->setError(QAudio::OpenError);
+        return;
+    }
+
+    if (!validateFormatAtStart(d))
+        return;
+
+    d->elapsedTime.start();
+    d->start(std::forward<T>(callback));
+}
+
+void QAudioSink::startABIImpl(QtAudioPrivate::AudioSinkCallback &&callback)
+{
+    return QAudioSink::startImpl(QtMultimediaPrivate::asAudioSinkCallback(std::move(callback)));
 }
 
 /*!
@@ -212,8 +326,7 @@ void QAudioSink::reset()
 /*!
     Stops processing audio data, preserving buffered audio data.
 
-    Sets error() to QtAudio::NoError, state() to QtAudio::SuspendedState and
-    emits stateChanged() signal.
+    Sets state() to QtAudio::SuspendedState and emits stateChanged() signal.
 */
 void QAudioSink::suspend()
 {
@@ -224,9 +337,8 @@ void QAudioSink::suspend()
 /*!
     Resumes processing audio data after a suspend().
 
-    Sets state() to the state the sink had when suspend() was called, and sets
-    error() to QAudioError::NoError. This function does nothing if the audio sink's
-    state is not QtAudio::SuspendedState.
+    Sets state() to the state the sink had when suspend() was called. This function does nothing if
+    the audio sink's state is not QtAudio::SuspendedState.
 */
 void QAudioSink::resume()
 {
@@ -239,10 +351,27 @@ void QAudioSink::resume()
 
     \note The returned value is only valid while in QtAudio::ActiveState or QtAudio::IdleState
     state, otherwise returns zero.
+
+    \sa framesFree
 */
 qsizetype QAudioSink::bytesFree() const
 {
     return d ? d->bytesFree() : 0;
+}
+
+/*!
+    Returns the number of free frames available in the audio buffer.
+
+    \note The returned value is only valid while in QtAudio::ActiveState or QtAudio::IdleState
+    state, otherwise returns zero.
+
+    \sa bytesFree
+    \since 6.10
+*/
+
+qsizetype QAudioSink::framesFree() const
+{
+    return d ? d->format().framesForBytes(bytesFree()) : 0;
 }
 
 /*!
@@ -252,6 +381,11 @@ qsizetype QAudioSink::bytesFree() const
     are ignored after start(). It should not be assumed that the buffer size
     set is the actual buffer size used - call bufferSize() anytime after start()
     to return the actual buffer size being used.
+
+    The bufferFrameCount() and bufferSize() properties denote the ringbuffer size
+    when using the QIODevice APIs. The native period size is controlled via setNativePeriodFrameCount().
+
+    \sa setBufferFrameCount
 */
 void QAudioSink::setBufferSize(qsizetype value)
 {
@@ -262,15 +396,119 @@ void QAudioSink::setBufferSize(qsizetype value)
 /*!
     Returns the audio buffer size in bytes.
 
-    If called before start(), returns platform default value.
-    If called before start() but setBufferSize() was called prior, returns value set by setBufferSize().
-    If called after start(), returns the actual buffer size being used. This may not be what was set previously
-    by setBufferSize().
+    If called before \l start(), returns platform default value.
+    If called before \c start() but \l setBufferSize() or \l setBufferFrameCount() was called prior, returns
+    value set by \c setBufferSize() or \c setBufferFrameCount(). If called after \c start(), returns the actual
+    buffer size being used. This may not be what was set previously by
+    \c setBufferSize() or \c setBufferFrameCount().
 
+    \sa bufferFrameCount
 */
 qsizetype QAudioSink::bufferSize() const
 {
     return d ? d->bufferSize() : 0;
+}
+
+/*!
+    Sets the audio buffer size to \a value in frame count.
+
+    \note This function can be called anytime before start().  Calls to this
+    are ignored after start(). It should not be assumed that the buffer size
+    set is the actual buffer size used - call bufferFrameCount() anytime after
+    start() to return the actual buffer size being used.
+
+    The bufferFrameCount() and bufferSize() properties denote the ringbuffer size
+    when using the QIODevice APIs. The native period size is controlled via setNativePeriodFrameCount().
+
+    \sa setBufferSize
+    \since 6.10
+*/
+
+void QAudioSink::setBufferFrameCount(qsizetype value)
+{
+    if (d)
+        setBufferSize(d->format().bytesForFrames(value));
+}
+
+/*!
+    Returns the audio buffer size in frames.
+
+    If called before \l start(), returns platform default value.
+    If called before \c start() but \l setBufferSize() or \l setBufferFrameCount() was called prior, returns
+    value set by \c setBufferSize() or \c setBufferFrameCount(). If called after \c start(), returns the actual
+    buffer size being used. This may not be what was set previously by
+    \c setBufferSize() or \c setBufferFrameCount().
+
+    \sa bufferSize
+    \since 6.10
+*/
+
+qsizetype QAudioSink::bufferFrameCount() const
+{
+    return d ? d->format().framesForBytes(bufferSize()) : 0;
+}
+
+/*!
+    Sets the native period frame count to \a frameCount.
+
+    Tunes the audio buffer size used by the operating system and hardware. By default (when not set),
+    the system uses a platform-dependent value, typically 1024 frames (~23ms at 44100 Hz).
+
+    Use smaller values (64-256) to reduce latency, or larger values (2048-4096) to reduce the risk of
+    buffer underruns (dropouts).
+
+    Valid values are powers of 2 between 32 and 4096 (inclusive), or -1 to unset. Can only be called
+    when the audio sink is stopped.
+
+    Maps to platform-specific settings: \c{kAudioDevicePropertyBufferFrameSize} (macOS),
+    \c{IAudioClient::bufferDuration} (Windows), \c{PW_KEY_NODE_FORCE_QUANTUM} (PipeWire/Linux),
+    and \c{AAudioStreamBuilder_setBufferCapacityInFrames} (Android).
+
+    \note This is separate from the ringbuffer configured with setBufferSize() or setBufferFrameCount().
+
+    \since 6.12
+    \sa nativePeriodFrameCount
+*/
+void QAudioSink::setNativePeriodFrameCount(qsizetype frameCount)
+{
+    if (!d)
+        return;
+
+    // Allow -1 as special case (unset)
+    if (frameCount != -1) {
+        if (state() != QAudio::StoppedState) {
+            qWarning("QAudioSink::setNativePeriodFrameCount: can only be set when stopped");
+            return;
+        }
+
+        if (frameCount < 32 || frameCount > 4096
+            || !QtMultimediaPrivate::isPowerOfTwo(frameCount)) {
+            qWarning("QAudioSink::setNativePeriodFrameCount: invalid frame count %lld "
+                     "(must be -1 or a power of 2 between 32 and 4096)",
+                     qint64(frameCount));
+            return;
+        }
+    }
+
+    if (frameCount != -1)
+        d->setNativePeriodFrames(QtMultimediaPrivate::NativePeriodFrames(frameCount));
+    else
+        d->setNativePeriodFrames(std::nullopt);
+}
+
+/*!
+    Returns the native period frame count.
+
+    Returns -1 if not set, otherwise returns the value previously set with
+    setNativePeriodFrameCount().
+
+    \since 6.12
+    \sa setNativePeriodFrameCount
+*/
+qsizetype QAudioSink::nativePeriodFrameCount() const
+{
+    std::optional hwbf = d ? d->nativePeriodFrames() : std::nullopt;
+    return hwbf ? qsizetype(qToUnderlying(*hwbf)) : qsizetype(-1);
 }
 
 /*!
@@ -327,8 +565,10 @@ void QAudioSink::setVolume(qreal volume)
 {
     if (!d)
         return;
-    qreal v = qBound(qreal(0.0), volume, qreal(1.0));
-    d->setVolume(v);
+
+    std::optional<float> newVolume = QAudioHelperInternal::sanitizeVolume(volume, this->volume());
+    if (newVolume)
+        d->setVolume(*newVolume);
 }
 
 /*!

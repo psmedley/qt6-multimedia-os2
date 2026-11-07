@@ -3,22 +3,22 @@
 
 #include "qvideoframe.h"
 
-#include "qvideoframe_p.h"
-#include "qvideotexturehelper_p.h"
-#include "qmultimediautils_p.h"
-#include "qmemoryvideobuffer_p.h"
-#include "qvideoframeconverter_p.h"
-#include "qimagevideobuffer_p.h"
-#include "qpainter.h"
-#include <qtextlayout.h>
+#include <QtCore/qdebug.h>
+#include <QtCore/qsize.h>
+#include <QtCore/qvariant.h>
 
-#include <qimage.h>
-#include <qpair.h>
-#include <qsize.h>
-#include <qvariant.h>
+#include <QtGui/qimage.h>
+#include <QtGui/qtextlayout.h>
+#include <QtGui/qpainter.h>
+
+#include <QtMultimedia/private/qimagevideobuffer_p.h>
+#include <QtMultimedia/private/qmemoryvideobuffer_p.h>
+#include <QtMultimedia/private/qmultimediautils_p.h>
+#include <QtMultimedia/private/qvideoframe_p.h>
+#include <QtMultimedia/private/qvideoframeconverter_p.h>
+#include <QtMultimedia/private/qvideotexturehelper_p.h>
+
 #include <rhi/qrhi.h>
-
-#include <QDebug>
 
 QT_BEGIN_NAMESPACE
 
@@ -446,7 +446,7 @@ QVideoFrame::MapMode QVideoFrame::mapMode() const
 */
 bool QVideoFrame::map(QVideoFrame::MapMode mode)
 {
-    if (!d || !d->videoBuffer)
+    if (!d || !d->videoBuffer || d->format.frameSize().isEmpty())
         return false;
 
     QMutexLocker lock(&d->mapMutex);
@@ -512,14 +512,15 @@ bool QVideoFrame::map(QVideoFrame::MapMode mode)
             const int height = this->height();
             const int yStride = d->mapData.bytesPerLine[0];
             const int uvHeight = pixelFmt == QVideoFrameFormat::Format_YUV422P ? height : height / 2;
-            const int uvStride = (d->mapData.dataSize[0] - (yStride * height)) / uvHeight / 2;
+            Q_ASSERT(uvHeight > 0);
+            const int uvSize = d->mapData.dataSize[0] - yStride * height;
+            const int uvStride = uvSize / 2 / uvHeight;
 
             // Three planes, the second and third vertically (and horizontally for other than Format_YUV422P formats) subsampled.
             d->mapData.planeCount = 3;
             d->mapData.bytesPerLine[2] = d->mapData.bytesPerLine[1] = uvStride;
             d->mapData.dataSize[0] = yStride * height;
-            d->mapData.dataSize[1] = uvStride * uvHeight;
-            d->mapData.dataSize[2] = uvStride * uvHeight;
+            d->mapData.dataSize[2] = d->mapData.dataSize[1] = uvStride * uvHeight;
             d->mapData.data[1] = d->mapData.data[0] + d->mapData.dataSize[0];
             d->mapData.data[2] = d->mapData.data[1] + d->mapData.dataSize[1];
             break;
@@ -807,7 +808,7 @@ QtVideo::Rotation QVideoFrame::rotation() const
 void QVideoFrame::setMirrored(bool mirrored)
 {
     if (d)
-        d->presentationTransformation.mirrorredHorizontallyAfterRotation = mirrored;
+        d->presentationTransformation.mirroredHorizontallyAfterRotation = mirrored;
 }
 
 /*!
@@ -822,7 +823,7 @@ void QVideoFrame::setMirrored(bool mirrored)
 */
 bool QVideoFrame::mirrored() const
 {
-    return d && d->presentationTransformation.mirrorredHorizontallyAfterRotation;
+    return d && d->presentationTransformation.mirroredHorizontallyAfterRotation;
 }
 
 /*!
@@ -845,8 +846,8 @@ qreal QVideoFrame::streamFrameRate() const
 /*!
     Converts current video frame to image.
 
-    The consversion is based on the current pixel data and
-    the \l {surface format}{QVideoFrame::surfaceFormat}.
+    The conversion is based on the current pixel data and
+    the \l {QVideoFrame::surfaceFormat}{surface format}.
     Transformations of the frame don't impact the result
     since they are applied for presentation only.
 
@@ -956,9 +957,6 @@ void QVideoFrame::paint(QPainter *painter, const QRectF &rect, const PaintOption
         return;
 
     // draw subtitles
-    auto text = d->subtitleText;
-    text.replace(QLatin1Char('\n'), QChar::LineSeparator);
-
     QVideoTextureHelper::SubtitleLayout layout;
     layout.update(targetRect.size().toSize(), this->subtitleText());
     layout.draw(painter, targetRect.topLeft());

@@ -1,18 +1,9 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
+#include <QtMultimediaQuick/private/qtmultimediaquickglobal_p.h>
+#include <QtMultimediaQuick/private/qquickimagepreviewprovider_p.h>
 #include <QtQml/qqmlextensionplugin.h>
-#include <QtQml/qqml.h>
-#include <QtQml/qqmlengine.h>
-#include <QtQml/qqmlcomponent.h>
-#include "qsoundeffect.h"
-#include "qmediaplayer.h"
-#include "qmediametadata.h"
-#include "qcamera.h"
-#include "qmediacapturesession.h"
-#include "qmediarecorder.h"
-
-#include <private/qquickimagepreviewprovider_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -22,17 +13,17 @@ class QMultimediaQuickModule : public QQmlEngineExtensionPlugin
     Q_PLUGIN_METADATA(IID QQmlEngineExtensionInterface_iid)
 
 public:
-    QMultimediaQuickModule(QObject *parent = nullptr)
+    explicit QMultimediaQuickModule(QObject *parent = nullptr)
         : QQmlEngineExtensionPlugin(parent)
     {
         volatile auto registration = qml_register_types_QtMultimedia;
         Q_UNUSED(registration);
     }
 
-    void initializeEngine(QQmlEngine *engine, const char *uri) override
+    void initializeEngine(QQmlEngine *engine, [[maybe_unused]] const char *uri) override
     {
-        Q_UNUSED(uri);
-        engine->addImageProvider("camera", new QQuickImagePreviewProvider);
+        using namespace Qt::Literals;
+        engine->addImageProvider(u"QtMultimediaCameraPreviewImageProvider"_s, new QQuickImagePreviewProvider);
     }
 };
 

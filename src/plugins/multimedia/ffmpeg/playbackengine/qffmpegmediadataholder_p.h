@@ -15,12 +15,13 @@
 // We mean it.
 //
 
-#include "qmediametadata.h"
-#include <QtFFmpegMediaPluginImpl/private/qffmpegtime_p.h>
+#include <QtCore/private/qexpected_p.h>
+#include <QtMultimedia/qmediametadata.h>
+#include <QtMultimedia/qvideoframe.h>
 #include <QtMultimedia/private/qplatformmediaplayer_p.h>
-#include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
-#include "qvideoframe.h"
 #include <QtMultimedia/private/qmultimediautils_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpegtime_p.h>
+#include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
 
 #include <array>
 #include <optional>
@@ -35,8 +36,6 @@ struct ICancelToken
     virtual bool isCancelled() const = 0;
 };
 
-using AVFormatContextUPtr = std::unique_ptr<AVFormatContext, AVDeleter<decltype(&avformat_close_input), &avformat_close_input>>;
-
 class MediaDataHolder
 {
 public:
@@ -49,7 +48,7 @@ public:
 
     struct ContextError
     {
-        int code = 0;
+        QMediaPlayer::Error code{};
         QString description;
     };
 
@@ -57,7 +56,7 @@ public:
     using StreamIndexes = std::array<int, QPlatformMediaPlayer::NTrackTypes>;
 
     MediaDataHolder() = default;
-    MediaDataHolder(AVFormatContextUPtr context, const std::shared_ptr<ICancelToken> &cancelToken);
+    MediaDataHolder(AVDemuxerContextUPtr context, const std::shared_ptr<ICancelToken> &cancelToken);
 
     static QPlatformMediaPlayer::TrackType trackTypeFromMediaType(int mediaType);
 
@@ -77,8 +76,8 @@ public:
 
     int currentStreamIndex(QPlatformMediaPlayer::TrackType trackType) const;
 
-    using Maybe = QMaybe<QSharedPointer<MediaDataHolder>, ContextError>;
-    static Maybe create(const QUrl &url, QIODevice *stream,
+    using Maybe = q23::expected<std::shared_ptr<MediaDataHolder>, ContextError>;
+    static Maybe create(const QUrl &url, QIODevice *stream, const QPlaybackOptions &options,
                         const std::shared_ptr<ICancelToken> &cancelToken);
 
     bool setActiveTrack(QPlatformMediaPlayer::TrackType type, int streamNumber);
@@ -89,7 +88,7 @@ private:
     std::shared_ptr<ICancelToken> m_cancelToken; // NOTE: Cancel token may be accessed by
                                                  // AVFormatContext during destruction and
                                                  // must outlive the context object
-    AVFormatContextUPtr m_context;
+    AVDemuxerContextUPtr m_context;
 
     bool m_isSeekable = false;
 

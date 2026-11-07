@@ -3,25 +3,14 @@
 
 #include "qmediaplayer_p.h"
 
-#include <private/qmultimediautils_p.h>
-#include <private/qplatformmediaintegration_p.h>
-#include <private/qaudiobufferoutput_p.h>
-#include <qvideosink.h>
-#include <qaudiooutput.h>
+#include <QtMultimedia/qaudiooutput.h>
+#include <QtMultimedia/qvideosink.h>
+#include <QtMultimedia/private/qaudiobufferoutput_p.h>
+#include <QtMultimedia/private/qmultimediautils_p.h>
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
 
-#include <QtCore/qcoreevent.h>
-#include <QtCore/qmetaobject.h>
-#include <QtCore/qtimer.h>
 #include <QtCore/qdebug.h>
-#include <QtCore/qdir.h>
-#include <QtCore/qpointer.h>
-#include <QtCore/qfileinfo.h>
 #include <QtCore/qtemporaryfile.h>
-#include <QtCore/qcoreapplication.h>
-
-#if defined(Q_OS_ANDROID)
-#  include <QtCore/qjniobject.h>
-#endif
 
 QT_BEGIN_NAMESPACE
 
@@ -125,76 +114,50 @@ void QMediaPlayerPrivate::setError(QMediaPlayer::Error error, const QString &err
     this->error.setAndNotify(error, errorString, *q);
 }
 
-void QMediaPlayerPrivate::setMedia(const QUrl &media, QIODevice *stream)
+void QMediaPlayerPrivate::setMedia(QUrl media, QIODevice *stream)
 {
+    using namespace QtMultimediaPrivate;
+
     setError(QMediaPlayer::NoError, {});
 
     if (!control)
         return;
 
+    media = m_sourceResolver->resolve(media);
+
     std::unique_ptr<QFile> file;
 
-    // Back ends can't play qrc files directly.
+    // Some backends can't play qrc files directly.
     // If the back end supports StreamPlayback, we pass a QFile for that resource.
     // If it doesn't, we copy the data to a temporary file and pass its path.
-    if (!media.isEmpty() && !stream && media.scheme() == QLatin1String("qrc")
-        && !control->canPlayQrc()) {
+    if (!media.isEmpty() && !stream && media.scheme() == u"qrc" && !control->canPlayQrc()) {
         qrcMedia = media;
+
+        control->mediaStatusChanged(QMediaPlayer::LoadingMedia);
 
         file.reset(new QFile(QLatin1Char(':') + media.path()));
         if (!file->open(QFile::ReadOnly)) {
             file.reset();
-            control->setMedia(QUrl(), nullptr);
-            control->mediaStatusChanged(QMediaPlayer::InvalidMedia);
-            control->error(QMediaPlayer::ResourceError, QMediaPlayer::tr("Attempting to play invalid Qt resource"));
+            control->setInvalidMediaWithError(
+                    QMediaPlayer::ResourceError,
+                    QMediaPlayer::tr("Attempting to play invalid Qt resource"));
 
         } else if (control->streamPlaybackSupported()) {
             control->setMedia(media, file.get());
         } else {
-#if QT_CONFIG(temporaryfile)
-#if defined(Q_OS_ANDROID)
-            QString tempFileName = QDir::tempPath() + media.path();
-            QDir().mkpath(QFileInfo(tempFileName).path());
-            QTemporaryFile *tempFile = QTemporaryFile::createNativeFile(*file);
-            if (!tempFile->rename(tempFileName))
-                qWarning() << "Could not rename temporary file to:" << tempFileName;
-#else
-            QTemporaryFile *tempFile = new QTemporaryFile;
-
-            // Preserve original file extension, some back ends might not load the file if it doesn't
-            // have an extension.
-            const QString suffix = QFileInfo(*file).suffix();
-            if (!suffix.isEmpty())
-                tempFile->setFileTemplate(tempFile->fileTemplate() + QLatin1Char('.') + suffix);
-
-            // Copy the qrc data into the temporary file
-            if (!tempFile->open()) {
-                control->setMedia(QUrl(), nullptr);
-                control->mediaStatusChanged(QMediaPlayer::InvalidMedia);
-                control->error(QMediaPlayer::ResourceError, tempFile->errorString());
-                delete tempFile;
-                qrcFile.reset();
+            auto extractedQrcMedia = qCopyQrcToTemporaryFile(*file, media);
+            if (!extractedQrcMedia) {
+                control->setInvalidMediaWithError(QMediaPlayer::ResourceError,
+                                                  extractedQrcMedia.error());
                 return;
             }
-            char buffer[4096];
-            while (true) {
-                qint64 len = file->read(buffer, sizeof(buffer));
-                if (len < 1)
-                    break;
-                tempFile->write(buffer, len);
-            }
-            tempFile->close();
-#endif
-            file.reset(tempFile);
-            control->setMedia(QUrl(QUrl::fromLocalFile(file->fileName())), nullptr);
-#else
-            qWarning("Qt was built with -no-feature-temporaryfile: playback from resource file is not supported!");
-#endif
+            file = std::move(extractedQrcMedia->file);
+            control->setMedia(extractedQrcMedia->url, nullptr);
         }
     } else {
         qrcMedia = QUrl();
         QUrl url = qMediaFromUserInput(media);
-        if (url.scheme() == QLatin1String("content") && !stream) {
+        if (url.scheme() == u"content" && !stream) {
             file.reset(new QFile(media.url()));
             stream = file.get();
         }
@@ -252,6 +215,9 @@ QMediaPlayer::~QMediaPlayer()
     // To be investigated: registering of the source might be removed after switching on the ffmpeg
     // backend;
 
+    // Workaround to prevent freeze in GStreamer when setting audioOutput while stopped
+    if (d->control)
+        d->control->qmediaplayerDestructorCalled = true;
     setAudioOutput(nullptr);
 
     d->setVideoSink(nullptr);
@@ -490,7 +456,7 @@ QString QMediaPlayer::errorString() const
 }
 
 /*!
-    \qmlmethod QtMultimedia::MediaPlayer::play()
+    \qmlmethod void QtMultimedia::MediaPlayer::play()
 
     Starts or resumes playback of the media.
 
@@ -514,7 +480,7 @@ void QMediaPlayer::play()
 }
 
 /*!
-    \qmlmethod QtMultimedia::MediaPlayer::pause()
+    \qmlmethod void QtMultimedia::MediaPlayer::pause()
 
     Pauses playback of the media.
 
@@ -536,7 +502,7 @@ void QMediaPlayer::pause()
 }
 
 /*!
-    \qmlmethod QtMultimedia::MediaPlayer::stop()
+    \qmlmethod void QtMultimedia::MediaPlayer::stop()
 
     Stops playback of the media.
 
@@ -772,6 +738,17 @@ QAudioOutput *QMediaPlayer::audioOutput() const
 }
 
 /*!
+    \qmlsignal QtMultimedia::MediaPlayer::tracksChanged()
+
+    This signal is emitted when the \l{audioTracks}, \l{subtitleTracks}
+    or \l{videoTracks} properties are changed.
+*/
+
+/*!
+    \fn QMediaPlayer::tracksChanged()
+*/
+
+/*!
     \qmlproperty list<mediaMetaData> QtMultimedia::MediaPlayer::audioTracks
 
     This property holds a list of metadata.
@@ -780,6 +757,8 @@ QAudioOutput *QMediaPlayer::audioOutput() const
     The metadata holds properties describing the individual tracks. For
     audio tracks the \l{QMediaMetaData}{Language} is usually the most
     important property.
+
+    This property emits the \l{tracksChanged} signal when modified.
 
     \sa mediaMetaData
 */
@@ -808,6 +787,8 @@ QList<QMediaMetaData> QMediaPlayer::audioTracks() const
 
     The metadata holds properties describing the individual tracks.
 
+    This property emits the \l{tracksChanged} signal when modified.
+
     \sa mediaMetaData
 */
 
@@ -834,6 +815,8 @@ QList<QMediaMetaData> QMediaPlayer::videoTracks() const
     The metadata holds properties describing the individual tracks. For
     subtitle tracks the \l{QMediaMetaData}{Language} is usually the most
     important property.
+
+    This property emits the \l{tracksChanged} signal when modified.
 
     \sa mediaMetaData
 */
@@ -1070,6 +1053,146 @@ QMediaMetaData QMediaPlayer::metaData() const
     return d->control ? d->control->metaData() : QMediaMetaData{};
 }
 
+/*!
+    \qmlproperty bool QtMultimedia::MediaPlayer::pitchCompensation
+    \since 6.10
+
+    This property holds whether pitch compensation is enabled.
+*/
+
+/*!
+    \property QMediaPlayer::pitchCompensation
+    \brief The pitch compensation status of the media player.
+    \since 6.10
+
+    Indicates whether pitch compensation is enabled. When enabled, changing the playback rate
+    will not affect the pitch of the audio signal.
+
+    \note The pitch compensation will increase the CPU load of the QMediaPlayer.
+
+    By default is \c{true} if pitch compensation, is available, else \c{false}.
+*/
+
+/*!
+    Returns the state of pitch compensation.
+    \since 6.10
+*/
+bool QMediaPlayer::pitchCompensation() const
+{
+    Q_D(const QMediaPlayer);
+    return d->control ? d->control->pitchCompensation() : false;
+}
+
+/*!
+    Sets the state (\a enabled or disabled) of pitch compensation. This only
+    has an effect if the audio pitch compensation can be configured on the
+    backend at runtime.
+    \since 6.10
+*/
+void QMediaPlayer::setPitchCompensation(bool enabled) const
+{
+    Q_D(const QMediaPlayer);
+    if (d->control)
+        d->control->setPitchCompensation(enabled);
+}
+
+/*!
+    \enum QMediaPlayer::PitchCompensationAvailability
+    \since 6.10
+
+    Availablility of pitch compensation.
+
+    Different backends have different behavior regarding pitch compensation when changing
+    playback rate.
+
+    \value AlwaysOn The media player is always performing pitch compensation.
+    \value Available The media player can be configured to use pitch compensation.
+        If pitch compensation is available on the current platform, it will be enabled by default,
+        but users can disable if needed.
+    \value Unavailable The media player is not able to perform pitch compensation
+        on the current platform.
+*/
+
+/*!
+    \qmlproperty enumeration QtMultimedia::MediaPlayer::pitchCompensationAvailability
+    \since 6.10
+
+    Indicates the availability of pitch compensation of the \c MediaPlayer on the current backend.
+    The enumeration \c PitchCompensationAvailability is scoped.
+
+    \qmlenumeratorsfrom QMediaPlayer::PitchCompensationAvailability
+*/
+
+/*!
+    \property QMediaPlayer::pitchCompensationAvailability
+    \brief The pitch compensation availability of the current QtMultimedia backend.
+    \since 6.10
+
+    Indicates the availability of pitch compensation of the QMediaPlayer on the current backend.
+
+    \note Different backends may have different behavior.
+
+    For more information, see \l{QMediaPlayer::PitchCompensationAvailability}.
+*/
+
+/*!
+    Returns availability of pitch compensation of the current backend.
+    \since 6.10
+*/
+
+QMediaPlayer::PitchCompensationAvailability QMediaPlayer::pitchCompensationAvailability() const
+{
+    Q_D(const QMediaPlayer);
+    return d->control ? d->control->pitchCompensationAvailability()
+                      : PitchCompensationAvailability::Unavailable;
+}
+
+/*!
+    \qmlproperty PlaybackOptions MediaPlayer::playbackOptions
+    \since 6.10
+
+    This property exposes the \l PlaybackOptions API that gives low-level control of media playback
+    options. Although we strongly recommend to rely on the default settings of \l MediaPlayer,
+    this API can be used to optimize media playback for specific use cases where the default
+    options are not ideal.
+
+    Playback options take effect the next time \l MediaPlayer::source is changed.
+*/
+
+/*!
+    \property QMediaPlayer::playbackOptions
+    \brief Advanced playback options used to configure media playback and decoding.
+    \since 6.10
+
+    This property exposes the \l QPlaybackOptions API that gives low-level control of media
+    playback options. Although we strongly recommend to rely on the default settings of
+    \l QMediaPlayer, this API can be used to optimize media playback for specific use cases where
+    the default options are not ideal.
+
+    Playback options take effect the next time \l QMediaPlayer::setSource() is called.
+*/
+
+QPlaybackOptions QMediaPlayer::playbackOptions() const
+{
+    Q_D(const QMediaPlayer);
+    return d->playbackOptions;
+}
+
+void QMediaPlayer::setPlaybackOptions(const QPlaybackOptions &options)
+{
+    Q_D(QMediaPlayer);
+    if (std::exchange(d->playbackOptions, options) != options)
+        emit playbackOptionsChanged();
+}
+
+void QMediaPlayer::resetPlaybackOptions()
+{
+    Q_D(QMediaPlayer);
+    QPlaybackOptions defaultOptions{ };
+    if (std::exchange(d->playbackOptions, defaultOptions) != defaultOptions)
+        emit playbackOptionsChanged();
+}
+
 // Enums
 /*!
     \enum QMediaPlayer::PlaybackState
@@ -1136,27 +1259,7 @@ QMediaMetaData QMediaPlayer::metaData() const
 
     This property holds the status of media loading. It can be one of the following:
 
-    \table
-    \header
-        \li Property value
-        \li Description
-    \row \li NoMedia
-        \li No media has been set.
-    \row \li LoadingMedia
-        \li The media is currently being loaded.
-    \row \li LoadedMedia
-        \li The media has been loaded.
-    \row \li BufferingMedia
-        \li The media is buffering data.
-    \row \li StalledMedia
-        \li Playback has been interrupted while the media is buffering data.
-    \row \li BufferedMedia
-        \li The media has buffered data.
-    \row \li EndOfMedia
-        \li The media has played to the end.
-    \row \li InvalidMedia
-        \li The media cannot be played.
-    \endtable
+    \qmlenumeratorsfrom QMediaPlayer::MediaStatus
 */
 
 /*!
@@ -1164,19 +1267,7 @@ QMediaMetaData QMediaPlayer::metaData() const
 
     This property holds the error state of the audio. It can be one of the following.
 
-    \table
-    \header \li Value \li Description
-    \row \li NoError
-        \li There is no current error.
-    \row \li ResourceError
-        \li The audio cannot be played due to a problem allocating resources.
-    \row \li FormatError
-        \li The audio format is not supported.
-    \row \li NetworkError
-        \li The audio cannot be played due to network issues.
-    \row \li AccessDeniedError
-        \li The audio cannot be played due to insufficient permissions.
-    \endtable
+    \qmlenumeratorsfrom QMediaPlayer::Error
 */
 
 /*!

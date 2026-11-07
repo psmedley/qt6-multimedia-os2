@@ -1,11 +1,9 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "libavutil/version.h"
-
 #include "qffmpeghwaccel_p.h"
 
-#if QT_CONFIG(wmf)
+#ifdef Q_OS_WINDOWS
 #  include "qffmpeghwaccel_d3d11_p.h"
 #  include <QtCore/private/qsystemlibrary_p.h>
 #endif
@@ -14,7 +12,10 @@
 #include "qffmpegcodecstorage_p.h"
 #include "qffmpegmediaintegration_p.h"
 #include "qffmpegvideobuffer_p.h"
+#include "qffmpeg_ranges_p.h"
 #include "qscopedvaluerollback.h"
+
+#include <QtCore/QElapsedTimer>
 
 #ifdef Q_OS_LINUX
 #  include "QtCore/qfile.h"
@@ -31,7 +32,7 @@ QT_BEGIN_NAMESPACE
 
 using namespace Qt::StringLiterals;
 
-static Q_LOGGING_CATEGORY(qLHWAccel, "qt.multimedia.ffmpeg.hwaccel");
+Q_STATIC_LOGGING_CATEGORY(qLHWAccel, "qt.multimedia.ffmpeg.hwaccel");
 
 namespace QFFmpeg {
 
@@ -56,14 +57,14 @@ static const std::initializer_list<AVHWDeviceType> preferredHardwareAccelerators
 static AVBufferUPtr loadHWContext(AVHWDeviceType type)
 {
     AVBufferRef *hwContext = nullptr;
-    qCDebug(qLHWAccel) << "    Checking HW context:" << av_hwdevice_get_type_name(type);
+    qCDebug(qLHWAccel) << "    Checking HW context:" << type;
     int ret = av_hwdevice_ctx_create(&hwContext, type, nullptr, nullptr, 0);
 
     if (ret == 0) {
         qCDebug(qLHWAccel) << "    Using above hw context.";
         return AVBufferUPtr(hwContext);
     }
-    qCDebug(qLHWAccel) << "    Could not create hw context:" << ret << strerror(-ret);
+    qCDebug(qLHWAccel) << "    Could not create hw context:" << QFFmpeg::AVError(ret);
     return nullptr;
 }
 
@@ -109,16 +110,15 @@ static bool precheckDriver(AVHWDeviceType type)
 
 static bool checkHwType(AVHWDeviceType type)
 {
-    const auto deviceName = av_hwdevice_get_type_name(type);
-    if (!deviceName) {
-        qWarning() << "Internal FFmpeg error, unknow hw type:" << type;
+    if (!precheckDriver(type)) {
+        qCDebug(qLHWAccel) << "Drivers for hw device" << type << "is not installed";
         return false;
     }
 
-    if (!precheckDriver(type)) {
-        qCDebug(qLHWAccel) << "Drivers for hw device" << deviceName << "is not installed";
-        return false;
-    }
+#if QT_FFMPEG_HAS_D3D12VA
+    if (type == AV_HWDEVICE_TYPE_D3D12VA)
+        return false; // QTBUG-146635: opening d3d12va codecs fails
+#endif
 
     if (type == AV_HWDEVICE_TYPE_MEDIACODEC ||
         type == AV_HWDEVICE_TYPE_VIDEOTOOLBOX ||
@@ -127,14 +127,15 @@ static bool checkHwType(AVHWDeviceType type)
         type == AV_HWDEVICE_TYPE_D3D12VA ||
 #endif
         type == AV_HWDEVICE_TYPE_DXVA2)
-        return true; // Don't waste time; it's expected to work fine of the precheck is OK
-
+        return true; // Don't waste time; it's expected to work fine if the precheck is OK
 
     QScopedValueRollback rollback(FFmpegLogsEnabledInThread);
     FFmpegLogsEnabledInThread = false;
 
     return loadHWContext(type) != nullptr;
 }
+
+using HWDeviceTypesRange = FFmpegValueIteratorRange<AVHWDeviceType, av_hwdevice_iterate_types>;
 
 static const std::vector<AVHWDeviceType> &deviceTypes()
 {
@@ -145,7 +146,7 @@ static const std::vector<AVHWDeviceType> &deviceTypes()
 
         // gather hw pix formats
         std::unordered_set<AVPixelFormat> hwPixFormats;
-        for (const Codec codec : CodecEnumerator()) {
+        for (const Codec codec : allCodecs) {
             forEachAVPixelFormat(codec, [&](AVPixelFormat format) {
                 if (isHwPixelFormat(format))
                     hwPixFormats.insert(format);
@@ -154,8 +155,7 @@ static const std::vector<AVHWDeviceType> &deviceTypes()
 
         // create a device types list
         std::vector<AVHWDeviceType> result;
-        AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
-        while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE)
+        for (const AVHWDeviceType type : HWDeviceTypesRange())
             if (hwPixFormats.count(pixelFormatForHwDevice(type)) && checkHwType(type))
                 result.push_back(type);
         result.shrink_to_fit();
@@ -240,7 +240,7 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
     // First check HW accelerated codecs, the HW device context must be set
     if (codecContext->hw_device_ctx) {
         auto *device_ctx = (AVHWDeviceContext *)codecContext->hw_device_ctx->data;
-        ValueAndScore<AVPixelFormat> formatAndScore;
+        std::optional<ValueAndScore<AVPixelFormat>> formatAndScore;
 
         // to be rewritten via findBestAVFormat
         const Codec codec{ codecContext->codec };
@@ -259,7 +259,7 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
                 // AV_CODEC_CONFIG_PIX_FORMAT since n7.1); no reason to use findAVPixelFormat as
                 // we're already in the hw_config loop
                 const auto pixelFormats = codec.pixelFormats();
-                if (shouldCheckCodecFormats && !hasValue(pixelFormats, format))
+                if (shouldCheckCodecFormats && !ranges::contains(pixelFormats, format))
                     return NotSuitableAVScore;
 
                 if (!shouldCheckCodecFormats && config->pix_fmt != format)
@@ -276,16 +276,17 @@ AVPixelFormat getFormat(AVCodecContext *codecContext, const AVPixelFormat *fmt)
             };
 
             const auto found = findBestAVValueWithScore(suggestedFormats, scoresGettor);
-
-            if (found.score > formatAndScore.score)
-                formatAndScore = found;
+            if (found) {
+                if (!formatAndScore || found->score > formatAndScore->score)
+                    formatAndScore = found;
+            }
         }
 
-        const auto format = formatAndScore.value;
-        if (format) {
-            TextureConverter::applyDecoderPreset(*format, *codecContext);
-            qCDebug(qLHWAccel) << "Selected format" << *format << "for hw" << device_ctx->type;
-            return *format;
+        if (formatAndScore) {
+            AVPixelFormat format = formatAndScore->value;
+            TextureConverter::applyDecoderPreset(format, *codecContext);
+            qCDebug(qLHWAccel) << "Selected format" << format << "for hw" << device_ctx->type;
+            return format;
         }
     }
 
@@ -323,13 +324,13 @@ AVPixelFormat HWAccel::format(AVFrame *frame)
     return AVPixelFormat(hwFramesContext->sw_format);
 }
 
-const std::vector<AVHWDeviceType> &HWAccel::encodingDeviceTypes()
+QSpan<const AVHWDeviceType> HWAccel::encodingDeviceTypes()
 {
     static const auto &result = deviceTypes("QT_FFMPEG_ENCODING_HW_DEVICE_TYPES");
     return result;
 }
 
-const std::vector<AVHWDeviceType> &HWAccel::decodingDeviceTypes()
+QSpan<const AVHWDeviceType> HWAccel::decodingDeviceTypes()
 {
     static const auto &result = deviceTypes("QT_FFMPEG_DECODING_HW_DEVICE_TYPES");
     return result;
@@ -391,9 +392,22 @@ void HWAccel::createFramesContext(AVPixelFormat swFormat, const QSize &size)
     qCDebug(qLHWAccel) << "init frames context";
     int err = av_hwframe_ctx_init(m_hwFramesContext.get());
     if (err < 0)
-        qWarning() << "failed to init HW frame context" << err << err2str(err);
+        qWarning() << "failed to init HW frame context" << err << AVError(err);
     else
         qCDebug(qLHWAccel) << "Initialized frames context" << size << c->format << c->sw_format;
+}
+
+void HWAccel::updateFramesContext(AVPixelFormat swFormat, const QSize &size)
+{
+    if (m_hwFramesContext) {
+        auto *c = (AVHWFramesContext *)m_hwFramesContext->data;
+        if (c->sw_format != swFormat || QSize(c->width, c->height) != size)
+            m_hwFramesContext.reset();
+        else
+            return;
+    }
+
+    createFramesContext(swFormat, size);
 }
 
 AVHWFramesContext *HWAccel::hwFramesContext() const
@@ -403,7 +417,16 @@ AVHWFramesContext *HWAccel::hwFramesContext() const
 
 static void deleteHwFrameContextData(AVHWFramesContext *context)
 {
-    delete reinterpret_cast<HwFrameContextData *>(context->user_opaque);
+    std::unique_ptr<HwFrameContextData> contextData(
+            static_cast<HwFrameContextData *>(context->user_opaque));
+    Q_ASSERT(contextData);
+
+    if (contextData->avDeleter) {
+        context->user_opaque = contextData->avUserOpaque;
+        context->free = contextData->avDeleter;
+
+        context->free(context);
+    }
 }
 
 HwFrameContextData &HwFrameContextData::ensure(AVFrame &hwFrame)
@@ -411,20 +434,24 @@ HwFrameContextData &HwFrameContextData::ensure(AVFrame &hwFrame)
     Q_ASSERT(hwFrame.hw_frames_ctx && hwFrame.hw_frames_ctx->data);
 
     auto context = reinterpret_cast<AVHWFramesContext *>(hwFrame.hw_frames_ctx->data);
-    if (!context->user_opaque) {
-        context->user_opaque = new HwFrameContextData;
-        Q_ASSERT(!context->free);
+
+    if (context->free != deleteHwFrameContextData) {
+        // In most cases, we expect null context->free and context->user_opaque.
+        // However, FFmpeg decoding implementations for specific graphic card backends
+        // may set a custom deleter. Let's save the deleter and its data (user_opaque)
+        // to invoke it in deleteHwFrameContextData.
+        context->user_opaque = new HwFrameContextData{ context->free, context->user_opaque };
         context->free = deleteHwFrameContextData;
     } else {
-        Q_ASSERT(context->free == deleteHwFrameContextData);
+        Q_ASSERT(context->user_opaque);
     }
 
-    return *reinterpret_cast<HwFrameContextData *>(context->user_opaque);
+    return *static_cast<HwFrameContextData *>(context->user_opaque);
 }
 
 AVFrameUPtr copyFromHwPool(AVFrameUPtr frame)
 {
-#if QT_CONFIG(wmf)
+#ifdef Q_OS_WINDOWS
     return copyFromHwPoolD3D11(std::move(frame));
 #else
     return frame;

@@ -66,8 +66,8 @@ public:
     through the videoFrameChanged() signal.
 
     The video frame can then be used to read out the data of those frames and handle them
-    further. When using QPainter, the QVideoFrame can be drawing using the paint() method
-    in QVideoSink.
+    further. When using QPainter, the QVideoFrame can be drawing using the \l {QVideoFrame::}
+    {paint()} method.
 
     QVideoFrame objects can consume a significant amount of memory or system resources and
     should thus not be held for longer than required by the application.
@@ -127,6 +127,8 @@ QPlatformVideoSink *QVideoSink::platformVideoSink() const
 }
 
 /*!
+    \threadsafe
+
     Returns the current video frame.
  */
 QVideoFrame QVideoSink::videoFrame() const
@@ -140,6 +142,8 @@ QVideoFrame QVideoSink::videoFrame() const
     Signals when the video \a frame changes.
 */
 /*!
+    \threadsafe
+
     Sets the current video \a frame.
 */
 void QVideoSink::setVideoFrame(const QVideoFrame &frame)

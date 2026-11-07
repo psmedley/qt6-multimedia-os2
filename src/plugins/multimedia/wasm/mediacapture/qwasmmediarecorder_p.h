@@ -20,11 +20,9 @@
 #include <QtCore/qglobal.h>
 #include <QtCore/qloggingcategory.h>
 #include <QElapsedTimer>
+#include <QObject>
 
-#include <emscripten.h>
-#include <emscripten/val.h>
-#include <emscripten/bind.h>
-#include <private/qstdweb_p.h>
+#include <private/qwasmjs_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -50,19 +48,19 @@ public:
 
     void setCaptureSession(QPlatformMediaCaptureSession *session);
 
+    emscripten::val activeMediaStream() { return m_mediaStream; }
+
 private:
 
     bool hasCamera() const;
     void startAudioRecording();
     void setStream(emscripten::val stream);
-    void streamCallback(emscripten::val event);
-    void exceptionCallback(emscripten::val event);
-    void dataAvailableCallback(emscripten::val dataEvent);
+
     void startStream();
     void setTrackContraints(QMediaEncoderSettings &settings, emscripten::val stream);
     void initUserMedia();
-    void audioDataAvailable(emscripten::val Blob, double timeCodeDifference);
     void setUpFileSink();
+    void initMediaSettings();
 
     emscripten::val m_mediaRecorder = emscripten::val::undefined();
     emscripten::val m_mediaStream = emscripten::val::undefined();
@@ -70,6 +68,8 @@ private:
     QWasmMediaCaptureSession *m_session = nullptr;
     QMediaEncoderSettings m_mediaSettings;
     QIODevice *m_outputTarget;
+    std::unique_ptr<JsMediaRecorder> m_jsMediaRecorderDevice;
+
     QScopedPointer<qstdweb::EventCallback> m_mediaStreamDataAvailable;
     QScopedPointer<qstdweb::EventCallback> m_mediaStreamStopped;
     QScopedPointer<qstdweb::EventCallback> m_mediaStreamError;
@@ -81,7 +81,7 @@ private:
     bool m_isRecording = false;
     QScopedPointer <QElapsedTimer> m_durationTimer;
 
-private Q_SLOTS:
+    bool m_hasMediaSettings = false;
 };
 
 QT_END_NAMESPACE

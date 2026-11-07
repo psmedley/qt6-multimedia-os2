@@ -14,34 +14,17 @@
 // We mean it.
 //
 
-#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+#if defined(__clang__) || defined(__GNUC__) || __cplusplus >= 202302L
+#  warning "Use QGStreamerInterface from <QtMultimedia/spi/qgstreamerinterface.h>"
+#elif defined(_MSC_VER)
+#  pragma message("Warning: Use QGStreamerInterface from <QtMultimedia/spi/qgstreamerinterface.h>")
+#endif
 
-typedef struct _GstPipeline GstPipeline; // NOLINT (bugprone-reserved-identifier)
-typedef struct _GstElement GstElement; // NOLINT (bugprone-reserved-identifier)
+#include <QtMultimedia/spi/qgstreamerinterface.h>
 
 QT_BEGIN_NAMESPACE
 
-class QAudioDevice;
-
-class Q_MULTIMEDIA_EXPORT QGStreamerPlatformSpecificInterface
-    : public QAbstractPlatformSpecificInterface
-{
-public:
-    ~QGStreamerPlatformSpecificInterface() override;
-
-    static QGStreamerPlatformSpecificInterface *instance();
-
-    virtual QAudioDevice makeCustomGStreamerAudioInput(const QByteArray &gstreamerPipeline) = 0;
-    virtual QAudioDevice makeCustomGStreamerAudioOutput(const QByteArray &gstreamerPipeline) = 0;
-    virtual QCamera *makeCustomGStreamerCamera(const QByteArray &gstreamerPipeline,
-                                               QObject *parent) = 0;
-
-    // Note: ownership of GstElement is not transferred
-    virtual QCamera *makeCustomGStreamerCamera(GstElement *, QObject *parent) = 0;
-
-    virtual GstPipeline *gstPipeline(QMediaPlayer *) = 0;
-    virtual GstPipeline *gstPipeline(QMediaCaptureSession *) = 0;
-};
+using QGStreamerPlatformSpecificInterface = QGStreamerInterface;
 
 QT_END_NAMESPACE
 

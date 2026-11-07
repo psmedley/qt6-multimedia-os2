@@ -2,16 +2,15 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qplatformmediaplayer_p.h"
-#include <private/qmediaplayer_p.h>
-#include "qmediaplayer.h"
-#include "qplatformaudiodevices_p.h"
-#include "qplatformmediaintegration_p.h"
+
+#include <QtMultimedia/private/qmediaplayer_p.h>
+#include <QtMultimedia/private/qplatformmediaintegration_p.h>
+#include <QtMultimedia/qmediaplayer.h>
 
 QT_BEGIN_NAMESPACE
 
 QPlatformMediaPlayer::QPlatformMediaPlayer(QMediaPlayer *parent) : player(parent)
 {
-    QPlatformMediaIntegration::instance()->audioDevices()->prepareAudio();
 }
 
 QPlatformMediaPlayer::~QPlatformMediaPlayer() = default;
@@ -32,9 +31,43 @@ void QPlatformMediaPlayer::mediaStatusChanged(QMediaPlayer::MediaStatus status)
     player->d_func()->setStatus(status);
 }
 
-void QPlatformMediaPlayer::error(int error, const QString &errorString)
+void QPlatformMediaPlayer::error(QMediaPlayer::Error error, const QString &errorString)
 {
-    player->d_func()->setError(QMediaPlayer::Error(error), errorString);
+    player->d_func()->setError(error, errorString);
+}
+
+void QPlatformMediaPlayer::setInvalidMediaWithError(QMediaPlayer::Error err,
+                                                    const QString &errString)
+{
+    mediaStatusChanged(QMediaPlayer::InvalidMedia);
+    error(err, errString);
+}
+
+QPlatformMediaPlayer::PitchCompensationAvailability
+QPlatformMediaPlayer::pitchCompensationAvailability() const
+{
+    return PitchCompensationAvailability::Unavailable;
+}
+
+void QPlatformMediaPlayer::setPitchCompensation(bool /*enabled*/)
+{
+    qWarning() << "QMediaPlayer::setPitchCompensation not supported on this QtMultimedia "
+                  "backend";
+}
+
+bool QPlatformMediaPlayer::pitchCompensation() const
+{
+    return false;
+}
+
+void QPlatformMediaPlayer::pitchCompensationChanged(bool enabled) const
+{
+    emit player->pitchCompensationChanged(enabled);
+}
+
+QPlaybackOptions QPlatformMediaPlayer::playbackOptions() const
+{
+    return player->playbackOptions();
 }
 
 QT_END_NAMESPACE

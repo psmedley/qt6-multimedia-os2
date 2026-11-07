@@ -47,7 +47,7 @@ static std::tuple<int, int, bool> parseBufferLevel(const QString &value)
     if (value.isEmpty())
         return {};
 
-    const int slashPos = value.indexOf('/');
+    const int slashPos = value.indexOf(QChar(u'/'));
     if (slashPos <= 0)
         return {};
 
@@ -169,7 +169,7 @@ void QQnxMediaPlayer::openConnection()
     m_id = idCounter++;
     m_contextName = QString::fromLatin1("QQnxMediaPlayer_%1_%2").arg(m_id)
                                                          .arg(QCoreApplication::applicationPid());
-    m_context = mmr_context_create(m_connection, m_contextName.toLatin1(),
+    m_context = mmr_context_create(m_connection, m_contextName.toLatin1().constData(),
                                    0, S_IRWXU|S_IRWXG|S_IRWXO);
     if (!m_context) {
         emitPError(QString::fromLatin1("Unable to create context"));
@@ -388,7 +388,7 @@ bool QQnxMediaPlayer::attachVideoOutput()
     const QString videoDeviceUrl = QStringLiteral("screen:?winid=%1&wingrp=%2&initflags=invisible&nodstviewport=1")
         .arg(windowName, QString::fromLatin1(windowGroupId));
 
-    m_videoId = mmr_output_attach(m_context, videoDeviceUrl.toLatin1(), "video");
+    m_videoId = mmr_output_attach(m_context, videoDeviceUrl.toLatin1().constData(), "video");
 
     if (m_videoId == -1) {
         qWarning() << "mmr_output_attach() for video failed";
@@ -407,8 +407,17 @@ bool QQnxMediaPlayer::attachAudioOutput()
 
     const QByteArray defaultAudioDevice = qgetenv("QQNX_RENDERER_DEFAULT_AUDIO_SINK");
 
+    // QNX 8.0+ serves audio through io-snd (ALSA/SALSA), reached as
+    // "alsa:default"; older releases use the QSA "snd:" device.
+    const char *fallbackDevice =
+#if __QNX__ >= 800
+            "alsa:default";
+#else
+            "snd:";
+#endif
+
     m_audioId = mmr_output_attach(m_context,
-            defaultAudioDevice.isEmpty() ? "snd:" : defaultAudioDevice.constData(), "audio");
+            defaultAudioDevice.isEmpty() ? fallbackDevice : defaultAudioDevice.constData(), "audio");
 
     if (m_audioId == -1) {
         emitMmError("mmr_output_attach() for audio failed");
@@ -544,7 +553,7 @@ void QQnxMediaPlayer::setPositionInternal(qint64 position)
     if (!m_context || !m_metaData.isSeekable() || mediaStatus() == QMediaPlayer::NoMedia)
         return;
 
-    if (mmr_seek(m_context, QString::number(position).toLatin1()) != 0)
+    if (mmr_seek(m_context, QString::number(position).toLatin1().constData()) != 0)
         emitMmError("Seeking failed");
 }
 
@@ -836,13 +845,13 @@ void QQnxMediaPlayer::emitMmError(const QString &msg)
 {
     int errorCode = MMR_ERROR_NONE;
     const QString errorMessage = mmErrorMessage(msg, m_context, &errorCode);
-    emit error(errorCode, errorMessage);
+    emit error(QMediaPlayer::ResourceError, errorMessage);
 }
 
 void QQnxMediaPlayer::emitPError(const QString &msg)
 {
     const QString errorMessage = QString::fromLatin1("%1: %2").arg(msg).arg(QString::fromUtf8(strerror(errno)));
-    emit error(errno, errorMessage);
+    emit error(QMediaPlayer::ResourceError, errorMessage);
 }
 
 

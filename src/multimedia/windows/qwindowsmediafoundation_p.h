@@ -17,7 +17,10 @@
 
 #include <private/qtmultimediaglobal_p.h>
 #include <QtCore/private/qsystemlibrary_p.h>
+
 #include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -36,22 +39,29 @@ public:
     decltype(&::MFCreateMediaType) mfCreateMediaType = nullptr;
     decltype(&::MFCreateMemoryBuffer) mfCreateMemoryBuffer = nullptr;
     decltype(&::MFCreateSample) mfCreateSample = nullptr;
+    decltype(&::MFCreateAttributes) mfCreateAttributes = nullptr;
+    decltype(&::MFEnumDeviceSources) mfEnumDeviceSources = nullptr;
+    decltype(&::MFCreateSourceReaderFromMediaSource) mfCreateSourceReaderFromMediaSource = nullptr;
 
 private:
     QSystemLibrary m_mfplat{ QStringLiteral("Mfplat.dll") };
+    QSystemLibrary m_mf{ QStringLiteral("Mf.dll") };
+    QSystemLibrary m_mfreadwrite{ QStringLiteral("Mfreadwrite.dll") };
     bool m_valid = false;
 };
 
-class QMFRuntimeInit
+class Q_MULTIMEDIA_EXPORT QMFRuntimeInit
 {
     Q_DISABLE_COPY_MOVE(QMFRuntimeInit)
+
 public:
-    QMFRuntimeInit(QWindowsMediaFoundation *wmf);
+    QMFRuntimeInit();
+    explicit QMFRuntimeInit(QWindowsMediaFoundation *wmf);
     ~QMFRuntimeInit();
 
 private:
-    QWindowsMediaFoundation *m_wmf;
-    HRESULT m_initResult;
+    QWindowsMediaFoundation *const m_wmf;
+    const HRESULT m_initResult;
 };
 
 QT_END_NAMESPACE

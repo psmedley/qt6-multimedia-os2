@@ -1,11 +1,13 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-3.0-only
-#include <qquick3daudioengine_p.h>
-#include <qaudiodevice.h>
+#include "qquick3daudioengine_p.h"
+
+#include <QtMultimedia/qaudiodevice.h>
+#include <QtCore/qcoreapplication.h>
 
 QT_BEGIN_NAMESPACE
 
-static QAudioEngine *globalEngine = nullptr;
+static std::unique_ptr<QAudioEngine> globalEngine;
 
 /*!
     \qmltype AudioEngine
@@ -47,6 +49,7 @@ QQuick3DAudioEngine::QQuick3DAudioEngine()
     connect(e, &QAudioEngine::outputModeChanged, this, &QQuick3DAudioEngine::outputModeChanged);
     connect(e, &QAudioEngine::outputDeviceChanged, this, &QQuick3DAudioEngine::outputDeviceChanged);
     connect(e, &QAudioEngine::masterVolumeChanged, this, &QQuick3DAudioEngine::masterVolumeChanged);
+    connect(e, &QAudioEngine::distanceScaleChanged, this, &QQuick3DAudioEngine::distanceScaleChanged);
 }
 
 QQuick3DAudioEngine::~QQuick3DAudioEngine()
@@ -114,13 +117,37 @@ float QQuick3DAudioEngine::masterVolume() const
     return globalEngine->masterVolume();
 }
 
+/*!
+    \qmlproperty real AudioEngine::distanceScale
+    \since 6.11
+
+    Defines the scale of the coordinate system being used by the spatial audio engine.
+    By default, all units are in centimeters, in line with the default units being
+    used by Qt Quick 3D.
+
+    Set the distance scale to 100 to get units in meters.
+*/
+void QQuick3DAudioEngine::setDistanceScale(float scale)
+{
+    globalEngine->setDistanceScale(scale);
+}
+
+float QQuick3DAudioEngine::distanceScale() const
+{
+    return globalEngine->distanceScale();
+}
+
 QAudioEngine *QQuick3DAudioEngine::getEngine()
 {
     if (!globalEngine) {
-        globalEngine = new QAudioEngine;
+        globalEngine = std::make_unique<QAudioEngine>();
         globalEngine->start();
+        qAddPostRoutine([] {
+            // ensure to destroy it before any Q_APPLICATION_STATIC that manages the connection to the audio backend
+            globalEngine = {};
+        });
     }
-    return globalEngine;
+    return globalEngine.get();
 }
 
 QT_END_NAMESPACE

@@ -30,9 +30,6 @@ static QSurface::SurfaceType platformSurfaceType()
     if (QCoreApplication::testAttribute(Qt::AA_ForceRasterWidgets))
         return QSurface::RasterSurface;
 
-    if (integration->hasCapability(QPlatformIntegration::RasterGLSurface))
-        return QSurface::RasterGLSurface;
-
     return QSurface::OpenGLSurface;
 }
 
@@ -48,11 +45,11 @@ QVideoWindowPrivate::QVideoWindowPrivate(QVideoWindow *q)
         switch (surfaceType) {
         case QSurface::RasterSurface:
         case QSurface::OpenVGSurface:
+        default:
             // can't use those surfaces, need to render in SW
             m_graphicsApi = QRhi::Null;
             break;
         case QSurface::OpenGLSurface:
-        case QSurface::RasterGLSurface:
             m_graphicsApi = QRhi::OpenGLES2;
             break;
         case QSurface::VulkanSurface:
@@ -115,7 +112,7 @@ void QVideoWindowPrivate::initRhi()
     if (m_graphicsApi == QRhi::Null)
         return;
 
-    QRhi::Flags rhiFlags = {};//QRhi::EnableDebugMarkers | QRhi::EnableProfiling;
+    [[maybe_unused]] QRhi::Flags rhiFlags = {};//QRhi::EnableDebugMarkers | QRhi::EnableProfiling;
 
 #if QT_CONFIG(opengl)
     if (m_graphicsApi == QRhi::OpenGLES2) {
@@ -145,7 +142,7 @@ void QVideoWindowPrivate::initRhi()
     }
 #endif
 
-#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
+#if QT_CONFIG(metal)
     if (m_graphicsApi == QRhi::Metal) {
         QRhiMetalInitParams params;
         m_rhi.reset(QRhi::create(QRhi::Metal, &params, rhiFlags));
@@ -384,7 +381,7 @@ void QVideoWindowPrivate::render()
     if (m_subtitleDirty || m_subtitleLayout.videoSize != subtitleRect.size())
         updateSubtitle(rub, subtitleRect.size());
 
-    const float mirrorFrame = frameTransformation.mirrorredHorizontallyAfterRotation ? -1.f : 1.f;
+    const float mirrorFrame = frameTransformation.mirroredHorizontallyAfterRotation ? -1.f : 1.f;
     const float xscale = mirrorFrame * float(videoRect.width()) / float(rect.width());
     const float yscale = -1.f * float(videoRect.height()) / float(rect.height());
 

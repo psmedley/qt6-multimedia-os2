@@ -68,12 +68,15 @@ private:
 
 } // namespace QGstUtils
 
+class QGstreamerRelayVideoSink;
+
 class QGstVideoRenderer : public QObject
 {
     struct RenderBufferState
     {
         QGstBufferHandle buffer;
         QVideoFrameFormat format;
+        QGstVideoInfo videoInfo;
         QGstCaps::MemoryFormat memoryFormat;
 
         bool operator==(const RenderBufferState &rhs) const
@@ -87,7 +90,7 @@ class QGstVideoRenderer : public QObject
     static constexpr QEvent::Type stopEvent = static_cast<QEvent::Type>(QEvent::User + 101);
 
 public:
-    explicit QGstVideoRenderer(QGstreamerVideoSink *);
+    explicit QGstVideoRenderer(QGstreamerRelayVideoSink *);
     ~QGstVideoRenderer() override;
 
     const QGstCaps &caps();
@@ -106,7 +109,7 @@ private:
     void updateCurrentVideoFrame(QVideoFrame);
 
     void notify();
-    static QGstCaps createSurfaceCaps(QGstreamerVideoSink *);
+    static QGstCaps createSurfaceCaps(QGstreamerRelayVideoSink *);
 
     void customEvent(QEvent *) override;
     void handleNewBuffer(RenderBufferState);
@@ -117,14 +120,14 @@ private:
     void gstEventHandleFlushStop(GstEvent *);
 
     QMutex m_sinkMutex;
-    QGstreamerVideoSink *m_sink = nullptr; // written only from qt thread. so only readers on
+    QGstreamerRelayVideoSink *m_sink = nullptr; // written only from qt thread. so only readers on
                                            // worker threads need to acquire the lock
 
     // --- only accessed from gstreamer thread
     const QGstCaps m_surfaceCaps;
     QVideoFrameFormat m_format;
-    GstVideoInfo m_videoInfo{};
-    QGstCaps::MemoryFormat m_memoryFormat = QGstCaps::CpuMemory;
+    QGstVideoInfo m_videoInfo;
+    QGstCaps::MemoryFormat m_capsMemoryFormat = QGstCaps::CpuMemory;
 
     // --- only accessed from qt thread
     QVideoFrame m_currentPipelineFrame;
@@ -142,10 +145,10 @@ class QGstVideoRendererSink
 public:
     GstVideoSink parent{};
 
-    static QGstVideoRendererSinkElement createSink(QGstreamerVideoSink *surface);
+    static QGstVideoRendererSinkElement createSink(QGstreamerRelayVideoSink *surface);
 
 private:
-    static void setSink(QGstreamerVideoSink *surface);
+    static void setSink(QGstreamerRelayVideoSink *surface);
 
     static GType get_type();
     static void class_init(gpointer g_class, gpointer class_data);

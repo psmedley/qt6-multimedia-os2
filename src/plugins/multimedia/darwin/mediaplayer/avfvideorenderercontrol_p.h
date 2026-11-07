@@ -15,18 +15,17 @@
 // We mean it.
 //
 
-#include <QtCore/QObject>
-#include <QtCore/QMutex>
-#include <QtCore/QSize>
+#include <QtCore/qmutex.h>
+#include <QtCore/qobject.h>
+#include <QtCore/qsize.h>
+#include <QtCore/private/qcore_mac_p.h>
 
 #include <avfvideosink_p.h>
 
-#include <CoreVideo/CVBase.h>
 #include <CoreVideo/CVPixelBuffer.h>
 
-Q_FORWARD_DECLARE_OBJC_CLASS(CALayer);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVPlayerItemVideoOutput);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVPlayerItemLegibleOutput);
+#import <AVFoundation/AVFoundation.h>
+
 Q_FORWARD_DECLARE_OBJC_CLASS(SubtitleDelegate);
 
 QT_BEGIN_NAMESPACE
@@ -38,7 +37,7 @@ class AVFVideoRendererControl : public QObject, public AVFVideoSinkInterface
     Q_OBJECT
 public:
     explicit AVFVideoRendererControl(QObject *parent = nullptr);
-    virtual ~AVFVideoRendererControl();
+    ~AVFVideoRendererControl() override;
 
     // AVFVideoSinkInterface
     void reconfigure() override;
@@ -52,11 +51,12 @@ public:
         m_sink->setSubtitleText(subtitle);
     }
 private Q_SLOTS:
-    void updateVideoFrame(const CVTimeStamp &ts);
+    void updateVideoFrame();
 
 private:
     AVPlayerLayer *playerLayer() const { return static_cast<AVPlayerLayer *>(m_layer); }
-    CVPixelBufferRef copyPixelBufferFromLayer(size_t& width, size_t& height);
+    QCFType<CVPixelBufferRef> copyPixelBufferFromLayer(size_t &width, size_t &height,
+                                                       qint64 &startTime);
 
     QMutex m_mutex;
     AVFDisplayLink *m_displayLink = nullptr;

@@ -13,7 +13,12 @@
 #include <mfevrvideowindowcontrol_p.h>
 #include <private/qplatformmediaplugin_p.h>
 
+#include <QtCore/private/qfunctions_win_p.h>
+#include <QtCore/private/qsystemerror_p.h>
+
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 class QWindowsMediaPlugin : public QPlatformMediaPlugin
 {
@@ -27,17 +32,23 @@ public:
 
     QPlatformMediaIntegration* create(const QString &name) override
     {
-        if (name == u"windows")
+        if (name != u"windows")
+            return nullptr;
+
+        qt_win_ensureComInitializedOnThisThread();
+        HRESULT hr = MFStartup(MF_VERSION);
+        if (SUCCEEDED(hr))
             return new QWindowsMediaIntegration;
+
+        qWarning() << "Failed to initialize Media Foundation:"
+                   << QSystemError::windowsComString(hr);
         return nullptr;
     }
 };
 
 QWindowsMediaIntegration::QWindowsMediaIntegration()
-    : QPlatformMediaIntegration(QLatin1String("windows"))
-{
-    MFStartup(MF_VERSION);
-}
+    : QPlatformMediaIntegration("windows"_L1)
+{}
 
 QWindowsMediaIntegration::~QWindowsMediaIntegration()
 {
@@ -54,37 +65,37 @@ QPlatformVideoDevices *QWindowsMediaIntegration::createVideoDevices()
     return new QWindowsVideoDevices(this);
 }
 
-QMaybe<QPlatformMediaCaptureSession *> QWindowsMediaIntegration::createCaptureSession()
+q23::expected<QPlatformMediaCaptureSession *, QString> QWindowsMediaIntegration::createCaptureSession()
 {
     return new QWindowsMediaCaptureService();
 }
 
-QMaybe<QPlatformAudioDecoder *> QWindowsMediaIntegration::createAudioDecoder(QAudioDecoder *decoder)
+q23::expected<QPlatformAudioDecoder *, QString> QWindowsMediaIntegration::createAudioDecoder(QAudioDecoder *decoder)
 {
     return new MFAudioDecoderControl(decoder);
 }
 
-QMaybe<QPlatformMediaPlayer *> QWindowsMediaIntegration::createPlayer(QMediaPlayer *parent)
+q23::expected<QPlatformMediaPlayer *, QString> QWindowsMediaIntegration::createPlayer(QMediaPlayer *parent)
 {
     return new MFPlayerControl(parent);
 }
 
-QMaybe<QPlatformCamera *> QWindowsMediaIntegration::createCamera(QCamera *camera)
+q23::expected<QPlatformCamera *, QString> QWindowsMediaIntegration::createCamera(QCamera *camera)
 {
     return new QWindowsCamera(camera);
 }
 
-QMaybe<QPlatformMediaRecorder *> QWindowsMediaIntegration::createRecorder(QMediaRecorder *recorder)
+q23::expected<QPlatformMediaRecorder *, QString> QWindowsMediaIntegration::createRecorder(QMediaRecorder *recorder)
 {
     return new QWindowsMediaEncoder(recorder);
 }
 
-QMaybe<QPlatformImageCapture *> QWindowsMediaIntegration::createImageCapture(QImageCapture *imageCapture)
+q23::expected<QPlatformImageCapture *, QString> QWindowsMediaIntegration::createImageCapture(QImageCapture *imageCapture)
 {
     return new QWindowsImageCapture(imageCapture);
 }
 
-QMaybe<QPlatformVideoSink *> QWindowsMediaIntegration::createVideoSink(QVideoSink *sink)
+q23::expected<QPlatformVideoSink *, QString> QWindowsMediaIntegration::createVideoSink(QVideoSink *sink)
 {
     return new MFEvrVideoWindowControl(sink);
 }

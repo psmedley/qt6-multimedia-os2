@@ -15,13 +15,22 @@
 // We mean it.
 //
 
-#include <QtCore/qglobal.h>
 #include <QtCore/qdebug.h>
+#include <QtCore/qglobal.h>
 
+#include <chrono>
 #include <memory>
+#include <mutex>
+#include <pipewire/extensions/metadata.h>
 #include <system_error>
 
 #include <pipewire/pipewire.h>
+
+#if !PW_CHECK_VERSION(0, 3, 75)
+extern "C" {
+bool pw_check_library_version(int major, int minor, int micro);
+}
+#endif
 
 QT_BEGIN_NAMESPACE
 
@@ -59,6 +68,7 @@ using PwThreadLoopHandle = MakeUniquePtr<pw_thread_loop, pw_thread_loop_destroy>
 using PwStreamHandle = MakeUniquePtr<pw_stream, pw_stream_destroy>::type;
 using PwRegistryHandle = MakeUniquePtr<pw_proxy, pw_proxy_destroy, pw_registry>::type;
 using PwNodeHandle = MakeUniquePtr<pw_proxy, pw_proxy_destroy, pw_node>::type;
+using PwMetadataHandle = MakeUniquePtr<pw_proxy, pw_proxy_destroy, pw_metadata>::type;
 
 struct PwCoreConnectionDeleter
 {
@@ -72,7 +82,108 @@ struct PwCoreConnectionDeleter
 
 using PwCoreConnectionHandle = std::unique_ptr<pw_core, PwCoreConnectionDeleter>;
 
+struct SpaHandleDeleter
+{
+    void operator()(spa_handle *handle) const
+    {
+        int status = pw_unload_spa_handle(handle);
+        if (status < 0)
+            qWarning() << "Failed to unload spa_handle:" << make_error_code(-status).message();
+    }
+};
+
+using SpaHandleHandle = std::unique_ptr<spa_handle, SpaHandleDeleter>;
+
+class PWThreadedEventLoop
+{
+public:
+    explicit PWThreadedEventLoop(const char *name);
+    ~PWThreadedEventLoop();
+
+    Q_DISABLE_COPY_MOVE(PWThreadedEventLoop)
+
+    explicit operator bool() const;
+
+    int start();
+    void stop();
+
+    pw_thread_loop *get() const;
+    pw_loop *loop() const;
+
+    bool isInThread() const;
+
+    void lock();
+    void unlock();
+
+    int wait_for(std::chrono::seconds waitMax);
+    void signal(bool waitForAccept);
+
+    template <typename Closure>
+    auto runWithEventLoopLock(Closure &&c)
+    {
+        std::lock_guard guard{ *this };
+        return c();
+    }
+
+private:
+    PwThreadLoopHandle m_loop;
+};
+
+// strong id types
+
+template <typename T, typename Tag>
+struct StrongIdType
+{
+    explicit StrongIdType(T arg) : value{ arg } { }
+
+    T value;
+    friend QDebug operator<<(QDebug dbg, const StrongIdType &self) { return dbg << self.value; }
+
+#ifdef __cpp_impl_three_way_comparison
+    auto operator<=>(const StrongIdType &) const = default;
+#else
+    friend bool comparesEqual(const StrongIdType &lhs, const StrongIdType &rhs) noexcept
+    {
+        return lhs.value == rhs.value;
+    }
+
+    friend Qt::strong_ordering compareThreeWay(const StrongIdType &lhs,
+                                               const StrongIdType &rhs) noexcept
+    {
+        return qCompareThreeWay(lhs.value, rhs.value);
+    }
+
+    Q_DECLARE_STRONGLY_ORDERED(StrongIdType)
+#endif
+};
+
+struct ObjectIdTag
+{
+};
+
+// PW_KEY_OBJECT_ID
+// global object ID, can be reused
+using ObjectId = StrongIdType<uint32_t, ObjectIdTag>;
+
+struct ObjectSerialTag
+{
+};
+
+// PW_KEY_OBJECT_SERIAL
+// unique serial for each object
+using ObjectSerial = StrongIdType<uint64_t, ObjectSerialTag>;
+
 } // namespace QtPipeWire
+
+// debug support
+QDebug operator<<(QDebug dbg, const spa_dict &dict);
+QDebug operator<<(QDebug dbg, const spa_pod &pod);
+QDebug operator<<(QDebug dbg, enum pw_stream_state);
+QDebug operator<<(QDebug dbg, const pw_time &state);
+
+// Address sanitizer helper
+// for now these annotations only function as documentation
+#define QT_MM_GUARDED_BY(Mutex)
 
 QT_END_NAMESPACE
 

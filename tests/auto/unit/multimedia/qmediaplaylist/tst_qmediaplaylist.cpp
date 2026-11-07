@@ -5,7 +5,6 @@
 #include <QDebug>
 #include "qmediaplaylist.h"
 
-QT_USE_NAMESPACE
 
 class tst_QMediaPlaylist : public QObject
 {
@@ -660,11 +659,11 @@ void tst_QMediaPlaylist::setMediaSource()
         QMediaPlaylist playlist;
         QSignalSpy currentIndexSpy(&playlist, SIGNAL(currentIndexChanged(int)));
         QSignalSpy playbackModeSpy(&playlist, SIGNAL(playbackModeChanged(QMediaPlaylist::PlaybackMode)));
-        QSignalSpy mediaAboutToBeInsertedSpy(&playlist, SIGNAL(mediaAboutToBeInserted(int, int)));
-        QSignalSpy mediaInsertedSpy(&playlist, SIGNAL(mediaInserted(int, int)));
-        QSignalSpy mediaAboutToBeRemovedSpy(&playlist, SIGNAL(mediaAboutToBeRemoved(int, int)));
-        QSignalSpy mediaRemovedSpy(&playlist, SIGNAL(mediaRemoved(int, int)));
-        QSignalSpy mediaChangedSpy(&playlist, SIGNAL(mediaChanged(int, int)));
+        QSignalSpy mediaAboutToBeInsertedSpy(&playlist, SIGNAL(mediaAboutToBeInserted(int,int)));
+        QSignalSpy mediaInsertedSpy(&playlist, SIGNAL(mediaInserted(int,int)));
+        QSignalSpy mediaAboutToBeRemovedSpy(&playlist, SIGNAL(mediaAboutToBeRemoved(int,int)));
+        QSignalSpy mediaRemovedSpy(&playlist, SIGNAL(mediaRemoved(int,int)));
+        QSignalSpy mediaChangedSpy(&playlist, SIGNAL(mediaChanged(int,int)));
 
         QVERIFY(playlist.isEmpty());
 
@@ -708,11 +707,11 @@ void tst_QMediaPlaylist::setMediaSource()
 
         QSignalSpy currentIndexSpy(&playlist, SIGNAL(currentIndexChanged(int)));
         QSignalSpy playbackModeSpy(&playlist, SIGNAL(playbackModeChanged(QMediaPlaylist::PlaybackMode)));
-        QSignalSpy mediaAboutToBeInsertedSpy(&playlist, SIGNAL(mediaAboutToBeInserted(int, int)));
-        QSignalSpy mediaInsertedSpy(&playlist, SIGNAL(mediaInserted(int, int)));
-        QSignalSpy mediaAboutToBeRemovedSpy(&playlist, SIGNAL(mediaAboutToBeRemoved(int, int)));
-        QSignalSpy mediaRemovedSpy(&playlist, SIGNAL(mediaRemoved(int, int)));
-        QSignalSpy mediaChangedSpy(&playlist, SIGNAL(mediaChanged(int, int)));
+        QSignalSpy mediaAboutToBeInsertedSpy(&playlist, SIGNAL(mediaAboutToBeInserted(int,int)));
+        QSignalSpy mediaInsertedSpy(&playlist, SIGNAL(mediaInserted(int,int)));
+        QSignalSpy mediaAboutToBeRemovedSpy(&playlist, SIGNAL(mediaAboutToBeRemoved(int,int)));
+        QSignalSpy mediaRemovedSpy(&playlist, SIGNAL(mediaRemoved(int,int)));
+        QSignalSpy mediaChangedSpy(&playlist, SIGNAL(mediaChanged(int,int)));
 
         QCOMPARE(playlist.mediaCount(), 3);
         QCOMPARE(playlist.currentIndex(), 2);

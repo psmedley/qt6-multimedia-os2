@@ -16,7 +16,7 @@
 
 #include <QtFFmpegMediaPluginImpl/private/qffmpegrenderer_p.h>
 
-#include "qaudiobuffer.h"
+#include <QtMultimedia/qaudiobuffer.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -27,15 +27,20 @@ class QFFmpegResampler;
 
 namespace QFFmpeg {
 
+struct AbstractAudioFrameConverter;
+
 class AudioRenderer : public Renderer
 {
     Q_OBJECT
 public:
-    AudioRenderer(const TimeController &tc, QAudioOutput *output, QAudioBufferOutput *bufferOutput);
+    AudioRenderer(const PlaybackEngineObjectID &id, const TimeController &tc, QAudioOutput *output,
+                  QAudioBufferOutput *bufferOutput, bool pitchCompensation);
 
     void setOutput(QAudioOutput *output);
 
     void setOutput(QAudioBufferOutput *bufferOutput);
+
+    void setPitchCompensation(bool enabled);
 
     ~AudioRenderer() override;
 
@@ -74,6 +79,8 @@ protected:
         const char *data() const { return buffer.constData<char>() + offset; }
     };
 
+    void seekInternal() override;
+
     RenderingResult renderInternal(Frame frame) override;
 
     RenderingResult pushFrameToOutput(const Frame &frame);
@@ -82,7 +89,7 @@ protected:
 
     void onPlaybackRateChanged() override;
 
-    std::chrono::milliseconds timerInterval() const override;
+    TimePoint nextTimePoint() const override;
 
     void onPauseChanged() override;
 
@@ -90,7 +97,7 @@ protected:
 
     void updateOutputs(const Frame &frame);
 
-    void initResampler(const Frame &frame);
+    void initAudioFrameConverter(const Frame &frame);
 
     void onDeviceChanged();
 
@@ -110,19 +117,29 @@ private:
     std::unique_ptr<QAudioSink> m_sink;
     AudioTimings m_timings;
     BufferLoadingInfo m_bufferLoadingInfo;
-    std::unique_ptr<QFFmpegResampler> m_resampler;
     std::unique_ptr<QFFmpegResampler> m_bufferOutputResampler;
     QAudioFormat m_sinkFormat;
 
-    BufferedDataWithOffset m_bufferedData;
-    QIODevice *m_ioDevice = nullptr;
-
-    bool m_lastFramePushDone = true;
+    QPointer<QIODevice> m_ioDevice;
 
     bool m_deviceChanged = false;
     bool m_bufferOutputChanged = false;
-    bool m_drained = false;
+
     bool m_firstFrameToSink = true;
+
+    // pitch compensation
+    bool m_pitchCompensation = false;
+    std::unique_ptr<AbstractAudioFrameConverter> m_audioFrameConverter;
+
+    struct SessionContext
+    {
+        // TODO: add other members after clarifying the best session cleanup strategy
+        BufferedDataWithOffset bufferedData;
+        bool lastFramePushDone = true;
+        bool drained = false;
+    };
+
+    SessionContext m_sessionCtx;
 };
 
 } // namespace QFFmpeg

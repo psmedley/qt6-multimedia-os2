@@ -2,24 +2,29 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qvideoframetexturepool_p.h"
-#include "qvideotexturehelper_p.h"
 
-#include <rhi/qrhi.h>
+#include <QtMultimedia/private/qvideotexturehelper_p.h>
+#include <QtGui/rhi/qrhi.h>
 
 QT_BEGIN_NAMESPACE
 
-void QVideoFrameTexturePool::setCurrentFrame(QVideoFrame frame) {
+void QVideoFrameTexturePool::setCurrentFrame(QVideoFrame frame)
+{
     m_texturesDirty = true;
     m_currentFrame = std::move(frame);
 }
 
-QVideoFrameTextures* QVideoFrameTexturePool::updateTextures(QRhi &rhi, QRhiResourceUpdateBatch &rub) {
+QVideoFrameTextures *QVideoFrameTexturePool::updateTextures(QRhi &rhi, QRhiResourceUpdateBatch &rub)
+{
     const int currentSlot = rhi.currentFrameSlot();
     Q_ASSERT(size_t(currentSlot) < MaxSlotsCount);
 
     m_texturesDirty = false;
     QVideoFrameTexturesUPtr &textures = m_textureSlots[currentSlot];
-    textures = QVideoTextureHelper::createTextures(m_currentFrame, rhi, rub, std::move(textures));
+    Q_ASSERT(!m_oldTextures);
+    m_oldTextures = std::move(textures);
+    textures = QVideoTextureHelper::createTextures(m_currentFrame, rhi, rub, m_oldTextures);
+
     m_currentSlot = textures ? currentSlot : std::optional<int>{};
 
     return textures.get();
@@ -27,6 +32,7 @@ QVideoFrameTextures* QVideoFrameTexturePool::updateTextures(QRhi &rhi, QRhiResou
 
 void QVideoFrameTexturePool::onFrameEndInvoked()
 {
+    m_oldTextures.reset();
     if (m_currentSlot && m_textureSlots[*m_currentSlot])
         m_textureSlots[*m_currentSlot]->onFrameEndInvoked();
 }

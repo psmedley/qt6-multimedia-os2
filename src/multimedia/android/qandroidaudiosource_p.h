@@ -1,8 +1,8 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#ifndef QOPENSLESAUDIOINPUT_H
-#define QOPENSLESAUDIOINPUT_H
+#ifndef QANDROIDAUDIOINPUT_H
+#define QANDROIDAUDIOINPUT_H
 
 //
 //  W A R N I N G
@@ -15,87 +15,81 @@
 // We mean it.
 //
 
-#include <private/qaudiosystem_p.h>
-#include <QElapsedTimer>
-#include <SLES/OpenSLES.h>
+#include <private/qaudio_platform_implementation_support_p.h>
 
-#ifdef ANDROID
-#include <SLES/OpenSLES_Android.h>
+#include <private/qaaudiostream_p.h>
 
-#define QT_ANDROID_PRESET_MIC "mic"
-#define QT_ANDROID_PRESET_CAMCORDER "camcorder"
-#define QT_ANDROID_PRESET_VOICE_RECOGNITION "voicerecognition"
-#define QT_ANDROID_PRESET_VOICE_COMMUNICATION "voicecommunication"
-
-#endif
+#include <aaudio/AAudio.h>
 
 QT_BEGIN_NAMESPACE
 
-class QOpenSLESEngine;
-class QIODevice;
-class QBuffer;
+namespace QtAAudio {
 
-class QAndroidAudioSource : public QPlatformAudioSource
+class QAndroidAudioSource;
+
+class QAndroidAudioSourceStream final : public QtMultimediaPrivate::QPlatformAudioSourceStream
 {
-    Q_OBJECT
+    using QPlatformAudiosourceStream = QtMultimediaPrivate::QPlatformAudioSourceStream;
+    using NativePeriodFrames = QtMultimediaPrivate::NativePeriodFrames;
 
 public:
-    QAndroidAudioSource(const QByteArray &device, QObject *parent);
-    ~QAndroidAudioSource();
+    explicit QAndroidAudioSourceStream(QAudioDevice device, const QAudioFormat &format,
+                                       std::optional<int> ringbufferSize,
+                                       QAndroidAudioSource *parent, float volume,
+                                       std::optional<NativePeriodFrames> nativePeriodFrames);
+    Q_DISABLE_COPY_MOVE(QAndroidAudioSourceStream)
+    ~QAndroidAudioSourceStream();
 
-    void start(QIODevice *device);
+    bool open();
+
+    bool start(QIODevice *);
     QIODevice *start();
-    void stop();
-    void reset();
+    bool start(AudioCallback &&);
+
     void suspend();
     void resume();
-    qsizetype bytesReady() const;
-    void setBufferSize(qsizetype value);
-    qsizetype bufferSize() const;
-    qint64 processedUSecs() const;
-    QAudio::Error error() const;
-    QAudio::State state() const;
-    void setFormat(const QAudioFormat &format);
-    QAudioFormat format() const;
+    void stop(ShutdownPolicy);
 
-    void setVolume(qreal volume);
-    qreal volume() const;
-
-public Q_SLOTS:
-    void processBuffer();
+    using QPlatformAudioSourceStream::bytesReady;
+    using QPlatformAudioSourceStream::deviceIsRingbufferReader;
+    using QPlatformAudioSourceStream::processedDuration;
+    using QPlatformAudioSourceStream::ringbufferSizeInBytes;
+    using QPlatformAudioSourceStream::setVolume;
 
 private:
-    bool startRecording();
-    void stopRecording();
-    void writeDataToDevice(const char *data, int size);
-    void flushBuffers();
+    // QPlatformAudioSourceStream overrides
+    void updateStreamIdle(bool idle) override;
 
-    QByteArray m_device;
-    QOpenSLESEngine *m_engine;
-    SLObjectItf m_recorderObject;
-    SLRecordItf m_recorder;
-#ifdef ANDROID
-    SLuint32 m_recorderPreset;
-    SLAndroidSimpleBufferQueueItf m_bufferQueue;
-#else
-    SLBufferQueueItf m_bufferQueue;
-#endif
+    QSpan<const std::byte> getHostSpan(void *audioData, int numFrames) const noexcept Q_DECL_NONBLOCKING_FUNCTION;
+    aaudio_data_callback_result_t processRingbuffer(QSpan<const std::byte> audioSpan,
+                                                    int numFrames) noexcept Q_DECL_NONBLOCKING_FUNCTION;
+    aaudio_data_callback_result_t
+    processCallback(QSpan<const std::byte> audioSpan) noexcept Q_DECL_NONBLOCKING_FUNCTION;
+    void handleError(aaudio_result_t error);
 
-    bool m_pullMode;
-    qint64 m_processedBytes;
-    QIODevice *m_audioSource;
-    QBuffer *m_bufferIODevice;
-    QByteArray m_pushBuffer;
-    QAudioFormat m_format;
-    QAudio::Error m_errorState;
-    QAudio::State m_deviceState;
-    qint64 m_lastNotifyTime;
-    qreal m_volume;
-    int m_bufferSize;
-    QByteArray *m_buffers;
-    int m_currentBuffer;
+    QAndroidAudioSource *m_parent;
+
+    std::optional<AudioCallback> m_audioCallback;
+
+    std::unique_ptr<QtAAudio::Stream> m_stream;
+
+    std::optional<QAudioFormat> m_hostFormat;
 };
+
+class QAndroidAudioSource final
+    : public QtMultimediaPrivate::QPlatformAudioSourceImplementationWithCallback<
+              QAndroidAudioSourceStream, QAndroidAudioSource>
+{
+    using BaseClass = QtMultimediaPrivate::QPlatformAudioSourceImplementationWithCallback<
+            QAndroidAudioSourceStream, QAndroidAudioSource>;
+
+public:
+    QAndroidAudioSource(QAudioDevice device, const QAudioFormat &format, QObject *parent);
+    ~QAndroidAudioSource() override;
+};
+
+}
 
 QT_END_NAMESPACE
 
-#endif // QOPENSLESAUDIOINPUT_H
+#endif // QANDROIDAUDIOINPUT_H

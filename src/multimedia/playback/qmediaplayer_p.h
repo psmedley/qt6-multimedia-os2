@@ -16,19 +16,21 @@
 //
 
 #include "qmediaplayer.h"
-#include "qmediametadata.h"
-#include "qvideosink.h"
-#include "qaudiooutput.h"
-#include "qaudiobufferoutput.h"
-#include <private/qplatformmediaplayer_p.h>
-#include <private/qerrorinfo_p.h>
+#include <QtMultimedia/qmediametadata.h>
+#include <QtMultimedia/qvideosink.h>
+#include <QtMultimedia/qaudiooutput.h>
+#include <QtMultimedia/qaudiobufferoutput.h>
+#include <QtMultimedia/qplaybackoptions.h>
+#include <QtMultimedia/private/qplatformmediaplayer_p.h>
+#include <QtMultimedia/private/qerrorinfo_p.h>
+#include <QtMultimedia/private/qmultimedia_source_resolver_p.h>
 
-#include "private/qobject_p.h"
 #include <QtCore/qobject.h>
 #include <QtCore/qpointer.h>
 #include <QtCore/qurl.h>
 #include <QtCore/qfile.h>
 #include <QtCore/qtimer.h>
+#include <QtCore/private/qobject_p.h>
 
 #include <memory>
 
@@ -57,11 +59,12 @@ public:
     std::unique_ptr<QFile> qrcFile;
     QUrl source;
     QIODevice *stream = nullptr;
+    QPlaybackOptions playbackOptions;
 
     QMediaPlayer::PlaybackState state = QMediaPlayer::StoppedState;
     QErrorInfo<QMediaPlayer::Error> error;
 
-    void setMedia(const QUrl &media, QIODevice *stream = nullptr);
+    void setMedia(QUrl media, QIODevice *stream = nullptr);
 
     QList<QMediaMetaData> trackMetaData(QPlatformMediaPlayer::TrackType s) const;
 
@@ -83,6 +86,11 @@ public:
             control->setVideoSink(sink);
         emit q->videoOutputChanged();
     }
+
+    using AbstractSourceResolver = QMultimediaPrivate::AbstractSourceResolver;
+    using TrivialSourceResolver = QMultimediaPrivate::TrivialSourceResolver;
+    std::unique_ptr<const AbstractSourceResolver> m_sourceResolver =
+            std::make_unique<TrivialSourceResolver>();
 };
 
 QT_END_NAMESPACE

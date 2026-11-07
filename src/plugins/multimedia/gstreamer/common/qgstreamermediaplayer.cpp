@@ -6,6 +6,7 @@
 #include <audio/qgstreameraudiodevice_p.h>
 #include <common/qglist_helper_p.h>
 #include <common/qgst_debug_p.h>
+#include <common/qgstutils_p.h>
 #include <common/qgst_discoverer_p.h>
 #include <common/qgst_play_p.h>
 #include <common/qgstpipeline_p.h>
@@ -17,19 +18,22 @@
 #include <uri_handler/qgstreamer_qiodevice_handler_p.h>
 #include <qgstreamerformatinfo_p.h>
 
+#include <QtMultimedia/private/qthreadlocalrhi_p.h>
 #include <QtMultimedia/qaudiodevice.h>
+#include <QtConcurrent/qtconcurrentrun.h>
+#include <QtCore/qdeadlinetimer.h>
 #include <QtCore/qdebug.h>
+#include <QtMultimedia/private/qmultimedia_ranges_p.h>
 #include <QtCore/qiodevice.h>
 #include <QtCore/qloggingcategory.h>
 #include <QtCore/qthread.h>
 #include <QtCore/qurl.h>
 #include <QtCore/private/quniquehandle_p.h>
 
-// NOLINTBEGIN(readability-convert-member-functions-to-static)
-
-static Q_LOGGING_CATEGORY(qLcMediaPlayer, "qt.multimedia.player")
+Q_STATIC_LOGGING_CATEGORY(qLcMediaPlayer, "qt.multimedia.player");
 
 QT_BEGIN_NAMESPACE
+namespace ranges = QtMultimediaPrivate::ranges;
 
 namespace {
 
@@ -51,16 +55,24 @@ std::optional<QGstreamerMediaPlayer::TrackType> toTrackType(const QGstCaps &caps
 
 } // namespace
 
-bool QGstreamerMediaPlayer::discover(const QUrl &url)
+QFuture<QGstreamerMediaPlayer::DiscoverResult> QGstreamerMediaPlayer::discover(QUrl url)
 {
-    QGst::QGstDiscoverer discoverer;
+    return QtConcurrent::run([url = std::move(url)] {
+        QGst::QGstDiscoverer discoverer;
+        return discoverer.discover(url);
+    });
+}
 
+void QGstreamerMediaPlayer::handleDiscoverResult(const DiscoverResult &discoveryResult,
+                                                 const QUrl &url)
+{
+    using namespace Qt::Literals;
     using namespace std::chrono;
     using namespace std::chrono_literals;
 
-    auto discoveryResult = discoverer.discover(url);
     if (discoveryResult) {
         // Make sure GstPlay is ready if play() is called from slots during discovery
+        qCDebug(qLcMediaPlayer) << "gst_play_set_uri";
         gst_play_set_uri(m_gstPlay.get(), url.toEncoded().constData());
 
         m_trackMetaData.fill({});
@@ -79,8 +91,9 @@ bool QGstreamerMediaPlayer::discover(const QUrl &url)
         m_nativeSize.clear();
         for (const auto &videoInfo : discoveryResult->videoStreams) {
             m_trackMetaData[0].emplace_back(QGst::toStreamMetadata(videoInfo));
-            QGstStructureView structure = videoInfo.caps.at(0);
-            m_nativeSize.emplace_back(structure.nativeSize());
+            QSize nativeSize = QGstUtils::qCalculateFrameSizeGStreamer(videoInfo.size,
+                                                                       videoInfo.pixelAspectRatio);
+            m_nativeSize.emplace_back(nativeSize);
         }
         for (const auto &audioInfo : discoveryResult->audioStreams)
             m_trackMetaData[1].emplace_back(QGst::toStreamMetadata(audioInfo));
@@ -134,9 +147,31 @@ bool QGstreamerMediaPlayer::discover(const QUrl &url)
         updateVideoTrackEnabled();
         updateAudioTrackEnabled();
         updateNativeSizeOnVideoOutput();
-    }
+        positionChanged(0ms);
 
-    return bool(discoveryResult);
+        // Handle the last play/pause/stop call made during async media loading.
+        m_hasPendingMedia = false;
+        if (m_requestedPlaybackState) {
+            switch (*m_requestedPlaybackState) {
+            case QMediaPlayer::PlayingState:
+                play();
+                break;
+            case QMediaPlayer::PausedState:
+                pause();
+                break;
+            default:
+                break;
+            }
+        }
+
+    } else {
+        qCDebug(qLcMediaPlayer) << "Discovery error:" << discoveryResult.error();
+        m_resourceErrorState = ResourceErrorState::ErrorOccurred;
+        setInvalidMediaWithError(QMediaPlayer::Error::ResourceError,
+                                 u"Resource cannot be discovered"_s);
+        m_hasPendingMedia = false;
+        resetStateForEmptyOrInvalidMedia();
+    };
 }
 
 void QGstreamerMediaPlayer::decoderPadAddedCustomSource(const QGstElement &src, const QGstPad &pad)
@@ -204,11 +239,11 @@ void QGstreamerMediaPlayer::decoderPadRemovedCustomSource(const QGstElement &src
     qCDebug(qLcMediaPlayer) << "Removed pad" << pad.name() << "from" << src.name() << "for stream"
                             << pad.streamId();
 
-    auto found = std::find(customPipelinePads.begin(), customPipelinePads.end(), pad);
+    auto found = ranges::find(customPipelinePads, pad);
     if (found == customPipelinePads.end())
         return;
 
-    TrackType type = TrackType(std::distance(customPipelinePads.begin(), found));
+    TrackType type = TrackType(found - customPipelinePads.cbegin());
 
     switch (type) {
     case VideoStream:
@@ -232,8 +267,7 @@ void QGstreamerMediaPlayer::resetStateForEmptyOrInvalidMedia()
     m_nativeSize.clear();
 
     bool metadataNeedsSignal = !m_metaData.isEmpty();
-    bool tracksNeedsSignal =
-            std::any_of(m_trackMetaData.begin(), m_trackMetaData.end(), [](const auto &container) {
+    bool tracksNeedsSignal = ranges::any_of(m_trackMetaData, [](const auto &container) {
         return !container.empty();
     });
 
@@ -274,6 +308,7 @@ void QGstreamerMediaPlayer::updateNativeSizeOnVideoOutput()
 
 void QGstreamerMediaPlayer::seekToCurrentPosition()
 {
+    qCDebug(qLcMediaPlayer) << "gst_play_seek";
     gst_play_seek(m_gstPlay.get(), gst_play_get_position(m_gstPlay.get()));
 }
 
@@ -310,11 +345,11 @@ void QGstreamerMediaPlayer::disconnectDecoderHandlers()
         handler->disconnect();
 }
 
-QMaybe<QPlatformMediaPlayer *> QGstreamerMediaPlayer::create(QMediaPlayer *parent)
+q23::expected<QPlatformMediaPlayer *, QString> QGstreamerMediaPlayer::create(QMediaPlayer *parent)
 {
     auto videoOutput = QGstreamerVideoOutput::create();
     if (!videoOutput)
-        return videoOutput.error();
+        return q23::unexpected{ videoOutput.error() };
 
     return new QGstreamerMediaPlayer(videoOutput.value(), parent);
 }
@@ -348,6 +383,11 @@ QGstreamerMediaPlayer::QGstreamerMediaPlayer(QGstreamerVideoOutput *videoOutput,
     // QTBUG-131300: nxp deliberately reverted to an old gst-play API before the gst-play API
     // stabilized. compare:
     // https://github.com/nxp-imx/gst-plugins-bad/commit/ff04fa9ca1b79c98e836d8cdb26ac3502dafba41
+
+    // Update: Looks like first unaffected Yocto release series is 5.3 Whinlatter, so this hack can
+    // likely be removed when we drop Boot to Qt support for the LTS 5.0 Scarthgap (EOL April 2028).
+    // Link to first unaffected nxp gstreamer branch:
+    // https://github.com/nxp-imx/gst-plugins-bad/blame/MM_04.10.0_2505_L6.12.20/gst-libs/gst/play/gstplay.c#L4690C9-L4690C9
     constexpr bool useNxpWorkaround = std::is_same_v<decltype(&gst_play_config_set_seek_accurate),
                                                      void (*)(GstPlay *, gboolean)>;
 
@@ -371,6 +411,11 @@ QGstreamerMediaPlayer::QGstreamerMediaPlayer(QGstreamerVideoOutput *videoOutput,
 
     gstVideoOutput->setParent(this);
 
+    // NOTE: Creating a GStreamer video sink to be owned by the media player, any sink created by
+    // user would be a pluggable sink connected to this
+    m_gstVideoSink = new QGstreamerRelayVideoSink(this);
+    gstVideoOutput->setVideoSink(m_gstVideoSink);
+
     m_playbin.set("video-sink", gstVideoOutput->gstElement());
     m_playbin.set("text-sink", gstVideoOutput->gstSubtitleElement());
     m_playbin.set("audio-sink", QGstElement::createFromPipelineDescription("fakesink"));
@@ -389,12 +434,56 @@ QGstreamerMediaPlayer::QGstreamerMediaPlayer(QGstreamerVideoOutput *videoOutput,
 
 QGstreamerMediaPlayer::~QGstreamerMediaPlayer()
 {
+    using namespace std::chrono_literals;
+    using namespace std::chrono;
+    qCDebug(qLcMediaPlayer) << "~QGstreamerMediaPlayer" << m_callStopInDestructor
+                            << m_expectedStoppedMessages << state();
+
     if (customPipeline)
         cleanupCustomPipeline();
 
     m_gstPlayBus.removeMessageFilter(static_cast<QGstreamerBusMessageFilter *>(this));
-    gst_bus_set_flushing(m_gstPlayBus.get(), TRUE);
-    gst_play_stop(m_gstPlay.get());
+
+    if (m_callStopInDestructor) {
+        m_expectedStoppedMessages += 1;
+        qCDebug(qLcMediaPlayer) << "gst_play_stop";
+        gst_play_stop(m_gstPlay.get());
+    }
+
+    if (m_expectedStoppedMessages) {
+        auto processNextMessage = [this](nanoseconds timeout) {
+            QGstreamerMessage message{
+                gst_bus_timed_pop_filtered(m_gstPlayBus.get(), timeout.count(),
+                                           GST_MESSAGE_APPLICATION), QGstreamerMessage::HasRef
+            };
+            if (!message || !gst_play_is_play_message(message.message()))
+                return;
+            GstPlayMessage type;
+            gst_play_message_parse_type(message.message(), &type);
+            qCDebug(qLcMediaPlayer) << QGstPlayMessageAdaptor{ message };
+            if (type == GST_PLAY_MESSAGE_END_OF_STREAM) {
+                m_expectedStoppedMessages += 1;
+                return;
+            }
+            if (type == GST_PLAY_MESSAGE_STATE_CHANGED) {
+                GstPlayState state;
+                gst_play_message_parse_state_changed(message.message(), &state);
+                if (state == GST_PLAY_STATE_STOPPED) {
+                    if (m_expectedStoppedMessages > 0)
+                        m_expectedStoppedMessages -= 1;
+                }
+            }
+        };
+
+        constexpr auto timeout = 200ms;
+        QDeadlineTimer deadline{timeout};
+        while (!deadline.hasExpired() && m_expectedStoppedMessages)
+            processNextMessage(deadline.remainingTimeAsDuration());
+
+        if (m_expectedStoppedMessages)
+            qWarning() << "Did not receive expected STOPPED state change messages from GstPlay "
+                          "in QGstreamerMediaPlayer destructor:" << m_expectedStoppedMessages;
+    }
 
     // NOTE: gst_play_stop is not sufficient, un-reffing m_gstPlay can deadlock
     m_playbin.setStateSync(GST_STATE_NULL);
@@ -402,6 +491,8 @@ QGstreamerMediaPlayer::~QGstreamerMediaPlayer()
     m_playbin.set("video-sink", QGstElement::createFromPipelineDescription("fakesink"));
     m_playbin.set("text-sink", QGstElement::createFromPipelineDescription("fakesink"));
     m_playbin.set("audio-sink", QGstElement::createFromPipelineDescription("fakesink"));
+
+    gst_bus_set_flushing(m_gstPlayBus.get(), TRUE);
 }
 
 void QGstreamerMediaPlayer::updatePositionFromPipeline()
@@ -505,11 +596,15 @@ bool QGstreamerMediaPlayer::processBusMessageApplication(const QGstreamerMessage
         return false;
     }
     case GST_PLAY_MESSAGE_STATE_CHANGED: {
+        m_playOrPauseCalledSinceLastStateChangedOrEosMessage = false;
         GstPlayState state;
         gst_play_message_parse_state_changed(message.message(), &state);
 
         switch (state) {
         case GstPlayState::GST_PLAY_STATE_STOPPED:
+            if (m_expectedStoppedMessages > 0)
+                m_expectedStoppedMessages -= 1;
+
             if (stateChangeToSkip) {
                 qCDebug(qLcMediaPlayer) << "    skipping StoppedState transition";
 
@@ -557,9 +652,17 @@ bool QGstreamerMediaPlayer::processBusMessageApplication(const QGstreamerMessage
         return false;
     }
     case GST_PLAY_MESSAGE_END_OF_STREAM: {
+        m_expectedStoppedMessages += 1;
+        // Set m_callStopInDestructor to false except in the edge case where play or pause is called
+        // after reaching EOS, but before we've processed this EOS message
+        if (!m_playOrPauseCalledSinceLastStateChangedOrEosMessage)
+            m_callStopInDestructor = false;
+        m_playOrPauseCalledSinceLastStateChangedOrEosMessage = false;
+
         if (doLoop()) {
             positionChanged(m_duration);
-            qCDebug(qLcMediaPlayer) << "EOS: restarting loop";
+            m_callStopInDestructor = true;
+            qCDebug(qLcMediaPlayer) << "EOS: restarting loop (gst_play_play)";
             gst_play_play(m_gstPlay.get());
             positionChanged(0ms);
 
@@ -673,13 +776,17 @@ void QGstreamerMediaPlayer::setPosition(std::chrono::milliseconds pos)
 
         customPipeline.setPosition(pos);
         return;
-    } else {
-        qCDebug(qLcMediaPlayer) << "gst_play_seek" << pos;
-        gst_play_seek(m_gstPlay.get(), nanoseconds(pos).count());
-
-        if (mediaStatus() == QMediaPlayer::EndOfMedia)
-            mediaStatusChanged(QMediaPlayer::LoadedMedia);
     }
+
+    if (m_hasPendingMedia) {
+        return;
+    }
+
+    qCDebug(qLcMediaPlayer) << "gst_play_seek" << pos;
+    gst_play_seek(m_gstPlay.get(), nanoseconds(pos).count());
+
+    if (mediaStatus() == QMediaPlayer::EndOfMedia)
+        mediaStatusChanged(QMediaPlayer::LoadedMedia);
     positionChanged(pos);
 }
 
@@ -689,6 +796,13 @@ void QGstreamerMediaPlayer::play()
         gstVideoOutput->setActive(true);
         customPipeline.setState(GST_STATE_PLAYING);
         stateChanged(QMediaPlayer::PlayingState);
+        return;
+    }
+
+    if (m_hasPendingMedia) {
+        // Async media loading in progress via QGstDiscoverer, m_discoveryHandler will fulfill the
+        // last requested playback state later.
+        m_requestedPlaybackState = QMediaPlayer::PlayingState;
         return;
     }
 
@@ -705,12 +819,15 @@ void QGstreamerMediaPlayer::play()
     }
 
     if (m_pendingSeek) {
+        qCDebug(qLcMediaPlayer) << "gst_play_seek";
         gst_play_seek(m_gstPlay.get(), m_pendingSeek->count());
         m_pendingSeek = std::nullopt;
     }
 
-    qCDebug(qLcMediaPlayer) << "gst_play_play";
     gstVideoOutput->setActive(true);
+    m_callStopInDestructor = true;
+    m_playOrPauseCalledSinceLastStateChangedOrEosMessage = true;
+    qCDebug(qLcMediaPlayer) << "gst_play_play";
     gst_play_play(m_gstPlay.get());
     stateChanged(QMediaPlayer::PlayingState);
 }
@@ -724,12 +841,19 @@ void QGstreamerMediaPlayer::pause()
         return;
     }
 
+    if (m_hasPendingMedia) {
+        m_requestedPlaybackState = QMediaPlayer::PausedState;
+        return;
+    }
+
     if (state() == QMediaPlayer::PausedState || !hasMedia()
         || m_resourceErrorState != ResourceErrorState::NoError)
         return;
 
     gstVideoOutput->setActive(true);
 
+    m_callStopInDestructor = true;
+    m_playOrPauseCalledSinceLastStateChangedOrEosMessage = true;
     qCDebug(qLcMediaPlayer) << "gst_play_pause";
     gst_play_pause(m_gstPlay.get());
 
@@ -746,6 +870,11 @@ void QGstreamerMediaPlayer::stop()
         return;
     }
 
+    if (m_hasPendingMedia) {
+        m_requestedPlaybackState = QMediaPlayer::StoppedState;
+        return;
+    }
+
     using namespace std::chrono_literals;
     if (state() == QMediaPlayer::StoppedState) {
         if (position() != 0) {
@@ -756,8 +885,10 @@ void QGstreamerMediaPlayer::stop()
         return;
     }
 
-    qCDebug(qLcMediaPlayer) << "gst_play_stop";
     gstVideoOutput->setActive(false);
+    m_expectedStoppedMessages += 1;
+    m_callStopInDestructor = false;
+    qCDebug(qLcMediaPlayer) << "gst_play_stop";
     gst_play_stop(m_gstPlay.get());
 
     stateChanged(QMediaPlayer::StoppedState);
@@ -777,6 +908,17 @@ const QGstPipeline &QGstreamerMediaPlayer::pipeline() const
 bool QGstreamerMediaPlayer::canPlayQrc() const
 {
     return true;
+}
+
+bool QGstreamerMediaPlayer::pitchCompensation() const
+{
+    return true;
+}
+
+QPlatformMediaPlayer::PitchCompensationAvailability
+QGstreamerMediaPlayer::pitchCompensationAvailability() const
+{
+    return PitchCompensationAvailability::AlwaysOn;
 }
 
 QUrl QGstreamerMediaPlayer::media() const
@@ -825,16 +967,17 @@ void QGstreamerMediaPlayer::sourceSetupCallback([[maybe_unused]] GstElement *pla
 
 void QGstreamerMediaPlayer::setMedia(const QUrl &content, QIODevice *stream)
 {
-    using namespace Qt::Literals;
-    using namespace std::chrono;
-    using namespace std::chrono_literals;
-
     if (customPipeline)
         cleanupCustomPipeline();
 
     m_resourceErrorState = ResourceErrorState::NoError;
     m_url = content;
     m_stream = stream;
+
+    // cancel any pending discovery continuations
+    m_discoveryHandler.cancel();
+    m_discoverFuture.cancel();
+
     QUrl streamURL;
     if (stream)
         streamURL = qGstRegisterQIODevice(stream);
@@ -849,20 +992,16 @@ void QGstreamerMediaPlayer::setMedia(const QUrl &content, QIODevice *stream)
         setMediaCustomSource(content);
     } else {
         mediaStatusChanged(QMediaPlayer::LoadingMedia);
+        m_hasPendingMedia = true;
+        m_requestedPlaybackState = std::nullopt;
+
         const QUrl &playUrl = stream ? streamURL : content;
+        m_discoverFuture = discover(playUrl);
 
-        // LATER: discover is synchronous, but we would be way more friendly to make it
-        // asynchronous.
-        bool mediaDiscovered = discover(playUrl);
-        if (!mediaDiscovered) {
-            m_resourceErrorState = ResourceErrorState::ErrorOccurred;
-            error(QMediaPlayer::Error::ResourceError, u"Resource cannot be discovered"_s);
-            mediaStatusChanged(QMediaPlayer::InvalidMedia);
-            resetStateForEmptyOrInvalidMedia();
-            return;
-        }
-
-        positionChanged(0ms);
+        m_discoveryHandler =
+                m_discoverFuture.then(this,[this, playUrl](const DiscoverResult &result) {
+                    handleDiscoverResult(result, playUrl);
+                });
     }
 }
 
@@ -972,7 +1111,8 @@ void QGstreamerMediaPlayer::setAudioOutput(QPlatformAudioOutput *output)
 
     // FIXME: we need to have a gst_play API to change the sinks on the fly.
     // finishStateChange a hack to avoid assertion failures in gstreamer
-    m_playbin.finishStateChange();
+    if (!qmediaplayerDestructorCalled)
+        m_playbin.finishStateChange();
 }
 
 QMediaMetaData QGstreamerMediaPlayer::metaData() const
@@ -982,23 +1122,16 @@ QMediaMetaData QGstreamerMediaPlayer::metaData() const
 
 void QGstreamerMediaPlayer::setVideoSink(QVideoSink *sink)
 {
-    if (isCustomSource()) {
-        qWarning() << "QMediaPlayer::setVideoSink not supported when using custom sources";
+    // Disconnect previous sink
+    m_gstVideoSink->disconnectPluggableVideoSink();
+
+    if (!sink)
         return;
-    }
 
-    auto *gstSink = sink ? static_cast<QGstreamerVideoSink *>(sink->platformVideoSink()) : nullptr;
-    if (gstSink)
-        gstSink->setAsync(false);
-
-    gstVideoOutput->setVideoSink(sink);
-    updateVideoTrackEnabled();
-
-    if (sink && state() == QMediaPlayer::PausedState) {
-        // FIXME: we want to get a the existing frame, but gst_play does not have such capabilities.
-        // seeking to the current position is a rather bad hack, but it's the best we can do for now
-        seekToCurrentPosition();
-    }
+    // Connect pluggable sink to native sink
+    auto pluggableSink = dynamic_cast<QGstreamerPluggableVideoSink *>(sink->platformVideoSink());
+    Q_ASSERT(pluggableSink);
+    m_gstVideoSink->connectPluggableVideoSink(pluggableSink);
 }
 
 int QGstreamerMediaPlayer::trackCount(QPlatformMediaPlayer::TrackType type)

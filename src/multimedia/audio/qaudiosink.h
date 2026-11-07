@@ -5,18 +5,13 @@
 #ifndef QAUDIOOUTPUT_H
 #define QAUDIOOUTPUT_H
 
+#include <QtMultimedia/qaudiodevice.h>
+#include <QtMultimedia/qaudioformat.h>
+#include <QtMultimedia/qtaudio.h>
+#include <QtMultimedia/qtmultimediaglobal.h>
 #include <QtCore/qiodevice.h>
 
-#include <QtMultimedia/qtmultimediaglobal.h>
-
-#include <QtMultimedia/qtaudio.h>
-#include <QtMultimedia/qaudioformat.h>
-#include <QtMultimedia/qaudiodevice.h>
-
-
 QT_BEGIN_NAMESPACE
-
-
 
 class QPlatformAudioSink;
 
@@ -36,6 +31,23 @@ public:
     void start(QIODevice *device);
     QIODevice* start();
 
+    template <typename Callback, QtAudio::if_audio_sink_callback<Callback> = true>
+    void start(Callback &&cb)
+    {
+        Q_ASSERT(QtAudioPrivate::isNonnullFunction(cb));
+
+        if constexpr (!std::is_copy_constructible_v<Callback>) {
+            // poor man's move-only function
+            using CallbackType = typename QtAudioPrivate::GetSampleType<Callback>::type;
+            auto callback = std::make_shared<std::decay_t<Callback>>(std::forward<Callback>(cb));
+            start([callback = std::move(callback)](QSpan<CallbackType> arg) {
+                (*callback)(arg);
+            });
+        } else {
+            startABIImpl(QtAudioPrivate::AudioSinkCallback(std::forward<Callback>(cb)));
+        }
+    }
+
     void stop();
     void reset();
     void suspend();
@@ -44,7 +56,14 @@ public:
     void setBufferSize(qsizetype bytes);
     qsizetype bufferSize() const;
 
+    void setBufferFrameCount(qsizetype framesCount);
+    qsizetype bufferFrameCount() const;
+
+    void setNativePeriodFrameCount(qsizetype frameCount);
+    qsizetype nativePeriodFrameCount() const;
+
     qsizetype bytesFree() const;
+    qsizetype framesFree() const;
 
     qint64 processedUSecs() const;
     qint64 elapsedUSecs() const;
@@ -64,9 +83,15 @@ Q_SIGNALS:
 #endif
 
 private:
+    template <typename T>
+    void startImpl(T &&callback);
+
+    void startABIImpl(QtAudioPrivate::AudioSinkCallback &&);
+
     Q_DISABLE_COPY(QAudioSink)
 
-    QPlatformAudioSink* d;
+    friend class QPlatformAudioSink;
+    QPlatformAudioSink *d;
 };
 
 QT_END_NAMESPACE

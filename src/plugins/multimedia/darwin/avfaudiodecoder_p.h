@@ -15,26 +15,23 @@
 // We mean it.
 //
 
+#include <QtMultimedia/qaudiodecoder.h>
+#include <QtMultimedia/private/qplatformaudiodecoder_p.h>
 #include <QtMultimedia/private/qtmultimediaglobal_p.h>
-#include <QObject>
+#include <QtCore/qmutex.h>
+#include <QtCore/qobject.h>
+#include <QtCore/qqueue.h>
 #include <QtCore/qurl.h>
-#include <QWaitCondition>
-#include <QMutex>
-#include <QQueue>
+#include <QtCore/qwaitcondition.h>
 
-#include "private/qplatformaudiodecoder_p.h"
-#include "qaudiodecoder.h"
+#import <dispatch/dispatch.h>
+#import <AVFoundation/AVFoundation.h>
 
-#include <dispatch/dispatch.h>
-
-Q_FORWARD_DECLARE_OBJC_CLASS(AVURLAsset);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVAssetReader);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVAssetReaderTrackOutput);
-Q_FORWARD_DECLARE_OBJC_CLASS(AVFResourceReaderDelegate);
+@class AVFResourceReaderDelegate;
 
 QT_BEGIN_NAMESPACE
 
-class AVFAudioDecoder : public QPlatformAudioDecoder
+class AVFAudioDecoder final : public QPlatformAudioDecoder
 {
     Q_OBJECT
 
@@ -42,7 +39,7 @@ class AVFAudioDecoder : public QPlatformAudioDecoder
 
 public:
     AVFAudioDecoder(QAudioDecoder *parent);
-    virtual ~AVFAudioDecoder();
+    ~AVFAudioDecoder() override;
 
     QUrl source() const override;
     void setSource(const QUrl &fileName) override;
@@ -60,7 +57,7 @@ public:
 
 private:
     void handleNewAudioBuffer(QAudioBuffer);
-    void startReading();
+    void startReading(QAudioFormat);
 
     void processInvalidMedia(QAudioDecoder::Error errorCode, const QString& errorString);
     void initAssetReader();
@@ -72,6 +69,7 @@ private:
 
     template<typename F>
     void invokeWithDecodingContext(std::weak_ptr<DecodingContext> weakContext, F &&f);
+    Q_INVOKABLE void initAssetReaderImpl(AVAssetTrack *track, NSError *error);
 
 private:
     QUrl m_source;

@@ -13,36 +13,37 @@ qt_internal_add_plugin(QDarwinMediaPlugin
         mediaplayer/avfvideorenderercontrol.mm mediaplayer/avfvideorenderercontrol_p.h
         avfvideosink.mm avfvideosink_p.h
         avfvideobuffer.mm avfvideobuffer_p.h
-        qavfhelpers.mm qavfhelpers_p.h
         qdarwinformatsinfo.mm qdarwinformatsinfo_p.h
         qdarwinintegration.mm qdarwinintegration_p.h
-    INCLUDE_DIRECTORIES
-        audio
-        camera
-        common
-        mediaplayer
+        darwin_pch.h
+    DEFINES
+        QT_NO_CAST_FROM_ASCII
+        QT_NO_CAST_TO_ASCII
     LIBRARIES
         Qt::MultimediaPrivate
         Qt::CorePrivate
+        Qt::Concurrent
+        ${FWAVFoundation}
         ${FWAudioToolbox}
         ${FWCoreMedia}
         ${FWCoreVideo}
         ${FWFoundation}
         ${FWMetal}
         ${FWQuartzCore}
-        AVFoundation::AVFoundation
+        ${FWVideoToolbox}
+    COMPILE_OPTIONS
+        -Wno-c++20-extensions
+    PRECOMPILED_HEADER
+       $<$<COMPILE_LANGUAGE:OBJCXX>:darwin_pch.h>
 )
 
-qt_internal_extend_target(QDarwinMediaPlugin CONDITION NOT TVOS
+qt_internal_extend_target(QDarwinMediaPlugin CONDITION NOT TVOS AND NOT VISIONOS
     SOURCES
-        camera/qavfcamerabase.mm camera/qavfcamerabase_p.h
         camera/avfcamera.mm camera/avfcamera_p.h
-        camera/avfcameradebug_p.h
         camera/avfaudiopreviewdelegate.mm camera/avfaudiopreviewdelegate_p.h
         camera/avfcamerarenderer.mm camera/avfcamerarenderer_p.h
         camera/avfcameraservice.mm camera/avfcameraservice_p.h
         camera/avfcamerasession.mm camera/avfcamerasession_p.h
-        camera/avfcamerautility.mm camera/avfcamerautility_p.h
         camera/avfimagecapture.mm camera/avfimagecapture_p.h
         camera/avfmediaassetwriter.mm camera/avfmediaassetwriter_p.h
         camera/avfmediaencoder.mm camera/avfmediaencoder_p.h
@@ -51,13 +52,4 @@ qt_internal_extend_target(QDarwinMediaPlugin CONDITION NOT TVOS
 qt_internal_extend_target(QDarwinMediaPlugin CONDITION MACOS
     LIBRARIES
         ${FWAppKit}
-        ${FWAudioUnit}
-        ${FWVideoToolbox}
-        ${FWApplicationServices}
-)
-
-qt_internal_extend_target(QDarwinMediaPlugin CONDITION IOS
-    LIBRARIES
-        ${FWCoreGraphics}
-        ${FWCoreVideo}
 )

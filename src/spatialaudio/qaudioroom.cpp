@@ -1,29 +1,36 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-3.0-only
-#include <qaudioroom_p.h>
+
+#include "qaudioroom.h"
+#include "qaudioroom_p.h"
+
+#include <QtCore/qspan.h>
+
+#include "platforms/common/room_effects_utils.h"
 
 QT_BEGIN_NAMESPACE
 
 namespace {
-inline QVector3D toVector(const float *f)
+
+inline QVector3D toVector(QSpan<const float, 3> f)
 {
     return QVector3D(f[0], f[1], f[2]);
 }
 
-inline void toFloats(const QVector3D &v, float *f)
+inline void toFloats(QVector3D v, QSpan<float, 3> f)
 {
     f[0] = v.x();
     f[1] = v.y();
     f[2] = v.z();
 }
 
-inline QQuaternion toQuaternion(const float *f)
+inline QQuaternion toQuaternion(QSpan<const float, 4> f)
 {
     // resonance audio puts the scalar component last
     return QQuaternion(f[3], f[0], f[1], f[2]);
 }
 
-inline void toFloats(const QQuaternion &q, float *f)
+inline void toFloats(QQuaternion q, QSpan<float, 4> f)
 {
     f[0] = q.x();
     f[1] = q.y();
@@ -37,7 +44,7 @@ inline void toFloats(const QQuaternion &q, float *f)
 // We define both occlusion and dampening constants to be able to tune the
 // sound. Dampening only reduces the level of the sound without affecting its
 // tone, while occlusion will dampen higher frequencies more than lower ones
-struct {
+constexpr struct {
     float occlusion;
     float dampening;
 } occlusionAndDampening[] = {
@@ -77,6 +84,15 @@ static_assert(QAudioRoom::Floor == 2);
 static_assert(QAudioRoom::Ceiling == 3);
 static_assert(QAudioRoom::FrontWall == 4);
 static_assert(QAudioRoom::BackWall == 5);
+
+void QAudioRoomPrivate::requestUpdate()
+{
+    dirty = true;
+    auto ep = QAudioEnginePrivate::get(engine);
+    if (!ep)
+        return;
+    ep->updateRooms();
+}
 
 float QAudioRoomPrivate::wallOcclusion(QAudioRoom::Wall wall) const
 {
@@ -120,13 +136,21 @@ void QAudioRoomPrivate::update()
 
 /*!
     Constructs a QAudioRoom for \a engine.
+
+    \note Must be called with a valid QAudioEngine
  */
-QAudioRoom::QAudioRoom(QAudioEngine *engine)
-    : d(new QAudioRoomPrivate)
+QAudioRoom::QAudioRoom(QAudioEngine *engine) : QObject(*new QAudioRoomPrivate)
 {
-    Q_ASSERT(engine);
+    if (!engine) {
+        qWarning() << "Cannot create QAudioRoom without a valid QAudioEngine";
+        return;
+    }
+
+    Q_D(QAudioRoom);
     d->engine = engine;
     auto *ep = QAudioEnginePrivate::get(engine);
+    if (!ep)
+        return;
     ep->addRoom(this);
 }
 
@@ -135,10 +159,10 @@ QAudioRoom::QAudioRoom(QAudioEngine *engine)
  */
 QAudioRoom::~QAudioRoom()
 {
+    Q_D(QAudioRoom);
     auto *ep = QAudioEnginePrivate::get(d->engine);
     if (ep)
         ep->removeRoom(this);
-    delete d;
 }
 
 /*!
@@ -196,20 +220,28 @@ QAudioRoom::~QAudioRoom()
  */
 void QAudioRoom::setPosition(QVector3D pos)
 {
+    Q_D(QAudioRoom);
     auto *ep = QAudioEnginePrivate::get(d->engine);
-    pos *= ep->distanceScale;
+    if (!ep)
+        return;
+
+    pos *= ep->distanceScale();
     if (toVector(d->roomProperties.position) == pos)
         return;
     toFloats(pos, d->roomProperties.position);
-    d->dirty = true;
+    d->requestUpdate();
     emit positionChanged();
 }
 
 QVector3D QAudioRoom::position() const
 {
+    Q_D(const QAudioRoom);
     auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return {};
+
     auto pos = toVector(d->roomProperties.position);
-    pos /= ep->distanceScale;
+    pos /= ep->distanceScale();
     return pos;
 }
 
@@ -223,20 +255,28 @@ QVector3D QAudioRoom::position() const
  */
 void QAudioRoom::setDimensions(QVector3D dim)
 {
+    Q_D(QAudioRoom);
     auto *ep = QAudioEnginePrivate::get(d->engine);
-    dim *= ep->distanceScale;
+    if (!ep)
+        return;
+
+    dim *= ep->distanceScale();
     if (toVector(d->roomProperties.dimensions) == dim)
         return;
     toFloats(dim, d->roomProperties.dimensions);
-    d->dirty = true;
+    d->requestUpdate();
     emit dimensionsChanged();
 }
 
 QVector3D QAudioRoom::dimensions() const
 {
+    Q_D(const QAudioRoom);
     auto *ep = QAudioEnginePrivate::get(d->engine);
+    if (!ep)
+        return {};
+
     auto dim = toVector(d->roomProperties.dimensions);
-    dim /= ep->distanceScale;
+    dim /= ep->distanceScale();
     return dim;
 }
 
@@ -247,15 +287,19 @@ QVector3D QAudioRoom::dimensions() const
  */
 void QAudioRoom::setRotation(const QQuaternion &q)
 {
+    Q_D(QAudioRoom);
+
     if (toQuaternion(d->roomProperties.rotation) == q)
         return;
     toFloats(q, d->roomProperties.rotation);
-    d->dirty = true;
+    d->requestUpdate();
     emit rotationChanged();
 }
 
 QQuaternion QAudioRoom::rotation() const
 {
+    Q_D(const QAudioRoom);
+
     return toQuaternion(d->roomProperties.rotation);
 }
 
@@ -274,13 +318,15 @@ QQuaternion QAudioRoom::rotation() const
  */
 void QAudioRoom::setWallMaterial(Wall wall, Material material)
 {
+    Q_D(QAudioRoom);
+
     static_assert(vraudio::kUniform == int(UniformMaterial));
     static_assert(vraudio::kTransparent == int(Transparent));
 
     if (d->roomProperties.material_names[int(wall)] == int(material))
         return;
     d->roomProperties.material_names[int(wall)] = vraudio::MaterialName(int(material));
-    d->dirty = true;
+    d->requestUpdate();
     emit wallsChanged();
 }
 
@@ -291,6 +337,7 @@ void QAudioRoom::setWallMaterial(Wall wall, Material material)
  */
 QAudioRoom::Material QAudioRoom::wallMaterial(Wall wall) const
 {
+    Q_D(const QAudioRoom);
     return Material(d->roomProperties.material_names[int(wall)]);
 }
 
@@ -306,17 +353,20 @@ QAudioRoom::Material QAudioRoom::wallMaterial(Wall wall) const
  */
 void QAudioRoom::setReflectionGain(float factor)
 {
+    Q_D(QAudioRoom);
+
     if (factor < 0.)
         factor = 0.;
     if (d->roomProperties.reflection_scalar == factor)
         return;
     d->roomProperties.reflection_scalar = factor;
-    d->dirty = true;
+    d->requestUpdate();
     emit reflectionGainChanged();
 }
 
 float QAudioRoom::reflectionGain() const
 {
+    Q_D(const QAudioRoom);
     return d->roomProperties.reflection_scalar;
 }
 
@@ -332,17 +382,21 @@ float QAudioRoom::reflectionGain() const
  */
 void QAudioRoom::setReverbGain(float factor)
 {
+    Q_D(QAudioRoom);
+
     if (factor < 0)
         factor = 0;
     if (d->roomProperties.reverb_gain == factor)
         return;
     d->roomProperties.reverb_gain = factor;
-    d->dirty = true;
+    d->requestUpdate();
     emit reverbGainChanged();
 }
 
 float QAudioRoom::reverbGain() const
 {
+    Q_D(const QAudioRoom);
+
     return d->roomProperties.reverb_gain;
 }
 
@@ -357,17 +411,21 @@ float QAudioRoom::reverbGain() const
  */
 void QAudioRoom::setReverbTime(float factor)
 {
+    Q_D(QAudioRoom);
+
     if (factor < 0)
         factor = 0;
     if (d->roomProperties.reverb_time == factor)
         return;
     d->roomProperties.reverb_time = factor;
-    d->dirty = true;
+    d->requestUpdate();
     emit reverbTimeChanged();
 }
 
 float QAudioRoom::reverbTime() const
 {
+    Q_D(const QAudioRoom);
+
     return d->roomProperties.reverb_time;
 }
 
@@ -382,15 +440,19 @@ float QAudioRoom::reverbTime() const
  */
 void QAudioRoom::setReverbBrightness(float factor)
 {
+    Q_D(QAudioRoom);
+
     if (d->roomProperties.reverb_brightness == factor)
         return;
     d->roomProperties.reverb_brightness = factor;
-    d->dirty = true;
+    d->requestUpdate();
     emit reverbBrightnessChanged();
 }
 
 float QAudioRoom::reverbBrightness() const
 {
+    Q_D(const QAudioRoom);
+
     return d->roomProperties.reverb_brightness;
 }
 

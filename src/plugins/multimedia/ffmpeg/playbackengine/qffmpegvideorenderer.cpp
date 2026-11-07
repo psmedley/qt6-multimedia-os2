@@ -1,18 +1,20 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "playbackengine/qffmpegvideorenderer_p.h"
+#include "qffmpegvideorenderer_p.h"
+
 #include "qffmpegvideobuffer_p.h"
-#include "qvideosink.h"
-#include "private/qvideoframe_p.h"
+
+#include <QtMultimedia/qvideosink.h>
+#include <QtMultimedia/private/qvideoframe_p.h>
 
 QT_BEGIN_NAMESPACE
 
 namespace QFFmpeg {
 
-VideoRenderer::VideoRenderer(const TimeController &tc, QVideoSink *sink,
-                             const VideoTransformation &transform)
-    : Renderer(tc), m_sink(sink), m_transform(transform)
+VideoRenderer::VideoRenderer(const PlaybackEngineObjectID &id, const TimeController &tc,
+                             QVideoSink *sink, const VideoTransformation &transform)
+    : Renderer(id, tc), m_sink(sink), m_transform(transform)
 {
 }
 
@@ -71,7 +73,7 @@ VideoRenderer::RenderingResult VideoRenderer::renderInternal(Frame frame)
     format.setColorRange(buffer->colorRange());
     format.setMaxLuminance(buffer->maxNits());
     format.setRotation(m_transform.rotation);
-    format.setMirrored(m_transform.mirrorredHorizontallyAfterRotation);
+    format.setMirrored(m_transform.mirroredHorizontallyAfterRotation);
     QVideoFrame videoFrame = QVideoFramePrivate::createFrame(std::move(buffer), format);
     videoFrame.setStartTime(frame.startTime().get());
     videoFrame.setEndTime(frame.endTime().get());

@@ -1,17 +1,19 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "avfmediaencoder_p.h"
-#include "avfcamerarenderer_p.h"
 #include "avfmediaassetwriter_p.h"
-#include "avfcameraservice_p.h"
-#include "avfcamerasession_p.h"
-#include "avfcameradebug_p.h"
-#include <qdarwinformatsinfo_p.h>
-#include <avfmetadata_p.h>
 
-#include <QtCore/qmetaobject.h>
+#include <camera/avfcamerarenderer_p.h>
+#include <camera/avfcameraservice_p.h>
+#include <camera/avfcamerasession_p.h>
+#include <camera/avfmediaencoder_p.h>
+#include <common/avfmetadata_p.h>
+#include <qdarwinformatsinfo_p.h>
+
+#include <QtMultimedia/private/qavfcameradebug_p.h>
 #include <QtCore/qatomic.h>
+#include <QtCore/qmetaobject.h>
+#include <QtCore/private/qcore_mac_p.h>
 
 QT_USE_NAMESPACE
 
@@ -48,7 +50,8 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
 - (bool)addWriterInputs;
 - (void)setQueues;
 - (void)updateDuration:(CMTime)newTimeStamp;
-- (CMSampleBufferRef)adjustTime:(CMSampleBufferRef)sample by:(CMTime)offset;
+- (QCFType<CMSampleBufferRef>)adjustTime:(const QCFType<CMSampleBufferRef> &)sample
+                                      by:(CMTime)offset;
 @end
 
 @implementation QT_MANGLE_NAMESPACE(AVFMediaAssetWriter)
@@ -58,6 +61,10 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
 
     AVFScopedPointer<AVAssetWriterInput> m_cameraWriterInput;
     AVFScopedPointer<AVAssetWriterInput> m_audioWriterInput;
+
+    // Pending audio buffer waiting for format stabilization:
+    QCFType<CMSampleBufferRef> m_pendingAudioBuffer;
+    bool m_audioFormatStabilized;
 
     // Queue to write sample buffers:
     AVFScopedPointer<dispatch_queue_t> m_writerQueue;
@@ -97,16 +104,6 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
         m_delegate = delegate;
         m_setStartTime = true;
         m_state.storeRelaxed(WriterStateIdle);
-        m_startTime = kCMTimeInvalid;
-        m_lastTimeStamp = kCMTimeInvalid;
-        m_lastAudioTimestamp = kCMTimeInvalid;
-        m_lastVideoTimestamp = kCMTimeInvalid;
-        m_timeOffset = kCMTimeInvalid;
-        m_adjustTime = false;
-        m_durationInMs.storeRelaxed(0);
-        m_audioSettings = nil;
-        m_videoSettings = nil;
-        m_writeFirstAudioBuffer = false;
     }
 
     return self;
@@ -195,6 +192,8 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
     [self setQueues];
 
     m_setStartTime = true;
+    m_audioFormatStabilized = false;
+    m_pendingAudioBuffer = nullptr;
 
     m_state.storeRelease(WriterStateActive);
 
@@ -309,7 +308,8 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
     m_setStartTime = false;
 }
 
-- (CMSampleBufferRef)adjustTime:(CMSampleBufferRef)sample by:(CMTime)offset
+- (QCFType<CMSampleBufferRef>)adjustTime:(const QCFType<CMSampleBufferRef> &)sample
+                                      by:(CMTime)offset
 {
     CMItemCount count;
     CMSampleBufferGetSampleTimingInfoArray(sample, 0, nil, &count);
@@ -351,6 +351,45 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
         if (m_setStartTime)
             [self setStartTimeFrom:sampleBuffer];
 
+        // On macOS, AVCaptureSession may deliver the first audio buffer(s) in a
+        // transient format that differs from the stable format the device settles
+        // on shortly after. Appending a transient-format buffer configures
+        // AVAssetWriterInput's internal AudioConverter for the wrong format,
+        // causing error -12737 or audible noise once subsequent buffers arrive in
+        // the real (stable) format. This has been observed with built-in, USB,
+        // and Bluetooth microphones.
+        // To avoid this, we wait for format stabilization: the first buffer whose
+        // CMFormatDescription matches the previous one is considered stable.
+        // At that point we append both the held buffer and the current one.
+        // See: QTBUG-127444, FB16500782.
+        if (!m_audioFormatStabilized) {
+            if (!m_pendingAudioBuffer) {
+                m_pendingAudioBuffer = QCFType<CMSampleBufferRef>::constructFromGet(sampleBuffer);
+                return;
+            }
+
+            CMFormatDescriptionRef pendingFormat =
+                    CMSampleBufferGetFormatDescription(m_pendingAudioBuffer);
+            CMFormatDescriptionRef currentFormat = CMSampleBufferGetFormatDescription(sampleBuffer);
+
+            if (pendingFormat && currentFormat
+                && CMFormatDescriptionEqual(pendingFormat, currentFormat)) {
+                m_audioFormatStabilized = true;
+                // Append the held buffer first, then fall through to append
+                // the current one.
+                if (m_audioWriterInput.data().readyForMoreMediaData) {
+                    [self updateDuration:CMSampleBufferGetPresentationTimeStamp(
+                                                 m_pendingAudioBuffer)];
+                    [m_audioWriterInput appendSampleBuffer:m_pendingAudioBuffer];
+                }
+                m_pendingAudioBuffer = nullptr;
+            } else {
+                qCDebug(qLcCamera) << "Audio format changed, discarding pending buffer";
+                m_pendingAudioBuffer = QCFType<CMSampleBufferRef>::constructFromGet(sampleBuffer);
+                return;
+            }
+        }
+
         if (m_audioWriterInput.data().readyForMoreMediaData) {
             [self updateDuration:CMSampleBufferGetPresentationTimeStamp(sampleBuffer)];
             [m_audioWriterInput appendSampleBuffer:sampleBuffer];
@@ -359,8 +398,8 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
 }
 
 - (void)captureOutput:(AVCaptureOutput *)captureOutput
-        didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
-        fromConnection:(AVCaptureConnection *)connection
+        didOutputSampleBuffer:(CMSampleBufferRef)buffer
+               fromConnection:(AVCaptureConnection *)connection
 {
     Q_UNUSED(connection);
     Q_ASSERT(m_service && m_service->session());
@@ -381,12 +420,13 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
         return;
     }
 
-    if (!CMSampleBufferDataIsReady(sampleBuffer)) {
+    if (!CMSampleBufferDataIsReady(buffer)) {
         qWarning() << Q_FUNC_INFO << "sample buffer is not ready, skipping.";
         return;
     }
 
-    CFRetain(sampleBuffer);
+    // take ownership
+    auto sampleBuffer = QCFType<CMSampleBufferRef>::constructFromGet(buffer);
 
     bool isVideoBuffer = true;
     isVideoBuffer = (captureOutput != m_service->session()->audioOutput());
@@ -414,10 +454,8 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
         }
     }
 
-    if (m_state.loadAcquire() != WriterStateActive) {
-        CFRelease(sampleBuffer);
+    if (m_state.loadAcquire() != WriterStateActive)
         return;
-    }
 
     if (m_adjustTime) {
         CMTime currentTimestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
@@ -439,7 +477,6 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
     }
 
     if (m_timeOffset.value > 0) {
-        CFRelease(sampleBuffer);
         sampleBuffer = [self adjustTime:sampleBuffer by:m_timeOffset];
     }
 
@@ -454,13 +491,11 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
         dispatch_async(m_writerQueue, ^{
             [self writeVideoSampleBuffer:sampleBuffer];
             m_writeFirstAudioBuffer = true;
-            CFRelease(sampleBuffer);
         });
     } else if (m_writeFirstAudioBuffer) {
         m_lastAudioTimestamp = currentTimestamp;
         dispatch_async(m_writerQueue, ^{
             [self writeAudioSampleBuffer:sampleBuffer];
-            CFRelease(sampleBuffer);
         });
     }
 }
@@ -476,14 +511,30 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
     if (m_videoQueue)
     {
         Q_ASSERT(session->videoCaptureDevice() && session->videoOutput() && session->videoOutput()->videoDataOutput());
-        m_cameraWriterInput.reset([[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo
-                                                          outputSettings:m_videoSettings
-                                                          sourceFormatHint:session->videoCaptureDevice().activeFormat.formatDescription]);
+        @try {
+            m_cameraWriterInput.reset([[AVAssetWriterInput alloc]
+                    initWithMediaType:AVMediaTypeVideo
+                       outputSettings:m_videoSettings
+                     sourceFormatHint:session->videoCaptureDevice()
+                                              .activeFormat.formatDescription]);
+        } @catch (NSException *exception) {
+            qCWarning(qLcCamera) << Q_FUNC_INFO << "Failed to create video writer input:"
+                                 << QString::fromNSString(exception.reason);
+            m_cameraWriterInput.reset();
+            return false;
+        }
 
-        if (m_cameraWriterInput && [m_assetWriter canAddInput:m_cameraWriterInput]) {
-            [m_assetWriter addInput:m_cameraWriterInput];
-        } else {
-            qCDebug(qLcCamera) << Q_FUNC_INFO << "failed to add camera writer input";
+        @try {
+            if (m_cameraWriterInput && [m_assetWriter canAddInput:m_cameraWriterInput]) {
+                [m_assetWriter addInput:m_cameraWriterInput];
+            } else {
+                qCDebug(qLcCamera) << Q_FUNC_INFO << "failed to add camera writer input";
+                m_cameraWriterInput.reset();
+                return false;
+            }
+        } @catch (NSException *exception) {
+            qCWarning(qLcCamera) << Q_FUNC_INFO << "Failed to add video input:"
+                                 << QString::fromNSString(exception.reason);
             m_cameraWriterInput.reset();
             return false;
         }
@@ -493,22 +544,44 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
 
     m_audioWriterInput.reset();
     if (m_audioQueue) {
-        m_audioWriterInput.reset([[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeAudio
-                                                             outputSettings:m_audioSettings]);
+        @try {
+            m_audioWriterInput.reset([[AVAssetWriterInput alloc]
+                    initWithMediaType:AVMediaTypeAudio
+                       outputSettings:m_audioSettings]);
+        } @catch (NSException *exception) {
+            qCWarning(qLcCamera) << Q_FUNC_INFO << "Failed to create audio writer input:"
+                                 << QString::fromNSString(exception.reason);
+            m_audioWriterInput.reset();
+            // But we still can record video.
+            if (!m_cameraWriterInput)
+                return false;
+        }
         if (!m_audioWriterInput) {
             qWarning() << Q_FUNC_INFO << "failed to create audio writer input";
             // But we still can record video.
             if (!m_cameraWriterInput)
                 return false;
-        } else if ([m_assetWriter canAddInput:m_audioWriterInput]) {
-            [m_assetWriter addInput:m_audioWriterInput];
-            m_audioWriterInput.data().expectsMediaDataInRealTime = YES;
         } else {
-            qWarning() << Q_FUNC_INFO << "failed to add audio writer input";
-            m_audioWriterInput.reset();
-            if (!m_cameraWriterInput)
-                return false;
-            // We can (still) write video though ...
+            @try {
+                if ([m_assetWriter canAddInput:m_audioWriterInput]) {
+                    [m_assetWriter addInput:m_audioWriterInput];
+                    m_audioWriterInput.data().expectsMediaDataInRealTime = YES;
+                } else {
+                    qWarning() << Q_FUNC_INFO << "failed to add audio writer input";
+                    m_audioWriterInput.reset();
+                    if (!m_cameraWriterInput)
+                        return false;
+                    // We can (still) write video though ...
+                }
+            } @catch (NSException *exception) {
+                qCWarning(qLcCamera)
+                        << Q_FUNC_INFO
+                        << "Failed to add audio input:" << QString::fromNSString(exception.reason);
+                m_audioWriterInput.reset();
+                if (!m_cameraWriterInput)
+                    return false;
+                // We can (still) write video though ...
+            }
         }
     }
 
@@ -533,12 +606,12 @@ using AVFAtomicInt64 = QAtomicInteger<qint64>;
 
 - (void)updateDuration:(CMTime)newTimeStamp
 {
-    Q_ASSERT(CMTimeCompare(m_startTime, kCMTimeInvalid));
-    Q_ASSERT(CMTimeCompare(m_lastTimeStamp, kCMTimeInvalid));
+    Q_ASSERT(CMTIME_IS_VALID(m_startTime));
+    Q_ASSERT(CMTIME_IS_VALID(m_lastTimeStamp));
     if (CMTimeCompare(newTimeStamp, m_lastTimeStamp) > 0) {
 
         const CMTime duration = CMTimeSubtract(newTimeStamp, m_startTime);
-        if (!CMTimeCompare(duration, kCMTimeInvalid))
+        if (CMTIME_IS_INVALID(duration))
             return;
 
         m_durationInMs.storeRelease(CMTimeGetSeconds(duration) * 1000);

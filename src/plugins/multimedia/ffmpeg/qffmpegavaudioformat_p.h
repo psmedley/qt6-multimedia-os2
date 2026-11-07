@@ -19,12 +19,14 @@
 #include <QtMultimedia/private/qtmultimediaglobal_p.h>
 
 #if QT_FFMPEG_HAS_AV_CHANNEL_LAYOUT
-inline bool operator==(const AVChannelLayout &lhs, const AVChannelLayout &rhs)
+[[maybe_unused]] static inline bool operator==(const AVChannelLayout &lhs,
+                                               const AVChannelLayout &rhs)
 {
     return lhs.order == rhs.order && lhs.nb_channels == rhs.nb_channels && lhs.u.mask == rhs.u.mask;
 }
 
-inline bool operator!=(const AVChannelLayout &lhs, const AVChannelLayout &rhs)
+[[maybe_unused]] static inline bool operator!=(const AVChannelLayout &lhs,
+                                               const AVChannelLayout &rhs)
 {
     return !(lhs == rhs);
 }
@@ -39,11 +41,9 @@ namespace QFFmpeg {
 
 struct AVAudioFormat
 {
-    AVAudioFormat(const AVCodecContext *context);
-
-    AVAudioFormat(const AVCodecParameters *codecPar);
-
-    AVAudioFormat(const QAudioFormat &audioFormat);
+    explicit AVAudioFormat(const AVCodecContext *context);
+    explicit AVAudioFormat(const AVCodecParameters *codecPar);
+    explicit AVAudioFormat(const QAudioFormat &audioFormat);
 
 #if QT_FFMPEG_HAS_AV_CHANNEL_LAYOUT
     AVChannelLayout channelLayout;

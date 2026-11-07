@@ -13,11 +13,21 @@ QPlatformVideoDevices::QPlatformVideoDevices(QPlatformMediaIntegration *integrat
 
 QPlatformVideoDevices::~QPlatformVideoDevices() = default;
 
+// Thread-safe
+// Can be called from any thread.
 void QPlatformVideoDevices::onVideoInputsChanged() {
     m_videoInputs.reset();
     emit videoInputsChanged(PrivateTag{});
 }
 
+void QPlatformVideoDevices::updateVideoInputsCache()
+{
+    if (m_videoInputs.update(findVideoInputs()))
+        emit videoInputsChanged(PrivateTag{});
+}
+
+// Thread-safe
+// Can be called from any thread.
 QList<QCameraDevice> QPlatformVideoDevices::videoInputs() const {
     return m_videoInputs.ensure([this]() {
         return findVideoInputs();

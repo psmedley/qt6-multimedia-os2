@@ -14,18 +14,21 @@
 // We mean it.
 //
 
-#include <private/qtmultimediaglobal_p.h>
-#include <qmediarecorder.h>
-#include <qcameradevice.h>
-#include <qobject.h>
-
-#include <private/qcachedvalue_p.h>
+#include <QtMultimedia/private/qcachedvalue_p.h>
+#include <QtMultimedia/private/qtmultimediaglobal_p.h>
+#include <QtMultimedia/qcameradevice.h>
+#include <QtMultimedia/qmediarecorder.h>
+#include <QtCore/qobject.h>
 
 QT_BEGIN_NAMESPACE
 
 class QCameraDevice;
 class QPlatformMediaIntegration;
 
+// Implementations should use constructor to setup device-changed notification
+// listeners. Actual device enumeration should happen in findVideoInputs().
+// This allows device enumeration be deferred until user starts using QMediaDevices
+// functionality.
 class Q_MULTIMEDIA_EXPORT QPlatformVideoDevices : public QObject
 {
     Q_OBJECT
@@ -39,9 +42,17 @@ public:
     QList<QCameraDevice> videoInputs() const;
 
 protected:
+    // Implementation must be thread safe. Can be called from any thread as a result of
+    // QMediaDevices::videoInputs().
     virtual QList<QCameraDevice> findVideoInputs() const = 0;
 
+    // Thread-safe.
+    // Called by the platform-implementation to signal that findVideoInputs() will return a new list
+    // of devices.
     void onVideoInputsChanged();
+
+    // Thread-safe. Called by platform-implementation.
+    void updateVideoInputsCache();
 
 Q_SIGNALS:
     void videoInputsChanged(PrivateTag);

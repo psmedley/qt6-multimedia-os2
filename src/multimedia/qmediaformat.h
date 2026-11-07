@@ -4,7 +4,9 @@
 #ifndef QMEDIAFORMAT_H
 #define QMEDIAFORMAT_H
 
-#include <QtCore/qsharedpointer.h>
+#include <QtCore/qobjectdefs.h>
+#include <QtCore/qshareddata.h>
+#include <QtCore/qtmetamacros.h>
 #include <QtMultimedia/qtmultimediaglobal.h>
 
 QT_BEGIN_NAMESPACE
@@ -116,7 +118,9 @@ public:
 
     Q_INVOKABLE bool isSupported(ConversionMode mode) const;
 
+#if QT_CONFIG(mimetype)
     QMimeType mimeType() const;
+#endif
 
     Q_INVOKABLE QList<FileFormat> supportedFileFormats(ConversionMode m);
     Q_INVOKABLE QList<VideoCodec> supportedVideoCodecs(ConversionMode m);

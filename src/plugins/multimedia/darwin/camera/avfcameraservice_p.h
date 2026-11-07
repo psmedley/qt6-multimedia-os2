@@ -15,11 +15,11 @@
 // We mean it.
 //
 
+#include <QtMultimedia/private/qplatformmediacapture_p.h>
 #include <QtCore/qobject.h>
 #include <QtCore/qset.h>
-#include <private/qplatformmediacapture_p.h>
 
-Q_FORWARD_DECLARE_OBJC_CLASS(AVCaptureDevice);
+#import <AVFoundation/AVFoundation.h>
 
 QT_BEGIN_NAMESPACE
 class QPlatformCamera;
@@ -34,7 +34,7 @@ class AVFCameraService : public QPlatformMediaCaptureSession
     Q_OBJECT
 public:
     AVFCameraService();
-    ~AVFCameraService();
+    ~AVFCameraService() override;
 
     QPlatformCamera *camera() override;
     void setCamera(QPlatformCamera *camera) override;

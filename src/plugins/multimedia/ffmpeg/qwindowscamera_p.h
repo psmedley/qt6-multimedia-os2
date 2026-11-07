@@ -16,16 +16,20 @@
 //
 
 #include <QtMultimedia/private/qplatformcamera_p.h>
-#include <QtCore/private/qcomptr_p.h>
+
+#include <QtCore/qspan.h>
 
 QT_BEGIN_NAMESPACE
 
+namespace QFFmpeg {
+
 class ActiveCamera;
+
+qsizetype indexOfClosestCameraFormat(QSpan<const QCameraFormat> candidates,
+                                     const QCameraFormat &requested);
 
 class QWindowsCamera : public QPlatformCamera
 {
-    Q_OBJECT
-
 public:
     explicit QWindowsCamera(QCamera *parent);
     ~QWindowsCamera() override;
@@ -39,6 +43,8 @@ private:
     QCameraDevice m_cameraDevice;
     std::unique_ptr<ActiveCamera> m_active;
 };
+
+} // namespace QFFmpeg
 
 QT_END_NAMESPACE
 

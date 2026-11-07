@@ -16,22 +16,24 @@
 //
 
 #include <QtCore/qobject.h>
-#include <QtCore/qmutex.h>
 
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-#include <CoreVideo/CVBase.h>
-#else
+#include <atomic>
+
+#import <QuartzCore/CADisplayLink.h>
+#if !defined(QT_PLATFORM_UIKIT)
 #include <QuartzCore/CVDisplayLink.h>
 #endif
 
+@class QT_MANGLE_NAMESPACE(DisplayLinkObserver);
+
 QT_BEGIN_NAMESPACE
 
-class AVFDisplayLink : public QObject
+class AVFDisplayLink final : public QObject
 {
     Q_OBJECT
 public:
     explicit AVFDisplayLink(QObject *parent = nullptr);
-    virtual ~AVFDisplayLink();
+    ~AVFDisplayLink() override;
     bool isValid() const;
     bool isActive() const;
 
@@ -40,24 +42,21 @@ public Q_SLOTS:
     void stop();
 
 Q_SIGNALS:
-    void tick(const CVTimeStamp &ts);
+    void tick();
 
 public:
-    void displayLinkEvent(const CVTimeStamp *);
+    void displayLinkEvent();
 
 protected:
-    virtual bool event(QEvent *) override;
+    bool event(QEvent *) override;
 
 private:
-#if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
-    void *m_displayLink;
-#else
-    CVDisplayLinkRef m_displayLink;
+    QT_MANGLE_NAMESPACE(DisplayLinkObserver) *m_observer = {};
+#if !defined(QT_PLATFORM_UIKIT)
+    CVDisplayLinkRef m_cvDisplayLink{};
 #endif
-    QMutex m_displayLinkMutex;
-    bool m_pendingDisplayLinkEvent;
-    bool m_isActive;
-    CVTimeStamp m_frameTimeStamp;
+    bool m_isActive{};
+    std::atomic<bool> m_framePending{false};
 };
 
 QT_END_NAMESPACE

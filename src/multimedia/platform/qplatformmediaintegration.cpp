@@ -1,26 +1,29 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include <qtmultimediaglobal_p.h>
 #include "qplatformmediaintegration_p.h"
-#include <qatomic.h>
-#include <qmutex.h>
-#include <qplatformaudioinput_p.h>
-#include <qplatformaudiooutput_p.h>
-#include <qplatformaudioresampler_p.h>
-#include <qplatformvideodevices_p.h>
-#include <qmediadevices.h>
-#include <qcameradevice.h>
-#include <qloggingcategory.h>
-#include <QtCore/qcoreapplication.h>
-#include <QtCore/qapplicationstatic.h>
 
-#include "qplatformcapturablewindows_p.h"
-#include "qplatformaudiodevices_p.h"
-#include <QtCore/private/qfactoryloader_p.h>
+#include <QtMultimedia/private/qplatformaudiodevices_p.h>
+#include <QtMultimedia/private/qplatformaudioinput_p.h>
+#include <QtMultimedia/private/qplatformaudiooutput_p.h>
+#include <QtMultimedia/private/qplatformaudioresampler_p.h>
+#include <QtMultimedia/private/qplatformcapturablewindows_p.h>
+#include <QtMultimedia/private/qplatformmediaformatinfo_p.h>
+#include <QtMultimedia/private/qplatformmediaplugin_p.h>
+#include <QtMultimedia/private/qplatformvideodevices_p.h>
+#include <QtMultimedia/private/qtmultimediaglobal_p.h>
+#include <QtMultimedia/qcameradevice.h>
+#include <QtMultimedia/qmediadevices.h>
+#include <QtGui/qwindow.h>
 #include <QtCore/private/qcoreapplication_p.h>
-#include <private/qplatformmediaformatinfo_p.h>
-#include "qplatformmediaplugin_p.h"
+#include <QtCore/private/qfactoryloader_p.h>
+#include <QtCore/qapplicationstatic.h>
+#include <QtCore/qatomic.h>
+#include <QtCore/qcoreapplication.h>
+#include <QtCore/qloggingcategory.h>
+#include <QtCore/qmutex.h>
+
+#include <optional>
 
 namespace {
 
@@ -33,7 +36,7 @@ public:
     }
 };
 
-static Q_LOGGING_CATEGORY(qLcMediaPlugin, "qt.multimedia.plugin")
+Q_STATIC_LOGGING_CATEGORY(qLcMediaPlugin, "qt.multimedia.plugin")
 
 Q_GLOBAL_STATIC_WITH_ARGS(QFactoryLoader, loader,
                           (QPlatformMediaPlugin_iid,
@@ -41,8 +44,17 @@ Q_GLOBAL_STATIC_WITH_ARGS(QFactoryLoader, loader,
 
 static const auto FFmpegBackend = QStringLiteral("ffmpeg");
 
-static QString defaultBackend(const QStringList &backends)
+[[nodiscard]] static std::optional<QString> &requestedBackend()
 {
+    static std::optional<QString> backend;
+    return backend;
+}
+
+[[nodiscard]] static QString defaultBackend(const QStringList &backends)
+{
+    if (backends.isEmpty())
+        return {};
+
 #ifdef QT_DEFAULT_MEDIA_BACKEND
     auto backend = QString::fromUtf8(QT_DEFAULT_MEDIA_BACKEND);
     if (backends.contains(backend))
@@ -75,8 +87,14 @@ struct InstanceHolder
         if (!QCoreApplication::instance())
             qCCritical(qLcMediaPlugin()) << "Qt Multimedia requires a QCoreApplication instance";
 
-        const QStringList backends = QPlatformMediaIntegration::availableBackends();
-        QString backend = QString::fromUtf8(qgetenv("QT_MEDIA_BACKEND")).toLower();
+        QStringList backends = QPlatformMediaIntegration::availableBackends();
+
+        // A backend explicitly requested via setBackend() takes precedence over
+        // the QT_MEDIA_BACKEND environment variable and the built-in default.
+        const std::optional<QString> &requested = requestedBackend();
+        QString backend = requested ? *requested : QString();
+        if (backend.isEmpty())
+            backend = QString::fromUtf8(qgetenv("QT_MEDIA_BACKEND")).toLower();
         if (backend.isEmpty() && !backends.isEmpty())
             backend = defaultBackend(backends);
 
@@ -84,10 +102,30 @@ struct InstanceHolder
         instance.reset(
                 qLoadPlugin<QPlatformMediaIntegration, QPlatformMediaPlugin>(loader(), backend));
 
-        if (!instance) {
-            // No backends found. Use fallback to support basic functionality
-            instance = std::make_unique<QFallbackIntegration>();
+        if (instance)
+            return;
+
+        backends.removeAll(backend);
+
+        // A backend requested via setBackend() disables the fallback to other
+        // backends.
+        if (!requested) {
+            for (const QString &backend : std::as_const(backends)) {
+                qCDebug(qLcMediaPlugin) << "Loading alternative backend" << backend;
+                instance.reset(qLoadPlugin<QPlatformMediaIntegration, QPlatformMediaPlugin>(
+                    loader(),
+                    backend));
+                if (instance)
+                    return;
+            }
+        } else if (!backend.isEmpty()) {
+            qCWarning(qLcMediaPlugin)
+                << "Media backend" << backend
+                << "failed to load and was explicitly requested; no media backend loaded";
         }
+
+        // No backends found. Use fallback to support basic functionality
+        instance = std::make_unique<QFallbackIntegration>();
     }
 
     ~InstanceHolder()
@@ -115,18 +153,18 @@ void QPlatformMediaIntegration::resetInstance()
     s_instanceHolder->init(); // tests only
 }
 
-QMaybe<std::unique_ptr<QPlatformAudioResampler>>
+q23::expected<std::unique_ptr<QPlatformAudioResampler>, QString>
 QPlatformMediaIntegration::createAudioResampler(const QAudioFormat &, const QAudioFormat &)
 {
-    return notAvailable;
+    return q23::unexpected(notAvailable);
 }
 
-QMaybe<QPlatformAudioInput *> QPlatformMediaIntegration::createAudioInput(QAudioInput *q)
+q23::expected<QPlatformAudioInput *, QString> QPlatformMediaIntegration::createAudioInput(QAudioInput *q)
 {
     return new QPlatformAudioInput(q);
 }
 
-QMaybe<QPlatformAudioOutput *> QPlatformMediaIntegration::createAudioOutput(QAudioOutput *q)
+q23::expected<QPlatformAudioOutput *, QString> QPlatformMediaIntegration::createAudioOutput(QAudioOutput *q)
 {
     return new QPlatformAudioOutput(q);
 }
@@ -141,6 +179,18 @@ bool QPlatformMediaIntegration::isCapturableWindowValid(const QCapturableWindowP
 {
     const auto capturableWindows = this->capturableWindows();
     return capturableWindows && capturableWindows->isWindowValid(window);
+}
+
+q23::expected<QCapturableWindow, QString> QPlatformMediaIntegration::capturableWindowFromQWindow(QWindow *window)
+{
+    const auto capturableWindows = this->capturableWindows();
+    if (!capturableWindows)
+        return q23::unexpected{ QStringLiteral("No windowcapture platform implementation") };
+    if (window == nullptr)
+        return q23::unexpected{ QStringLiteral("QWindow is nullptr") };
+    if (!window->isTopLevel())
+        return q23::unexpected{ QStringLiteral("QWindow is not top-level.") };
+    return capturableWindows->fromQWindow(window);
 }
 
 const QPlatformMediaFormatInfo *QPlatformMediaIntegration::formatInfo()
@@ -204,6 +254,24 @@ QStringList QPlatformMediaIntegration::availableBackends()
 
     qCDebug(qLcMediaPlugin) << "Available backends" << list;
     return list;
+}
+
+// Returns the name of the backend that would be loaded by default on this
+// platform when neither the QT_MEDIA_BACKEND environment variable nor
+// setBackend() selects one. Returns an empty string if no backend is available.
+QString QPlatformMediaIntegration::defaultBackend()
+{
+    return ::defaultBackend(availableBackends());
+}
+
+// Selects the media backend to load, taking precedence over both the
+// QT_MEDIA_BACKEND environment variable and the built-in default. No fallback to
+// other available backends is performed if the requested backend fails to load.
+// Must be called before any media backend is initialized.
+void QPlatformMediaIntegration::setBackend(const QString &backend)
+{
+    Q_ASSERT(!s_instanceHolder.exists());
+    requestedBackend() = backend.toLower();
 }
 
 QLatin1String QPlatformMediaIntegration::name()

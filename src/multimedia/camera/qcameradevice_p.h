@@ -16,7 +16,6 @@
 //
 
 #include <QtMultimedia/qcameradevice.h>
-#include <QtCore/qsharedpointer.h>
 #include <QtCore/private/qglobal_p.h>
 
 QT_BEGIN_NAMESPACE
@@ -29,11 +28,18 @@ public:
     float minFrameRate = 0;
     float maxFrameRate = 0;
     QVideoFrameFormat::ColorRange colorRange = QVideoFrameFormat::ColorRange_Unknown;
+    QVideoFrameFormat::ColorSpace colorSpace = QVideoFrameFormat::ColorSpace_Undefined;
 
     static QVideoFrameFormat::ColorRange getColorRange(const QCameraFormat &format)
     {
         auto d = handle(format);
         return d ? d->colorRange : QVideoFrameFormat::ColorRange_Unknown;
+    }
+
+    static QVideoFrameFormat::ColorSpace getColorSpace(const QCameraFormat &format)
+    {
+        auto d = handle(format);
+        return d ? d->colorSpace : QVideoFrameFormat::ColorSpace_Undefined;
     }
 
     static const QCameraFormatPrivate *handle(const QCameraFormat &format)
@@ -59,6 +65,8 @@ public:
     {
         return device.d.data();
     }
+
+    static QCameraDevicePrivate *handle(QCameraDevice &device) { return device.d.data(); }
 
     bool operator==(const QCameraDevicePrivate &other) const
     {

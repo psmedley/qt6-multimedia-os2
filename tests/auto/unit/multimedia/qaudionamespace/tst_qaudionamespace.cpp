@@ -1,7 +1,7 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
-#include <QtTest/QtTest>
+#include <QtTest/qtest.h>
 
 #include <QtMultimedia/qaudio.h>
 #include <QtMultimedia/qaudiodevice.h>
@@ -35,7 +35,10 @@ void tst_QAudioNamespace::debugError_data()
     ADD_ENUM_TEST(NoError);
     ADD_ENUM_TEST(OpenError);
     ADD_ENUM_TEST(IOError);
+    QT_WARNING_PUSH;
+    QT_WARNING_DISABLE_DEPRECATED;
     ADD_ENUM_TEST(UnderrunError);
+    QT_WARNING_POP;
     ADD_ENUM_TEST(FatalError);
 }
 

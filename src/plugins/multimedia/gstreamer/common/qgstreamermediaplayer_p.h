@@ -22,11 +22,13 @@
 #include <QtCore/qelapsedtimer.h>
 #include <QtCore/qtimer.h>
 #include <QtCore/qurl.h>
+#include <QtCore/qfuture.h>
 
 #include <common/qgst_bus_observer_p.h>
 #include <common/qgst_discoverer_p.h>
 #include <common/qgst_p.h>
 #include <common/qgstpipeline_p.h>
+#include <common/qgstreamervideosink_p.h>
 
 #include <gst/play/gstplay.h>
 
@@ -45,7 +47,7 @@ class QGstreamerMediaPlayer : public QObject,
     using QGstPlayHandle = QGstImpl::QGstHandleHelper<GstPlay>::SharedHandle;
 
 public:
-    static QMaybe<QPlatformMediaPlayer *> create(QMediaPlayer *parent = nullptr);
+    static q23::expected<QPlatformMediaPlayer *, QString> create(QMediaPlayer *parent = nullptr);
     ~QGstreamerMediaPlayer() override;
 
     qint64 duration() const override;
@@ -85,6 +87,9 @@ public:
 
     bool canPlayQrc() const override;
 
+    PitchCompensationAvailability pitchCompensationAvailability() const override;
+    bool pitchCompensation() const override;
+
 private:
     QGstreamerMediaPlayer(QGstreamerVideoOutput *videoOutput, QMediaPlayer *parent);
 
@@ -120,8 +125,6 @@ private:
     void disconnectDecoderHandlers();
     QGObjectHandlerScopedConnection sourceSetup;
 
-    bool discover(const QUrl &);
-
     // custom sources
     void decoderPadAddedCustomSource(const QGstElement &src, const QGstPad &pad);
     void decoderPadRemovedCustomSource(const QGstElement &src, const QGstPad &pad);
@@ -140,6 +143,11 @@ private:
     QGstPlayHandle m_gstPlay;
     QGstPipeline m_playbin;
     QGstBusObserver m_gstPlayBus;
+
+    // GstPlay bus message counting to achieve STOPPED state before destruction
+    int m_expectedStoppedMessages = 0; // from gst_play_stop calls and after reaching EOS
+    bool m_playOrPauseCalledSinceLastStateChangedOrEosMessage = false; // handles EOS edge case
+    bool m_callStopInDestructor = false; // true after gst_play_play/pause calls, false when stopped
 
     // metadata
     QMediaMetaData m_metaData;
@@ -160,6 +168,18 @@ private:
     void updateVideoTrackEnabled();
     void updateAudioTrackEnabled();
     void updateSubtitleTrackEnabled();
+
+    QGstreamerRelayVideoSink *m_gstVideoSink = nullptr;
+
+    // asynchronous discovery
+    using DiscoverResult = q23::expected<QGst::QGstDiscovererInfo, QUniqueGErrorHandle>;
+    QFuture<DiscoverResult> discover(QUrl);
+    void handleDiscoverResult(const DiscoverResult &, const QUrl &playerUrl);
+
+    QFuture<DiscoverResult> m_discoverFuture;
+    QFuture<void> m_discoveryHandler;
+    bool m_hasPendingMedia = false;
+    std::optional<QMediaPlayer::PlaybackState> m_requestedPlaybackState = std::nullopt;
 };
 
 QT_END_NAMESPACE

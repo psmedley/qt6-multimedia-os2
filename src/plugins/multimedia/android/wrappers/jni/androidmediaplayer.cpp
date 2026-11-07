@@ -17,7 +17,7 @@ Q_GLOBAL_STATIC(QReadWriteLock, rwLock)
 
 QT_BEGIN_NAMESPACE
 
-static Q_LOGGING_CATEGORY(lcAudio, "qt.multimedia.audio")
+Q_STATIC_LOGGING_CATEGORY(lcAudio, "qt.multimedia.audio");
 
 AndroidMediaPlayer::AndroidMediaPlayer()
     : QObject()
@@ -288,7 +288,7 @@ bool AndroidMediaPlayer::setAudioOutput(const QByteArray &deviceId)
 {
     const bool ret = QJniObject::callStaticMethod<jboolean>(
                                     "org/qtproject/qt/android/multimedia/QtAudioDeviceManager",
-                                    "setAudioOutput",
+                                    "prepareAudioOutput",
                                     "(I)Z",
                                     deviceId.toInt());
 

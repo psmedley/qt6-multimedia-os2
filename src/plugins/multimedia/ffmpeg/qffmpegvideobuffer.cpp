@@ -18,6 +18,8 @@ QT_BEGIN_NAMESPACE
 
 using namespace QFFmpeg;
 
+Q_STATIC_LOGGING_CATEGORY(qLcFFmpegVideoBuffer, "qt.multimedia.ffmpeg.videobuffer");
+
 static bool isFrameFlipped(const AVFrame& frame) {
     for (int i = 0; i < AV_NUM_DATA_POINTERS && frame.data[i]; ++i) {
         if (frame.linesize[i] < 0)
@@ -66,7 +68,12 @@ void QFFmpegVideoBuffer::convertSWFrame()
         newFrame->width = m_size.width();
         newFrame->height = m_size.height();
         newFrame->format = targetAVPixelFormat;
-        av_frame_get_buffer(newFrame.get(), 0);
+        const int status = av_frame_get_buffer(newFrame.get(), 0);
+        if (status < 0) {
+            qCWarning(qLcFFmpegVideoBuffer)
+                    << "Failed to allocate frame buffer:" << AVError(status);
+            return;
+        }
 
         sws_scale(scaleContext.get(), m_swFrame->data, m_swFrame->linesize, 0, m_swFrame->height,
                   newFrame->data, newFrame->linesize);
@@ -85,7 +92,7 @@ void QFFmpegVideoBuffer::initTextureConverter(QRhi &rhi)
     ensureTextureConverter(rhi);
 
     // the type is to be clarified in the method mapTextures
-    m_type = m_hwFrame && TextureConverter::isBackendAvailable(*m_hwFrame)
+    m_type = m_hwFrame && TextureConverter::isBackendAvailable(*m_hwFrame, rhi)
             ? QVideoFrame::RhiTextureHandle
             : QVideoFrame::NoHandle;
 }
@@ -95,11 +102,9 @@ QFFmpeg::TextureConverter &QFFmpegVideoBuffer::ensureTextureConverter(QRhi &rhi)
     Q_ASSERT(m_hwFrame);
 
     HwFrameContextData &frameContextData = HwFrameContextData::ensure(*m_hwFrame);
-    TextureConverter *converter = frameContextData.textureConverterMapper.get(rhi);
+    TextureConverter *converter = frameContextData.textureConverterMapper.get(&rhi);
 
     if (!converter) {
-        TextureConverter newConverter(rhi);
-
         bool added = false;
         std::tie(converter, added) =
                 frameContextData.textureConverterMapper.tryMap(rhi, TextureConverter(rhi));
@@ -111,7 +116,7 @@ QFFmpeg::TextureConverter &QFFmpegVideoBuffer::ensureTextureConverter(QRhi &rhi)
     return *converter;
 }
 
-QRhi *QFFmpegVideoBuffer::rhi() const
+QRhi *QFFmpegVideoBuffer::associatedCurrentThreadRhi() const
 {
     if (!m_hwFrame)
         return nullptr;
@@ -219,7 +224,7 @@ QVideoFrameTexturesUPtr QFFmpegVideoBuffer::createTexturesFromHwFrame(QRhi &rhi,
 
     TextureConverter *converter = initTextureConverterForAnyRhi
             ? &ensureTextureConverter(rhi)
-            : HwFrameContextData::ensure(*m_hwFrame).textureConverterMapper.get(rhi);
+            : HwFrameContextData::ensure(*m_hwFrame).textureConverterMapper.get(&rhi);
 
     if (!converter)
         return {};

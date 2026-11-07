@@ -4,6 +4,7 @@
 #include <common/qgstreameraudiooutput_p.h>
 
 #include <QtCore/qloggingcategory.h>
+#include <QtCore/qversionnumber.h>
 #include <QtMultimedia/qaudiodevice.h>
 #include <QtMultimedia/qaudiooutput.h>
 
@@ -18,7 +19,7 @@ QT_BEGIN_NAMESPACE
 
 namespace {
 
-Q_LOGGING_CATEGORY(qLcMediaAudioOutput, "qt.multimedia.audiooutput")
+Q_STATIC_LOGGING_CATEGORY(qLcMediaAudioOutput, "qt.multimedia.audiooutput")
 
 constexpr QLatin1String defaultSinkName = [] {
     using namespace Qt::Literals;
@@ -67,12 +68,12 @@ void pulseVersionSanityCheck()
 
 } // namespace
 
-QMaybe<QPlatformAudioOutput *> QGstreamerAudioOutput::create(QAudioOutput *parent)
+q23::expected<QPlatformAudioOutput *, QString> QGstreamerAudioOutput::create(QAudioOutput *parent)
 {
     static const auto error = qGstErrorMessageIfElementsNotAvailable(
             "audioconvert", "audioresample", "volume", "autoaudiosink");
     if (error)
-        return *error;
+        return q23::unexpected{ *error };
 
     return new QGstreamerAudioOutput(parent);
 }
@@ -107,21 +108,20 @@ QGstreamerAudioOutput::QGstreamerAudioOutput(QAudioOutput *parent)
 
 QGstElement QGstreamerAudioOutput::createGstElement()
 {
-    const auto *customDeviceInfo =
-            dynamic_cast<const QGStreamerCustomAudioDeviceInfo *>(m_audioDevice.handle());
+    const auto *customDevice =
+            QAudioDevicePrivate::handle<QGStreamerCustomAudioDeviceInfo>(m_audioDevice);
 
-    if (customDeviceInfo) {
+    if (customDevice) {
         qCDebug(qLcMediaAudioOutput)
-                << "requesting custom audio sink element: " << customDeviceInfo->id;
+                << "requesting custom audio sink element: " << customDevice->id;
 
         QGstElement element =
-                QGstBin::createFromPipelineDescription(customDeviceInfo->id, /*name=*/nullptr,
+                QGstBin::createFromPipelineDescription(customDevice->id, /*name=*/nullptr,
                                                        /*ghostUnlinkedPads=*/true);
         if (element)
             return element;
 
-        qCWarning(qLcMediaAudioOutput)
-                << "Cannot create audio sink element:" << customDeviceInfo->id;
+        qCWarning(qLcMediaAudioOutput) << "Cannot create audio sink element:" << customDevice->id;
     }
 
     const QByteArray &id = m_audioDevice.id();

@@ -5,13 +5,11 @@
 #ifndef QAUDIOINPUT_H
 #define QAUDIOINPUT_H
 
-#include <QtCore/qiodevice.h>
-
-#include <QtMultimedia/qtmultimediaglobal.h>
-
-#include <QtMultimedia/qtaudio.h>
-#include <QtMultimedia/qaudioformat.h>
 #include <QtMultimedia/qaudiodevice.h>
+#include <QtMultimedia/qaudioformat.h>
+#include <QtMultimedia/qtaudio.h>
+#include <QtMultimedia/qtmultimediaglobal.h>
+#include <QtCore/qiodevice.h>
 
 
 QT_BEGIN_NAMESPACE
@@ -34,6 +32,23 @@ public:
     void start(QIODevice *device);
     QIODevice* start();
 
+    template <typename Callback, QtAudio::if_audio_source_callback<Callback> = true>
+    void start(Callback &&cb)
+    {
+        Q_ASSERT(QtAudioPrivate::isNonnullFunction(cb));
+
+        if constexpr (!std::is_copy_constructible_v<Callback>) {
+            // poor man's move-only function
+            using CallbackType = typename QtAudioPrivate::GetSampleType<Callback>::type;
+            auto callback = std::make_shared<std::decay_t<Callback>>(std::forward<Callback>(cb));
+            start([callback = std::move(callback)](QSpan<const CallbackType> arg) {
+                (*callback)(arg);
+            });
+        } else {
+            startABIImpl(QtAudioPrivate::AudioSourceCallback(std::forward<Callback>(cb)));
+        }
+    }
+
     void stop();
     void reset();
     void suspend();
@@ -42,7 +57,14 @@ public:
     void setBufferSize(qsizetype bytes);
     qsizetype bufferSize() const;
 
+    void setBufferFrameCount(qsizetype frames);
+    qsizetype bufferFrameCount() const;
+
+    void setNativePeriodFrameCount(qsizetype frameCount);
+    qsizetype nativePeriodFrameCount() const;
+
     qsizetype bytesAvailable() const;
+    qsizetype framesAvailable() const;
 
     void setVolume(qreal volume);
     qreal volume() const;
@@ -62,7 +84,13 @@ Q_SIGNALS:
 #endif
 
 private:
+    template <typename T>
+    void startImpl(T &&);
+
+    void startABIImpl(QtAudioPrivate::AudioSourceCallback &&);
+
     Q_DISABLE_COPY(QAudioSource)
+    friend class QPlatformAudioSource;
 
     QPlatformAudioSource *d;
 };

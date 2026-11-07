@@ -10,6 +10,9 @@ includepaths           += .
 
 examplesinstallpath     = spatialaudio
 
+# Path to the root of qtmultimedia (for automatic linking to source code)
+url.sources.rootdir     = ../../..
+
 # The following parameters are for creating a qhp file, the qhelpgenerator
 # program can convert the qhp file into a qch file which can be opened in
 # Qt Assistant and/or Qt Creator.
@@ -23,8 +26,7 @@ qhp.QtSpatialAudio.namespace = org.qt-project.qtspatialaudio.$QT_VERSION_TAG
 qhp.QtSpatialAudio.indexTitle = Qt Spatial Audio
 qhp.QtSpatialAudio.virtualFolder  = qtspatialaudio
 
-# For listing child nodes in Qt Creator or Assistant.
-qhp.QtSpatialAudio.subprojects = classes qmltypes examples
+qhp.QtSpatialAudio.subprojects = overview examples classes qmltypes
 
 qhp.QtSpatialAudio.subprojects.classes.title = Qt Spatial Audio Classes
 qhp.QtSpatialAudio.subprojects.classes.indexTitle = Qt Spatial Audio C++ Classes
@@ -38,8 +40,14 @@ qhp.QtSpatialAudio.subprojects.qmltypes.sortPages = true
 
 qhp.QtSpatialAudio.subprojects.examples.title = Examples
 qhp.QtSpatialAudio.subprojects.examples.indexTitle = Qt Spatial Audio Examples
-qhp.QtSpatialAudio.subprojects.examples.selectors = doc:example
+qhp.QtSpatialAudio.subprojects.examples.selectors = example
 qhp.QtSpatialAudio.subprojects.examples.sortPages = true
+
+qhp.QtSpatialAudio.subprojects.overview.title = Overview
+qhp.QtSpatialAudio.subprojects.overview.indexTitle = Spatial Audio Overview
+qhp.QtSpatialAudio.subprojects.overview.selectors = group:none
+
+tagfile = qtspatialaudio.tags
 
 exampledirs += ../../../examples/spatialaudio \
                snippets
@@ -50,7 +58,8 @@ headerdirs += .. \
 imagedirs += src/images \
 
 sourcedirs += .. \
-              ../../spatialaudioquick3d
+              ../../spatialaudioquick3d \
+              ../../multimedia/doc/src/includes
 
 depends = qtcore qtdoc qtgui qtquick qtqml qtnetwork qmake qtcmake qtquickcontrols qtquick3d qtmultimedia
 

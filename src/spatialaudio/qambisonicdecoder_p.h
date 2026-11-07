@@ -14,8 +14,11 @@
 // We mean it.
 //
 
-#include <qtspatialaudioglobal_p.h>
-#include <qaudioformat.h>
+#include <QtMultimedia/qaudioformat.h>
+#include <QtSpatialAudio/private/qtspatialaudioglobal_p.h>
+#include <QtCore/qspan.h>
+
+#include <memory>
 
 QT_BEGIN_NAMESPACE
 
@@ -25,42 +28,45 @@ class QAmbisonicDecoderFilter;
 class QAmbisonicDecoder
 {
 public:
-    enum AmbisonicLevel
-    {
-        AmbisonicLevel1 = 1,
-        LowQuality = AmbisonicLevel1,
-        AmbisonicLevel2 = 2,
-        MediumQuality = AmbisonicLevel2,
-        AmbisonicLevel3 = 3,
-        HighQuality = AmbisonicLevel3
+    enum AmbisonicOrder {
+        Ambisonic1stOrder = 1,
+        LowQuality = Ambisonic1stOrder,
+        Ambisonic2ndOrder = 2,
+        MediumQuality = Ambisonic2ndOrder,
+        Ambisonic3rdOrder = 3,
+        HighQuality = Ambisonic3rdOrder
     };
-    QAmbisonicDecoder(AmbisonicLevel ambisonicLevel, const QAudioFormat &format);
+    QAmbisonicDecoder(AmbisonicOrder, int sampleRate, int numberOfOutputChannels,
+                      QAudioFormat::ChannelConfig);
     ~QAmbisonicDecoder();
 
-    bool hasValidConfig() const { return outputChannels > 0; }
+    bool hasValidConfig() const { return decoderData != nullptr || simpleDecoderFactors != nullptr; }
 
     int nInputChannels() const { return inputChannels; }
     int nOutputChannels() const { return outputChannels; }
 
-    int outputSize(int nSamples) const { return outputChannels * nSamples; }
+    int outputSamples(int nFrames) const { return outputChannels * nFrames; }
 
     // input is planar, output interleaved
-    void processBuffer(const float *input[], float *output, int nSamples);
-    void processBuffer(const float *input[], short *output, int nSamples);
+    void processBuffer(QSpan<const float *> input, QSpan<float> output);
 
-    void processBufferWithReverb(const float *input[], const float *reverb[2], short *output, int nSamples);
+    void processBufferWithReverb(QSpan<const float *> input, QSpan<const float *, 2> reverb,
+                                 QSpan<float> output);
 
     static constexpr int maxAmbisonicChannels = 16;
-    static constexpr int maxAmbisonicLevel = 3;
+    static constexpr int maxAmbisonicOrder = 3;
+
 private:
-    QAudioFormat::ChannelConfig channelConfig;
-    AmbisonicLevel level = AmbisonicLevel1;
-    int inputChannels = 0;
-    int outputChannels = 0;
+    const QAudioFormat::ChannelConfig channelConfig;
+    const AmbisonicOrder order;
+    const int inputChannels;
+    const int outputChannels;
     const QAmbisonicDecoderData *decoderData = nullptr;
-    QAmbisonicDecoderFilter *filters = nullptr;
-    float *simpleDecoderFactors = nullptr;
+    std::unique_ptr<QAmbisonicDecoderFilter[]> filters;
+    std::unique_ptr<float[]> simpleDecoderFactors;
+
     const float *reverbFactors = nullptr;
+    std::unique_ptr<float[]> m_reverbFactorsOwned;
 };
 
 

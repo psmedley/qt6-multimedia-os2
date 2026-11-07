@@ -3,25 +3,33 @@
 
 #include "qaudiosystem_p.h"
 
-#include <private/qplatformaudiodevices_p.h>
-
+#include <QtMultimedia/private/qplatformaudiodevices_p.h>
+#include <QtMultimedia/qaudiosink.h>
+#include <QtMultimedia/qaudiosource.h>
 #include <QtCore/qdebug.h>
 
 QT_BEGIN_NAMESPACE
 
-QAudioStateChangeNotifier::QAudioStateChangeNotifier(QObject *parent) : QObject(parent) { }
-
-QPlatformAudioEndpointBase::QPlatformAudioEndpointBase(QObject *parent)
-    : QAudioStateChangeNotifier(parent)
+QPlatformAudioEndpointBase::QPlatformAudioEndpointBase(QAudioDevice device,
+                                                       const QAudioFormat &format, QObject *parent)
+    : QObject{ parent }, m_audioDevice{ std::move(device) }, m_format{ format }
 {
+    Q_ASSERT(parent && "QPlatformAudioEndpointBase requires the QAudioSink/QAudioSource as parent");
 }
+
+QPlatformAudioEndpointBase::~QPlatformAudioEndpointBase()
+    = default;
 
 void QPlatformAudioEndpointBase::setError(QAudio::Error err)
 {
     if (err == m_error)
         return;
     m_error = err;
-    emit errorChanged(err);
+}
+
+bool QPlatformAudioEndpointBase::isFormatSupported(const QAudioFormat &format) const
+{
+    return m_audioDevice.isFormatSupported(format);
 }
 
 void QPlatformAudioEndpointBase::updateStreamState(QAudio::State state)
@@ -74,14 +82,33 @@ void QPlatformAudioEndpointBase::inferState()
         emit stateChanged(m_inferredState);
 }
 
-QPlatformAudioSink::QPlatformAudioSink(QObject *parent) : QPlatformAudioEndpointBase(parent) { }
-
-qreal QPlatformAudioSink::volume() const
+QPlatformAudioSink::QPlatformAudioSink(QAudioDevice device, const QAudioFormat &format,
+                                       QObject *parent)
+    : QPlatformAudioEndpointBase(std::move(device), format, parent)
 {
-    return 1.0;
 }
 
-QPlatformAudioSource::QPlatformAudioSource(QObject *parent) : QPlatformAudioEndpointBase(parent) { }
+QPlatformAudioSink::~QPlatformAudioSink()
+    = default;
+
+QPlatformAudioSink *QPlatformAudioSink::get(const QAudioSink &sink)
+{
+    return sink.d;
+}
+
+QPlatformAudioSource::QPlatformAudioSource(QAudioDevice device, const QAudioFormat &format,
+                                           QObject *parent)
+    : QPlatformAudioEndpointBase(std::move(device), format, parent)
+{
+}
+
+QPlatformAudioSource::~QPlatformAudioSource()
+    = default;
+
+QPlatformAudioSource *QPlatformAudioSource::get(const QAudioSource &source)
+{
+    return source.d;
+}
 
 QT_END_NAMESPACE
 

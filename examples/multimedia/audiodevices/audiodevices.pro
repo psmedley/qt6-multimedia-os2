@@ -2,6 +2,7 @@ TEMPLATE = app
 TARGET = audiodevices
 
 QT += multimedia
+CONFIG += add_ios_ffmpeg_libraries
 
 HEADERS       = audiodevices.h
 
@@ -14,4 +15,6 @@ target.path = $$[QT_INSTALL_EXAMPLES]/multimedia/audiodevices
 INSTALLS += target
 
 QT+=widgets
-include(../shared/shared.pri)
+
+macos: QMAKE_INFO_PLIST = Info.qmake.macos.plist
+ios: QMAKE_INFO_PLIST = Info.qmake.ios.plist

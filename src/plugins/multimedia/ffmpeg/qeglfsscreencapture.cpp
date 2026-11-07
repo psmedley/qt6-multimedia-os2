@@ -3,30 +3,34 @@
 
 #include "qeglfsscreencapture_p.h"
 
-#include "qffmpegsurfacecapturegrabber_p.h"
+#include <QtMultimedia/private/qsurfacecapturegrabber_p.h>
 #include "qguiapplication.h"
 #include "qopenglvideobuffer_p.h"
 #include "private/qimagevideobuffer_p.h"
 #include "private/qvideoframe_p.h"
 
+#include <QtMultimedia/private/qmultimedia_ranges_p.h>
 #include <QtOpenGL/private/qopenglcompositor_p.h>
 #include <QtOpenGL/private/qopenglframebufferobject_p.h>
 
+#ifndef QT_NO_QUICK
 #include <QtQuick/qquickwindow.h>
+#endif
 
 QT_BEGIN_NAMESPACE
+namespace ranges = QtMultimediaPrivate::ranges;
 
-class QEglfsScreenCapture::Grabber : public QFFmpegSurfaceCaptureGrabber
+class QEglfsScreenCapture::Grabber : public QSurfaceCaptureGrabber
 {
 public:
     Grabber(QEglfsScreenCapture &screenCapture, QScreen *screen)
-        : QFFmpegSurfaceCaptureGrabber(QFFmpegSurfaceCaptureGrabber::UseCurrentThread)
+        : QSurfaceCaptureGrabber(QSurfaceCaptureGrabber::UseCurrentThread)
     {
-        addFrameCallback(screenCapture, &QEglfsScreenCapture::newVideoFrame);
+        addFrameCallback(&screenCapture, &QEglfsScreenCapture::newVideoFrame);
         connect(this, &Grabber::errorUpdated, &screenCapture, &QEglfsScreenCapture::updateError);
-        // Limit frame rate to 30 fps for performance reasons,
-        // to be reviewed at the next optimization round
-        setFrameRate(std::min(screen->refreshRate(), qreal(30.0)));
+
+        Q_ASSERT(screen);
+        setFrameRate(screenCapture.frameRate().value_or(qMin(screen->refreshRate(), 30.f)));
     }
 
     ~Grabber() override { stop(); }
@@ -54,9 +58,12 @@ protected:
 
         if (!m_format.isValid()) {
             auto image = videoBuffer->ensureImageBuffer().underlyingImage();
-            m_format = { image.size(), QVideoFrameFormat::pixelFormatFromImageFormat(image.format()) };
-            m_format.setStreamFrameRate(frameRate());
+            m_format = { image.size(),
+                         QVideoFrameFormat::pixelFormatFromImageFormat(image.format()) };
         }
+
+        if (m_format.streamFrameRate() != frameRate())
+            m_format.setStreamFrameRate(frameRate());
 
         return QVideoFramePrivate::createFrame(std::move(videoBuffer), m_format);
     }
@@ -64,6 +71,7 @@ protected:
     QVideoFrameFormat m_format;
 };
 
+#ifndef QT_NO_QUICK
 class QEglfsScreenCapture::QuickGrabber : public Grabber
 {
 public:
@@ -91,8 +99,10 @@ protected:
         if (!m_format.isValid()) {
             m_format = { image.size(),
                          QVideoFrameFormat::pixelFormatFromImageFormat(image.format()) };
-            m_format.setStreamFrameRate(frameRate());
         }
+
+        if (m_format.streamFrameRate() != frameRate())
+            m_format.setStreamFrameRate(frameRate());
 
         return QVideoFramePrivate::createFrame(
                 std::make_unique<QImageVideoBuffer>(std::move(image)), m_format);
@@ -101,6 +111,7 @@ protected:
 private:
     QPointer<QQuickWindow> m_quickWindow;
 };
+#endif // QT_NO_QUICK
 
 QEglfsScreenCapture::QEglfsScreenCapture() : QPlatformSurfaceCapture(ScreenSource{}) { }
 
@@ -147,7 +158,7 @@ std::unique_ptr<QEglfsScreenCapture::Grabber> QEglfsScreenCapture::createGrabber
 
     QOpenGLCompositor *compositor = QOpenGLCompositor::instance();
 
-    if (compositor->context()) {
+    if (compositor->context() && QOpenGLContext::currentContext()) {
         // Create OpenGL grabber
         if (!compositor->targetWindow()) {
             updateError(Error::CaptureFailed,
@@ -158,9 +169,10 @@ std::unique_ptr<QEglfsScreenCapture::Grabber> QEglfsScreenCapture::createGrabber
         return std::make_unique<Grabber>(*this, screen);
     }
 
+#ifndef QT_NO_QUICK
     // Check for QQuickWindow
     auto windows = QGuiApplication::topLevelWindows();
-    auto it = std::find_if(windows.begin(), windows.end(), [screen](QWindow *window) {
+    auto it = ranges::find_if(windows, [screen](QWindow *window) {
         auto quickWindow = qobject_cast<QQuickWindow *>(window);
         if (!quickWindow)
             return false;
@@ -172,6 +184,7 @@ std::unique_ptr<QEglfsScreenCapture::Grabber> QEglfsScreenCapture::createGrabber
         // Create grabber that calls QQuickWindow::grabWindow
         return std::make_unique<QuickGrabber>(*this, screen, qobject_cast<QQuickWindow *>(*it));
     }
+#endif // QT_NO_QUICK
 
     updateError(Error::CaptureFailed, QLatin1String("No existing OpenGL context or QQuickWindow"));
     return nullptr;

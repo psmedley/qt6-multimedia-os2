@@ -6,52 +6,66 @@
 #include <emscripten/val.h>
 #include <emscripten/bind.h>
 
-#include <AL/al.h>
-#include <AL/alc.h>
-
 QT_BEGIN_NAMESPACE
 
-QWasmAudioDevice::QWasmAudioDevice(const char *device,
-                                   const char *desc,
-                                   bool isDef,
-                                   QAudioDevice::Mode mode)
-    : QAudioDevicePrivate(device, mode, QString::fromUtf8(desc))
+namespace {
+
+// Probe the hardware sample rate once and cache it. The rate is the same for
+// all devices, so creating a temporary AudioContext per enumerated device is
+// wasteful and can cause browser device errors from overlapping contexts.
+int probeHardwareSampleRate()
 {
-    isDefault = isDef;
-    minimumChannelCount = 1;
-    maximumChannelCount = 2;
-    minimumSampleRate = 8000;
-    maximumSampleRate = 96000; // js AudioContext max according to docs
-
-    // native openAL formats
-    supportedSampleFormats.append(QAudioFormat::UInt8);
-    supportedSampleFormats.append(QAudioFormat::Int16);
-
-    // Browsers use 32bit floats as native, but emscripten reccomends checking for the exension.
-    if (alIsExtensionPresent("AL_EXT_float32"))
-        supportedSampleFormats.append(QAudioFormat::Float);
-
-    preferredFormat.setChannelCount(2);
+    static int cachedRate = 0;
+    if (cachedRate > 0)
+        return cachedRate;
 
     // FIXME: firefox
     // An AudioContext was prevented from starting automatically.
     // It must be created or resumed after a user gesture on the page.
-    emscripten::val audioContext = emscripten::val::global("window")["AudioContext"].new_();
-    if (audioContext == emscripten::val::undefined())
-        audioContext = emscripten::val::global("window")["webkitAudioContext"].new_();
+    emscripten::val ctx = emscripten::val::global("window")["AudioContext"].new_();
+    if (ctx == emscripten::val::undefined())
+        ctx = emscripten::val::global("window")["webkitAudioContext"].new_();
 
-    if (audioContext != emscripten::val::undefined()) {
-        audioContext.call<void>("resume");
-        int sRate = audioContext["sampleRate"].as<int>();
-        audioContext.call<void>("close");
-        preferredFormat.setSampleRate(sRate);
+    if (ctx != emscripten::val::undefined()) {
+        cachedRate = ctx["sampleRate"].as<int>();
+        ctx.call<void>("close");
     }
 
-    auto f = QAudioFormat::Float;
+    return cachedRate;
+}
 
-    if (!supportedSampleFormats.contains(f))
-        f = QAudioFormat::Int16;
-    preferredFormat.setSampleFormat(f);
+QAudioDevicePrivate::AudioDeviceFormat createDefaultWasmAudioDeviceFormat()
+{
+    QAudioDevicePrivate::AudioDeviceFormat format;
+
+    format.minimumChannelCount = 1;
+    format.maximumChannelCount = 2;
+    format.minimumSampleRate = 8000;
+    format.maximumSampleRate = 96000; // js AudioContext max according to docs
+
+    // WebAudio natively supports all these formats via AudioWorklet.
+    format.supportedSampleFormats.append(QAudioFormat::UInt8);
+    format.supportedSampleFormats.append(QAudioFormat::Int16);
+    format.supportedSampleFormats.append(QAudioFormat::Int32);
+    format.supportedSampleFormats.append(QAudioFormat::Float);
+
+    format.preferredFormat.setChannelCount(2);
+
+    if (int sRate = probeHardwareSampleRate(); sRate > 0)
+        format.preferredFormat.setSampleRate(sRate);
+
+    format.preferredFormat.setSampleFormat(QAudioFormat::Float);
+
+    return format;
+}
+
+} // namespace
+
+QWasmAudioDevice::QWasmAudioDevice(const char *device, const char *desc, bool isDef,
+                                   QAudioDevice::Mode mode)
+    : QAudioDevicePrivate(device, mode, QString::fromUtf8(desc), isDef,
+                          createDefaultWasmAudioDeviceFormat())
+{
 }
 
 QT_END_NAMESPACE

@@ -17,6 +17,7 @@
 
 #include "qglobal.h"
 
+#include <QtCore/qdebug.h>
 #include <QtMultimedia/private/qtaggedtime_p.h>
 #include <QtFFmpegMediaPluginImpl/private/qffmpeg_p.h>
 
@@ -50,13 +51,13 @@ struct AVContextTimeTag;
 using AVContextPosition = QTaggedTimePoint<qint64, AVContextTimeTag>;
 using AVContextDuration = QTaggedDuration<qint64, AVContextTimeTag>;
 
-using RealClock = std::chrono::steady_clock;
+using SteadyClock = std::chrono::steady_clock;
 
-inline AVContextDuration contextStartOffset(const AVFormatContext *formatContext)
-
+inline std::optional<AVContextDuration> contextStartOffset(const AVFormatContext *formatContext)
 {
-    return AVContextDuration(
-            formatContext->start_time == AV_NOPTS_VALUE ? 0 : formatContext->start_time);
+    if (formatContext->start_time == AV_NOPTS_VALUE)
+        return std::nullopt;
+    return AVContextDuration(formatContext->start_time);
 }
 
 inline UserTrackPosition toUserPosition(TrackPosition trackPosition)
@@ -92,17 +93,51 @@ inline TrackDuration toTrackDuration(AVStreamDuration streamDuration, const AVSt
 inline TrackPosition toTrackPosition(AVStreamPosition streamPosition, const AVStream *avStream,
                                      const AVFormatContext *formatContext)
 {
-    const auto duration = toTrackDuration(streamPosition.asDuration(), avStream)
-            - toTrackDuration(contextStartOffset(formatContext));
+    auto duration = toTrackDuration(streamPosition.asDuration(), avStream);
+    if (formatContext) {
+        std::optional contextStart = contextStartOffset(formatContext);
+        if (contextStart)
+            duration -= toTrackDuration(*contextStart);
+    }
+
     return duration.asTimePoint();
 }
 
 inline AVContextPosition toContextPosition(TrackPosition trackPosition,
                                            const AVFormatContext *formatContext)
 {
-
     return AVContextPosition(trackPosition.get() * AV_TIME_BASE / 1'000'000)
-            + contextStartOffset(formatContext);
+            + contextStartOffset(formatContext).value_or(AVContextDuration::zero());
+}
+
+inline QDebug operator<<(QDebug debug, const TrackPosition &position)
+{
+    return debug << "TrackPosition{" << position.get() << "us}";
+}
+
+inline QDebug operator<<(QDebug debug, const TrackDuration &duration)
+{
+    return debug << "TrackDuration{" << duration.get() << "us}";
+}
+
+inline QDebug operator<<(QDebug debug, const UserTrackPosition &position)
+{
+    return debug << "UserTrackPosition{" << position.get() << "ms}";
+}
+
+inline QDebug operator<<(QDebug debug, const UserTrackDuration &duration)
+{
+    return debug << "UserTrackDuration{" << duration.get() << "ms}";
+}
+
+inline QDebug operator<<(QDebug debug, const AVStreamPosition &position)
+{
+    return debug << "AVStreamPosition{" << position.get() << "stream units}";
+}
+
+inline QDebug operator<<(QDebug debug, const AVStreamDuration &duration)
+{
+    return debug << "AVStreamDuration{" << duration.get() << "stream units}";
 }
 
 } // namespace QFFmpeg

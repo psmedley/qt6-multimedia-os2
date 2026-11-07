@@ -16,7 +16,6 @@ class QMockMediaPlayer : public QPlatformMediaPlayer
 public:
     QMockMediaPlayer(QMediaPlayer *parent)
         : QPlatformMediaPlayer(parent)
-        , _state(QMediaPlayer::StoppedState)
         , _error(QMediaPlayer::NoError)
         , _duration(0)
         , _position(0)
@@ -33,14 +32,11 @@ public:
     {
     }
 
-    QMediaPlayer::PlaybackState state() const override { return _state; }
     void updateState(QMediaPlayer::PlaybackState state) { setState(state); }
     void updateMediaStatus(QMediaPlayer::MediaStatus status, QMediaPlayer::PlaybackState state)
     {
-        _state = state;
-
         mediaStatusChanged(status);
-        stateChanged(_state);
+        stateChanged(state);
     }
 
     qint64 duration() const override { return _duration; }
@@ -70,7 +66,7 @@ public:
     void setSeekable(bool seekable) { seekableChanged(_isSeekable = seekable); }
 
     QMediaTimeRange availablePlaybackRanges() const override { return QMediaTimeRange(_seekRange.first, _seekRange.second); }
-    void setSeekRange(qint64 minimum, qint64 maximum) { _seekRange = qMakePair(minimum, maximum); }
+    void setSeekRange(qint64 minimum, qint64 maximum) { _seekRange = std::pair(minimum, maximum); }
 
     qreal playbackRate() const override { return _playbackRate; }
     void setPlaybackRate(qreal rate) override
@@ -94,7 +90,7 @@ public:
 
     void play() override { if (_isValid && !_media.isEmpty()) setState(QMediaPlayer::PlayingState); }
     void pause() override { if (_isValid && !_media.isEmpty()) setState(QMediaPlayer::PausedState); }
-    void stop() override { if (_state != QMediaPlayer::StoppedState) setState(QMediaPlayer::StoppedState); }
+    void stop() override { if (state() != QMediaPlayer::StoppedState) setState(QMediaPlayer::StoppedState); }
 
     void setVideoSink(QVideoSink *) override {}
 
@@ -104,14 +100,10 @@ public:
 
     void setState(QMediaPlayer::PlaybackState state)
     {
-        if (_state == state)
-            return;
-        _state = state;
         stateChanged(state);
     }
     void setState(QMediaPlayer::PlaybackState state, QMediaPlayer::MediaStatus status)
     {
-        _state = state;
         mediaStatusChanged(status);
         stateChanged(state);
     }
@@ -137,7 +129,7 @@ public:
 
     void reset()
     {
-        _state = QMediaPlayer::StoppedState;
+        stateChanged(QMediaPlayer::StoppedState);
         _error = QMediaPlayer::NoError;
         _duration = 0;
         _position = 0;
@@ -152,7 +144,6 @@ public:
     }
 
 
-    QMediaPlayer::PlaybackState _state;
     QMediaPlayer::Error _error;
     qint64 _duration;
     qint64 _position;
@@ -160,7 +151,7 @@ public:
     bool _audioAvailable;
     bool _videoAvailable;
     bool _isSeekable;
-    QPair<qint64, qint64> _seekRange;
+    std::pair<qint64, qint64> _seekRange;
     qreal _playbackRate;
     QUrl _media;
     QIODevice *_stream;

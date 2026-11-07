@@ -22,6 +22,9 @@
 #include "mediacapture/qwasmcamera_p.h"
 #include "mediacapture/qwasmmediacapturesession_p.h"
 #include "mediacapture/qwasmimagecapture_p.h"
+#include "mediacapture/qwasmscreencapture_p.h"
+#include "mediacapture/qwasmwindowcapture_p.h"
+#include "mediacapture/qwasmcapturablewindows_p.h"
 
 QT_BEGIN_NAMESPACE
 
@@ -47,22 +50,22 @@ public:
 QWasmMediaIntegration::QWasmMediaIntegration()
     : QPlatformMediaIntegration(QLatin1String("wasm")) { }
 
-QMaybe<QPlatformMediaPlayer *> QWasmMediaIntegration::createPlayer(QMediaPlayer *player)
+q23::expected<QPlatformMediaPlayer *, QString> QWasmMediaIntegration::createPlayer(QMediaPlayer *player)
 {
     return new QWasmMediaPlayer(player);
 }
 
-QMaybe<QPlatformVideoSink *> QWasmMediaIntegration::createVideoSink(QVideoSink *sink)
+q23::expected<QPlatformVideoSink *, QString> QWasmMediaIntegration::createVideoSink(QVideoSink *sink)
 {
     return new QWasmVideoSink(sink);
 }
 
-QMaybe<QPlatformAudioInput *> QWasmMediaIntegration::createAudioInput(QAudioInput *audioInput)
+q23::expected<QPlatformAudioInput *, QString> QWasmMediaIntegration::createAudioInput(QAudioInput *audioInput)
 {
     return new QWasmAudioInput(audioInput);
 }
 
-QMaybe<QPlatformAudioOutput *> QWasmMediaIntegration::createAudioOutput(QAudioOutput *q)
+q23::expected<QPlatformAudioOutput *, QString> QWasmMediaIntegration::createAudioOutput(QAudioOutput *q)
 {
     return new QWasmAudioOutput(q);
 }
@@ -78,25 +81,45 @@ QPlatformVideoDevices *QWasmMediaIntegration::createVideoDevices()
     return new QWasmCameraDevices(this);
 }
 
-QMaybe<QPlatformMediaCaptureSession *> QWasmMediaIntegration::createCaptureSession()
+q23::expected<QPlatformMediaCaptureSession *, QString> QWasmMediaIntegration::createCaptureSession()
 {
     return new QWasmMediaCaptureSession();
 }
 
-QMaybe<QPlatformMediaRecorder *> QWasmMediaIntegration::createRecorder(QMediaRecorder *recorder)
+q23::expected<QPlatformMediaRecorder *, QString> QWasmMediaIntegration::createRecorder(QMediaRecorder *recorder)
 {
     return new QWasmMediaRecorder(recorder);
 }
 
-QMaybe<QPlatformCamera *> QWasmMediaIntegration::createCamera(QCamera *camera)
+q23::expected<QPlatformCamera *, QString> QWasmMediaIntegration::createCamera(QCamera *camera)
 {
     return new QWasmCamera(camera);
 }
 
-QMaybe<QPlatformImageCapture *>
+q23::expected<QPlatformImageCapture *, QString>
 QWasmMediaIntegration::createImageCapture(QImageCapture *imageCapture)
 {
     return new QWasmImageCapture(imageCapture);
+}
+
+QList<QCameraDevice> QWasmMediaIntegration::videoInputs()
+{
+    return videoDevices()->videoInputs();
+}
+
+QPlatformSurfaceCapture *QWasmMediaIntegration::createScreenCapture(QScreenCapture *screenCapture)
+{
+    return new QWasmScreenCapture(screenCapture);
+}
+
+QPlatformSurfaceCapture *QWasmMediaIntegration::createWindowCapture(QWindowCapture *windowCapture)
+{
+    return new QWasmWindowCapture(windowCapture);
+}
+
+QPlatformCapturableWindows *QWasmMediaIntegration::createCapturableWindows()
+{
+    return new QWasmCapturableWindows();
 }
 
 QT_END_NAMESPACE

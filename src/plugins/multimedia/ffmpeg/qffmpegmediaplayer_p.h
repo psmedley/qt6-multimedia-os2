@@ -74,6 +74,10 @@ public:
     void setActiveTrack(TrackType, int streamNumber) override;
     void setLoops(int loops) override;
 
+    PitchCompensationAvailability pitchCompensationAvailability() const override;
+    void setPitchCompensation(bool enabled) override;
+    bool pitchCompensation() const override;
+
 private:
     void runPlayback();
     void handleIncorrectMedia(QMediaPlayer::MediaStatus status);
@@ -85,7 +89,7 @@ private:
 private slots:
     void updatePosition();
     void endOfStream();
-    void error(int error, const QString &errorString)
+    void error(QMediaPlayer::Error error, const QString &errorString)
     {
         QPlatformMediaPlayer::error(error, errorString);
     }
@@ -110,6 +114,12 @@ private:
     QFuture<void> m_loadMedia;
     std::shared_ptr<QFFmpeg::CancelToken> m_cancelToken; // For interrupting ongoing
                                                          // network connection attempt
+
+    bool m_pitchCompensation = true;
+
+    // Set by onBuffered(); reset on seek/stop/new-media. Guards against the demuxer
+    // completing re-buffering before the player enters BufferingMedia (QTBUG-147839).
+    bool m_demuxerBuffered = false;
 };
 
 QT_END_NAMESPACE

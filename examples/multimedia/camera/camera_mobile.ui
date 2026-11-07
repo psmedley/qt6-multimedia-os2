@@ -43,10 +43,10 @@
            <number>2</number>
           </property>
           <property name="orientation">
-           <enum>Qt::Horizontal</enum>
+           <enum>Qt::Orientation::Horizontal</enum>
           </property>
           <property name="tickPosition">
-           <enum>QSlider::TicksAbove</enum>
+           <enum>QSlider::TickPosition::TicksAbove</enum>
           </property>
          </widget>
         </item>
@@ -116,7 +116,7 @@
             <item>
              <spacer name="verticalSpacer">
               <property name="orientation">
-               <enum>Qt::Vertical</enum>
+               <enum>Qt::Orientation::Vertical</enum>
               </property>
               <property name="sizeHint" stdset="0">
                <size>
@@ -254,7 +254,7 @@
            </sizepolicy>
           </property>
           <property name="frameShape">
-           <enum>QFrame::Box</enum>
+           <enum>QFrame::Shape::Box</enum>
           </property>
           <property name="text">
            <string/>
@@ -273,7 +273,7 @@
      <x>0</x>
      <y>0</y>
      <width>668</width>
-     <height>22</height>
+     <height>26</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -283,7 +283,8 @@
     <addaction name="actionStartCamera"/>
     <addaction name="actionStopCamera"/>
     <addaction name="separator"/>
-    <addaction name="actionSettings"/>
+    <addaction name="actionImageSettings"/>
+    <addaction name="actionVideoSettings"/>
     <addaction name="separator"/>
     <addaction name="actionExit"/>
    </widget>
@@ -311,9 +312,14 @@
     <string>Stop Camera</string>
    </property>
   </action>
-  <action name="actionSettings">
+  <action name="actionImageSettings">
    <property name="text">
-    <string>Change Settings</string>
+    <string>Image capture settings</string>
+   </property>
+  </action>
+  <action name="actionVideoSettings">
+   <property name="text">
+    <string>Video settings</string>
    </property>
   </action>
  </widget>
@@ -440,10 +446,26 @@
    </hints>
   </connection>
   <connection>
-   <sender>actionSettings</sender>
+   <sender>actionImageSettings</sender>
    <signal>triggered()</signal>
    <receiver>Camera</receiver>
-   <slot>configureCaptureSettings()</slot>
+   <slot>configureImageSettings()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>-1</x>
+     <y>-1</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>333</x>
+     <y>210</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>actionVideoSettings</sender>
+   <signal>triggered()</signal>
+   <receiver>Camera</receiver>
+   <slot>configureVideoSettings()</slot>
    <hints>
     <hint type="sourcelabel">
      <x>-1</x>
@@ -493,7 +515,8 @@
   <slot>pause()</slot>
   <slot>stop()</slot>
   <slot>enablePreview(bool)</slot>
-  <slot>configureCaptureSettings()</slot>
+  <slot>configureImageSettings()</slot>
+  <slot>configureVideoSettings()</slot>
   <slot>takeImage()</slot>
   <slot>startCamera()</slot>
   <slot>toggleLock()</slot>

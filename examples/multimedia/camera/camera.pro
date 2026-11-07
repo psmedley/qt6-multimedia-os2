@@ -2,6 +2,7 @@ TEMPLATE = app
 TARGET = camera
 
 QT += multimedia multimediawidgets
+CONFIG += add_ios_ffmpeg_libraries
 
 HEADERS = \
     camera.h \
@@ -34,7 +35,9 @@ target.path = $$[QT_INSTALL_EXAMPLES]/multimedia/camera
 INSTALLS += target
 
 QT += widgets
-include(../../multimedia/shared/shared.pri)
+
+macos: QMAKE_INFO_PLIST = Info.qmake.macos.plist
+ios: QMAKE_INFO_PLIST = Info.qmake.ios.plist
 
 ANDROID_PACKAGE_SOURCE_DIR = $$PWD/android
 OTHER_FILES += android/AndroidManifest.xml

@@ -15,6 +15,8 @@ QGStreamerCustomAudioDeviceInfo::QGStreamerCustomAudioDeviceInfo(const QByteArra
           gstreamerPipeline,
           mode,
           QString::fromUtf8(gstreamerPipeline),
+          false,
+          std::future<QAudioDevicePrivate::AudioDeviceFormat>{}  // invalid future - format not predetermined
       }
 {
 }
@@ -24,7 +26,7 @@ QAudioDevice qMakeCustomGStreamerAudioInput(const QByteArray &gstreamerPipeline)
     auto deviceInfo = std::make_unique<QGStreamerCustomAudioDeviceInfo>(gstreamerPipeline,
                                                                         QAudioDevice::Mode::Input);
 
-    return deviceInfo.release()->create();
+    return QAudioDevicePrivate::createQAudioDevice(std::move(deviceInfo));
 }
 
 QAudioDevice qMakeCustomGStreamerAudioOutput(const QByteArray &gstreamerPipeline)
@@ -32,7 +34,7 @@ QAudioDevice qMakeCustomGStreamerAudioOutput(const QByteArray &gstreamerPipeline
     auto deviceInfo = std::make_unique<QGStreamerCustomAudioDeviceInfo>(gstreamerPipeline,
                                                                         QAudioDevice::Mode::Output);
 
-    return deviceInfo.release()->create();
+    return QAudioDevicePrivate::createQAudioDevice(std::move(deviceInfo));
 }
 
 bool isCustomAudioDevice(const QAudioDevicePrivate *device)
@@ -42,7 +44,7 @@ bool isCustomAudioDevice(const QAudioDevicePrivate *device)
 
 bool isCustomAudioDevice(const QAudioDevice &device)
 {
-    return isCustomAudioDevice(device.handle());
+    return isCustomAudioDevice(QAudioDevicePrivate::handle(device));
 }
 
 QT_END_NAMESPACE

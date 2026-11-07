@@ -53,17 +53,23 @@ public:
         // else hwVideoBuffer == nullptr
     }
 
-    static QVideoFramePrivate *handle(QVideoFrame &frame) { return frame.d.get(); };
+    static QVideoFramePrivate *handle(QVideoFrame &frame) { return frame.d.get(); }
 
     static QHwVideoBuffer *hwBuffer(const QVideoFrame &frame)
     {
         return frame.d ? frame.d->hwVideoBuffer : nullptr;
-    };
+    }
+
+    static bool hasDmaBuf(const QVideoFrame &frame)
+    {
+        QHwVideoBuffer *hwVideoBuffer = hwBuffer(frame);
+        return hwVideoBuffer && hwVideoBuffer->isDmaBuf();
+    }
 
     static QAbstractVideoBuffer *buffer(const QVideoFrame &frame)
     {
         return frame.d ? frame.d->videoBuffer.get() : nullptr;
-    };
+    }
 
     QVideoFrame adoptThisByVideoFrame()
     {

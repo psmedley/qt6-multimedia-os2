@@ -15,9 +15,9 @@
 // We mean it.
 //
 
-#include <private/qquick3dnode_p.h>
+#include <QtQuick3D/private/qquick3dnode_p.h>
 #include <QtGui/qvector3d.h>
-#include <qaudioroom.h>
+#include <QtSpatialAudio/qaudioroom.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -27,9 +27,7 @@ class QAudioRoomPrivate;
 class QQuick3DAudioRoom : public QQuick3DNode
 {
     Q_OBJECT
-    Q_PROPERTY(QVector3D position READ position WRITE setPosition NOTIFY positionChanged)
     Q_PROPERTY(QVector3D dimensions READ dimensions WRITE setDimensions NOTIFY dimensionsChanged)
-    Q_PROPERTY(QQuaternion rotation READ rotation WRITE setRotation NOTIFY rotationChanged)
     Q_PROPERTY(Material leftMaterial READ leftMaterial WRITE setLeftMaterial NOTIFY wallsChanged)
     Q_PROPERTY(Material rightMaterial READ rightMaterial WRITE setRightMaterial NOTIFY wallsChanged)
     Q_PROPERTY(Material frontMaterial READ frontMaterial WRITE setFrontMaterial NOTIFY wallsChanged)

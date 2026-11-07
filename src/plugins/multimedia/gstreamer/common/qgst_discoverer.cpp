@@ -154,20 +154,27 @@ QGstDiscovererInfo parseGstDiscovererInfo(GstDiscovererInfo *info)
     GstDiscovererStreamInfoList<GstDiscovererVideoInfo> videoStreams{
         gst_discoverer_info_get_video_streams(info),
     };
-    for (GstDiscovererVideoInfo *videoInfo : videoStreams)
-        result.videoStreams.emplace_back(parseGstDiscovererVideoInfo(videoInfo));
-
+    for (GstDiscovererVideoInfo *videoInfo : videoStreams) {
+        QGstDiscovererVideoInfo item = parseGstDiscovererVideoInfo(videoInfo);
+        if (!item.streamID.isNull()) // Ignore stream info without stream ID
+            result.videoStreams.emplace_back(std::move(item));
+    }
     GstDiscovererStreamInfoList<GstDiscovererAudioInfo> audioStreams{
         gst_discoverer_info_get_audio_streams(info),
     };
-    for (GstDiscovererAudioInfo *audioInfo : audioStreams)
-        result.audioStreams.emplace_back(parseGstDiscovererAudioInfo(audioInfo));
-
+    for (GstDiscovererAudioInfo *audioInfo : audioStreams) {
+        QGstDiscovererAudioInfo item = parseGstDiscovererAudioInfo(audioInfo);
+        if (!item.streamID.isNull()) // Ignore stream info without stream ID
+            result.audioStreams.emplace_back(std::move(item));
+    }
     GstDiscovererStreamInfoList<GstDiscovererSubtitleInfo> subtitleStreams{
         gst_discoverer_info_get_subtitle_streams(info),
     };
-    for (GstDiscovererSubtitleInfo *subtitleInfo : subtitleStreams)
-        result.subtitleStreams.emplace_back(parseGstDiscovererSubtitleInfo(subtitleInfo));
+    for (GstDiscovererSubtitleInfo *subtitleInfo : subtitleStreams) {
+        QGstDiscovererSubtitleInfo item = parseGstDiscovererSubtitleInfo(subtitleInfo);
+        if (!item.streamID.isNull()) // Ignore stream info without stream ID
+            result.subtitleStreams.emplace_back(std::move(item));
+    }
 
     GstDiscovererStreamInfoList<GstDiscovererContainerInfo> containerStreams{
         gst_discoverer_info_get_container_streams(info),
@@ -192,22 +199,22 @@ QGstDiscoverer::QGstDiscoverer()
 {
 }
 
-QMaybe<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(const QString &uri)
+q23::expected<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(const QString &uri)
 {
     return discover(uri.toUtf8().constData());
 }
 
-QMaybe<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(const QUrl &url)
+q23::expected<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(const QUrl &url)
 {
     return discover(url.toEncoded().constData());
 }
 
-QMaybe<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(QIODevice *device)
+q23::expected<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(QIODevice *device)
 {
     return discover(qGstRegisterQIODevice(device));
 }
 
-QMaybe<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(const char *uri)
+q23::expected<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(const char *uri)
 {
     QUniqueGErrorHandle error;
     QGstDiscovererInfoHandle info{
@@ -216,8 +223,7 @@ QMaybe<QGstDiscovererInfo, QUniqueGErrorHandle> QGstDiscoverer::discover(const c
     };
 
     if (error)
-        return {
-            unexpect,
+        return q23::unexpected{
             std::move(error),
         };
 
@@ -238,7 +244,7 @@ QMediaMetaData toContainerMetadata(const QGstDiscovererInfo &info)
     else
         extendMetaDataFromTagList(metadata, info.tags);
 
-    auto updateMetadata = [&](Key key, auto value) {
+    auto updateMetadata = [&](Key key, const auto &value) {
         QVariant currentValue = metadata.value(key);
         if (!currentValue.isValid() || currentValue != value)
             metadata.insert(key, value);
@@ -279,6 +285,12 @@ QMediaMetaData toStreamMetadata(const QGstDiscovererVideoInfo &info)
 
     extendMetaDataFromCaps(metadata, info.caps);
     addMissingKeysFromTaglist(metadata, info.tags);
+
+    // Get resolution and framerate from info if missing from caps, as seen for mpeg2 format
+    updateMetadata(metadata, Key::Resolution, info.size);
+    if (info.framerate.numerator > 0 && info.framerate.denominator > 0)
+        updateMetadata(metadata, QMediaMetaData::VideoFrameRate,
+                       qreal(info.framerate.numerator) / qreal(info.framerate.denominator));
 
     return metadata;
 }
