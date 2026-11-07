@@ -211,6 +211,26 @@ qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_alsa
         ALSA::ALSA
 )
 
+qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2audio
+    SOURCES
+        os2/qos2audioringbuffer_p.h
+        os2/qos2audiostream.cpp os2/qos2audiostream_p.h
+        os2/qos2dartstream.cpp os2/qos2dartstream_p.h
+        os2/qos2audiodevice.cpp os2/qos2audiodevice_p.h
+        os2/qos2audiodevices.cpp os2/qos2audiodevices_p.h
+        os2/qos2audiosink.cpp os2/qos2audiosink_p.h
+        os2/qos2audiosource.cpp os2/qos2audiosource_p.h
+    LIBRARIES
+        mmpm2
+)
+
+qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_os2kai
+    SOURCES
+        os2/qos2kaistream.cpp os2/qos2kaistream_p.h
+    LIBRARIES
+        KAI::KAI
+)
+
 if (QT_FEATURE_pipewire)
     qt_internal_extend_target(Multimedia
         SYSTEM_INCLUDE_DIRECTORIES

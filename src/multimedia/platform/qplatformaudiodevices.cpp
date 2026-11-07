@@ -22,6 +22,9 @@
 #if defined(Q_OS_WINDOWS)
 #  include <QtMultimedia/private/qwindowsaudiodevices_p.h>
 #endif
+#if QT_CONFIG(os2audio)
+#  include <QtMultimedia/private/qos2audiodevices_p.h>
+#endif
 #if QT_CONFIG(alsa)
 #  include <QtMultimedia/private/qalsaaudiodevices_p.h>
 #endif
@@ -59,6 +62,16 @@ std::unique_ptr<QPlatformAudioDevices> QPlatformAudioDevices::create()
 #endif
 #if QT_CONFIG(ohaudio)
     return std::make_unique<QOhosAudioDevices>();
+#endif
+#if QT_CONFIG(os2audio)
+#  if QT_CONFIG(pulseaudio)
+    // Native DART/KAI audio is the default on OS/2; PulseAudio can still be
+    // selected explicitly when it was built as well.
+    if (qgetenv("QT_AUDIO_BACKEND") != "pulseaudio"_ba)
+        return std::make_unique<QOS2AudioDevices>();
+#  else
+    return std::make_unique<QOS2AudioDevices>();
+#  endif
 #endif
 #if QT_CONFIG(pipewire)
     QByteArray requestedBackend = qgetenv("QT_AUDIO_BACKEND");

@@ -58,6 +58,9 @@ qt_add_qmake_lib_dependency(gstreamer_gl_x11_1_0 gstreamer_1_0)
 qt_find_package(MMRendererCore PROVIDED_TARGETS MMRendererCore::MMRendererCore MODULE_NAME multimedia QMAKE_LIB mmrndcore)
 qt_find_package(MMRenderer PROVIDED_TARGETS MMRenderer::MMRenderer MODULE_NAME multimedia QMAKE_LIB mmrndclient)
 qt_find_package(WrapPulseAudio PROVIDED_TARGETS WrapPulseAudio::WrapPulseAudio MODULE_NAME multimedia QMAKE_LIB pulseaudio)
+if(OS2 OR CMAKE_SYSTEM_NAME STREQUAL "OS2" OR QT_FIND_ALL_PACKAGES_ALWAYS)
+    qt_find_package(KAI PROVIDED_TARGETS KAI::KAI MODULE_NAME multimedia QMAKE_LIB kai)
+endif()
 if(TARGET EGL::EGL)
     qt_internal_disable_find_package_global_promotion(EGL::EGL)
 endif()
@@ -138,6 +141,13 @@ int main(int, char **)
 ")
 
 #### Features
+
+# OS/2 builds: CMake ports normally set OS2, fall back to the system name.
+if(OS2 OR CMAKE_SYSTEM_NAME STREQUAL "OS2")
+    set(QT_MULTIMEDIA_OS2 ON)
+else()
+    set(QT_MULTIMEDIA_OS2 OFF)
+endif()
 
 qt_feature("pipewire" PRIVATE
     LABEL "PipeWire"
@@ -252,6 +262,14 @@ qt_feature("native_ohos_backend" PUBLIC PRIVATE
     AUTODETECT true
     CONDITION OHOS
 )
+qt_feature("os2audio" PRIVATE
+    LABEL "OS/2 DART audio"
+    CONDITION QT_MULTIMEDIA_OS2
+)
+qt_feature("os2kai" PRIVATE
+    LABEL "OS/2 KAI audio"
+    CONDITION QT_FEATURE_os2audio AND KAI_FOUND
+)
 qt_feature("pulseaudio" PUBLIC PRIVATE
     LABEL "PulseAudio"
     DISABLE INPUT_pulseaudio STREQUAL 'no'
@@ -290,7 +308,7 @@ qt_feature("ffmpeg" PRIVATE
     ENABLE INPUT_ffmpeg STREQUAL 'yes'
     DISABLE INPUT_ffmpeg STREQUAL 'no'
     CONDITION FFmpeg_FOUND
-              AND (APPLE OR WIN32 OR ANDROID OR QNX OR OS2 OR QT_FEATURE_pulseaudio OR QT_FEATURE_pipewire)
+              AND (APPLE OR WIN32 OR ANDROID OR QNX OR QT_FEATURE_os2audio OR QT_FEATURE_pulseaudio OR QT_FEATURE_pipewire)
               AND QT_FEATURE_thread
 )
 
@@ -316,6 +334,8 @@ qt_configure_add_summary_entry(ARGS "aaudio")
 qt_configure_add_summary_entry(ARGS "ohaudio")
 qt_configure_add_summary_entry(ARGS "wasm")
 qt_configure_add_summary_entry(ARGS "wasapi")
+qt_configure_add_summary_entry(ARGS "os2audio")
+qt_configure_add_summary_entry(ARGS "os2kai")
 qt_configure_end_summary_section()
 qt_configure_add_summary_section(NAME "Plugin")
 qt_configure_add_summary_entry(ARGS "gstreamer")
