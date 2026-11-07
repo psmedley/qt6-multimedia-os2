@@ -14,6 +14,7 @@ qt_add_qml_module(frequencymonitor
         "PerformanceItem.qml"
     SOURCES
         frequencymonitor.h frequencymonitor.cpp
+    OS2_SHORT_NAME freqmoni
 )
 
 target_link_libraries(frequencymonitor PRIVATE

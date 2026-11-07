@@ -48,6 +48,7 @@ qt_internal_add_qml_module(MultimediaQuick
     PRIVATE_MODULE_INTERFACE
         Qt::MultimediaPrivate
         Qt::QuickPrivate
+    OS2_SHORT_NAME Qt6MMQck
 )
 
 qt_internal_extend_target(MultimediaQuick CONDITION QT_FEATURE_gstreamer_qt_api
