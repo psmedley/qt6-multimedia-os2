@@ -126,6 +126,7 @@ qt_internal_add_module(Multimedia
         Qt::GuiPrivate
     NO_PCH_SOURCES
         compat/removed_api.cpp
+    OS2_SHORT_NAME Qt6Multm
 )
 
 qt_internal_extend_target(Multimedia CONDITION QT_FEATURE_network

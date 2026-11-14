@@ -128,7 +128,7 @@ qt_feature("ffmpeg" PRIVATE
     ENABLE INPUT_ffmpeg STREQUAL 'yes'
     DISABLE INPUT_ffmpeg STREQUAL 'no'
     CONDITION FFmpeg_FOUND
-              AND (APPLE OR WIN32 OR ANDROID OR QNX OR QT_FEATURE_pulseaudio)
+              AND (APPLE OR WIN32 OR ANDROID OR QNX OR OS2 OR QT_FEATURE_pulseaudio)
               AND QT_FEATURE_thread
 )
 qt_feature("pipewire" PRIVATE

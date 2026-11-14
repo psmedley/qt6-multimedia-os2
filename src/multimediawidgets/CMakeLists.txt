@@ -20,6 +20,7 @@ qt_internal_add_module(MultimediaWidgets
     PRIVATE_MODULE_INTERFACE
         Qt::MultimediaPrivate
         Qt::WidgetsPrivate
+    OS2_SHORT_NAME Qt6MMWid
 )
 
 ## Scopes:
