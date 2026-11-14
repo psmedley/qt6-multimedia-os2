@@ -301,7 +301,7 @@ qt_configure_end_summary_section() # end of "Qt Multimedia" section
 qt_configure_add_report_entry(
     TYPE WARNING
     MESSAGE "No backend for low level audio found."
-    CONDITION NOT QT_FEATURE_alsa AND NOT QT_FEATURE_pulseaudio AND NOT QT_FEATURE_mmrenderer AND NOT QT_FEATURE_coreaudio AND NOT WIN32 AND NOT ANDROID AND NOT WASM
+    CONDITION NOT QT_FEATURE_alsa AND NOT QT_FEATURE_pulseaudio AND NOT QT_FEATURE_os2audio AND NOT QT_FEATURE_mmrenderer AND NOT QT_FEATURE_coreaudio AND NOT WIN32 AND NOT ANDROID AND NOT WASM
 )
 
 qt_configure_add_report_entry(
