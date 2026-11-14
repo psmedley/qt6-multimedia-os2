@@ -550,19 +550,20 @@ set(VIDEO_SHADERS_UTILS
 set_source_files_properties(${VIDEO_SHADERS_UTILS} PROPERTIES HEADER_FILE_ONLY ON)
 target_sources(Multimedia PRIVATE ${VIDEO_SHADERS_UTILS})
 
-# OS/2: OPTIMIZED makes qsb run spirv-opt from the Vulkan SDK, which is not
-# available there (and SPIR-V is not used on OS/2 anyway).
+# OS/2: QRhi only uses OpenGL there, so only GLSL is needed. OPTIMIZED makes
+# qsb run spirv-opt from the Vulkan SDK, which is not available on OS/2, and
+# the HLSL/MSL translation (SPIRV-Cross) is unused and crashes qsb there.
 if(OS2)
-    set(QT_MULTIMEDIA_SHADER_OPTIMIZED "")
+    set(QT_MULTIMEDIA_SHADER_OPTIONS NOHLSL NOMSL)
 else()
-    set(QT_MULTIMEDIA_SHADER_OPTIMIZED OPTIMIZED)
+    set(QT_MULTIMEDIA_SHADER_OPTIONS OPTIMIZED)
 endif()
 
 qt_internal_add_shaders(Multimedia "qtmultimedia_shaders"
     SILENT
     BATCHABLE
     PRECOMPILE
-    ${QT_MULTIMEDIA_SHADER_OPTIMIZED}
+    ${QT_MULTIMEDIA_SHADER_OPTIONS}
     PREFIX
         "/qt-project.org/multimedia"
     FILES
@@ -576,7 +577,7 @@ qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_linear"
     SILENT
     BATCHABLE
     PRECOMPILE
-    ${QT_MULTIMEDIA_SHADER_OPTIMIZED}
+    ${QT_MULTIMEDIA_SHADER_OPTIONS}
     PREFIX
         "/qt-project.org/multimedia"
     FILES
@@ -591,7 +592,7 @@ qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_gl_macos"
     SILENT
     BATCHABLE
     PRECOMPILE
-    ${QT_MULTIMEDIA_SHADER_OPTIMIZED}
+    ${QT_MULTIMEDIA_SHADER_OPTIONS}
     PREFIX
         "/qt-project.org/multimedia"
     GLSL
@@ -607,7 +608,7 @@ qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_gl_macos_linear"
     SILENT
     BATCHABLE
     PRECOMPILE
-    ${QT_MULTIMEDIA_SHADER_OPTIMIZED}
+    ${QT_MULTIMEDIA_SHADER_OPTIONS}
     PREFIX
         "/qt-project.org/multimedia"
     GLSL
