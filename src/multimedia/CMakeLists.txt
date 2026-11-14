@@ -263,7 +263,7 @@ qt_internal_extend_target(Multimedia CONDITION APPLE
 )
 
 
-qt_internal_extend_target(Multimedia CONDITION UNIX
+qt_internal_extend_target(Multimedia CONDITION UNIX OR OS2
     SOURCES
         audio/qautoresetevent_pipe_p.h audio/qautoresetevent_pipe.cpp
 )
