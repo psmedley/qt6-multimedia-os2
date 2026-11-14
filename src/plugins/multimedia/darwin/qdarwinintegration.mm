@@ -5,6 +5,7 @@
 #include <avfmediaplayer_p.h>
 #include <avfcameraservice_p.h>
 #include <avfcamera_p.h>
+#include <QtMultimedia/private/qavfvideodevices_p.h>
 #include <avfimagecapture_p.h>
 #include <avfmediaencoder_p.h>
 #include <qdarwinformatsinfo_p.h>
@@ -13,7 +14,6 @@
 #include <VideoToolbox/VideoToolbox.h>
 #include <qdebug.h>
 #include <private/qplatformmediaplugin_p.h>
-#include <qavfcamerabase_p.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -23,9 +23,7 @@ class QDarwinMediaPlugin : public QPlatformMediaPlugin
     Q_PLUGIN_METADATA(IID QPlatformMediaPlugin_iid FILE "darwin.json")
 
 public:
-    QDarwinMediaPlugin()
-        : QPlatformMediaPlugin()
-    {}
+    QDarwinMediaPlugin() = default;
 
     QPlatformMediaIntegration* create(const QString &name) override
     {

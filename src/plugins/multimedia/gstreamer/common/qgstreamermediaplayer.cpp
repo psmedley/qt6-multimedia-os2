@@ -314,7 +314,7 @@ QMaybe<QPlatformMediaPlayer *> QGstreamerMediaPlayer::create(QMediaPlayer *paren
 {
     auto videoOutput = QGstreamerVideoOutput::create();
     if (!videoOutput)
-        return videoOutput.error();
+        return QUnexpected{ videoOutput.error() };
 
     return new QGstreamerMediaPlayer(videoOutput.value(), parent);
 }
@@ -972,7 +972,8 @@ void QGstreamerMediaPlayer::setAudioOutput(QPlatformAudioOutput *output)
 
     // FIXME: we need to have a gst_play API to change the sinks on the fly.
     // finishStateChange a hack to avoid assertion failures in gstreamer
-    m_playbin.finishStateChange();
+    if (!qmediaplayerDestructorCalled)
+        m_playbin.finishStateChange();
 }
 
 QMediaMetaData QGstreamerMediaPlayer::metaData() const

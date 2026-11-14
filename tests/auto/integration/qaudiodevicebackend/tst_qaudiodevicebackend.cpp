@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
 
-#include <QtTest/QtTest>
-#include <QtCore/qlocale.h>
-#include <qaudiodevice.h>
+#include <QtTest/qtest.h>
 
-#include <QStringList>
-#include <QList>
-#include <QMediaDevices>
-
+#include <QtCore/qstringlist.h>
+#include <QtCore/qlist.h>
+#include <QtMultimedia/qmediadevices.h>
+#include <QtMultimedia/qaudiodevice.h>
 
 #include <private/mediabackendutils_p.h>
 
@@ -106,9 +104,17 @@ void tst_QAudioDeviceBackend::isFormatSupported()
 
 void tst_QAudioDeviceBackend::preferred()
 {
-    QAudioFormat format = device->preferredFormat();
-    QVERIFY(format.isValid());
-    QVERIFY(device->isFormatSupported(format));
+    auto isPreferredSupported = [](const QAudioDevice &dev) {
+        QAudioFormat format = dev.preferredFormat();
+        QVERIFY(format.isValid());
+        QVERIFY(dev.isFormatSupported(format));
+    };
+
+    for (const auto &dev: QMediaDevices::audioOutputs())
+        isPreferredSupported(dev);
+
+    for (const auto &dev: QMediaDevices::audioInputs())
+        isPreferredSupported(dev);
 }
 
 // QAudioDevice's assignOperator method

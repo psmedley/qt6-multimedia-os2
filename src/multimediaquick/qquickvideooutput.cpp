@@ -101,11 +101,23 @@ QQuickVideoOutput::QQuickVideoOutput(QQuickItem *parent) :
     m_sink = new QQuickVideoSink(this);
     qRegisterMetaType<QVideoFrameFormat>();
 
+    QByteArray eosPolicyEnv = qgetenv("QT_VIDEOOUTPUT_EOS_POLICY");
+    if (!eosPolicyEnv.isEmpty()) {
+        bool ok = false;
+        const int eosPolicy =
+                QMetaEnum::fromType<EndOfStreamPolicy>().keyToValue(eosPolicyEnv.data(), &ok);
+        if (ok)
+            m_endOfStreamPolicy = static_cast<EndOfStreamPolicy>(eosPolicy);
+        else
+            qWarning() << "Invalid value for env QT_VIDEOOUTPUT_EOS_POLICY:" << eosPolicyEnv;
+    }
+
     // TODO: investigate if we have any benefit of setting frame in the source thread
     connect(m_sink, &QVideoSink::videoFrameChanged, this,
-            [this](const QVideoFrame &frame) {
-                setFrame(frame);
-            },
+            makeGuardedCall([this](const QVideoFrame &frame) {
+        if (frame.isValid() || m_endOfStreamPolicy == ClearOutput)
+            setFrame(frame);
+    }),
             Qt::DirectConnection);
 
     initRhiForSink();
@@ -113,6 +125,13 @@ QQuickVideoOutput::QQuickVideoOutput(QQuickItem *parent) :
 
 QQuickVideoOutput::~QQuickVideoOutput()
 {
+    {
+        QMutexLocker lock(&m_destructorGuard->m_mutex);
+        m_destructorGuard->m_isAlive = false;
+    }
+
+    delete m_sink;
+    disconnectWindowConnections();
 }
 
 /*!
@@ -307,6 +326,11 @@ QRectF QQuickVideoOutput::contentRect() const
     return m_contentRect;
 }
 
+void QQuickVideoOutput::clearOutput()
+{
+    setFrame({});
+}
+
 /*!
     \qmlproperty rectangle QtMultimedia::VideoOutput::sourceRect
 
@@ -357,26 +381,6 @@ void QQuickVideoOutput::geometryChange(const QRectF &newGeometry, const QRectF &
     _q_updateGeometry();
 }
 
-void QQuickVideoOutput::_q_invalidateSceneGraph()
-{
-    // Invoked in the renderer thread
-
-    if (auto texturePool = m_texturePool.lock())
-        texturePool->clearTextures();
-    m_sink->setRhi(nullptr);
-}
-
-void QQuickVideoOutput::_q_sceneGraphInitialized()
-{
-    initRhiForSink();
-}
-
-void QQuickVideoOutput::_q_afterFrameEnd()
-{
-    if (auto texturePool = m_texturePool.lock())
-        texturePool->onFrameEndInvoked();
-}
-
 void QQuickVideoOutput::releaseResources()
 {
     // Called on the gui thread when the window is closed or changed.
@@ -398,18 +402,31 @@ void QQuickVideoOutput::itemChange(QQuickItem::ItemChange change,
 
     if (changeData.window == m_window)
         return;
-    if (m_window)
-        disconnect(m_window);
+
+    disconnectWindowConnections();
     m_window = changeData.window;
 
     if (m_window) {
+        auto connectToWindow = [&](auto signal, auto function) {
+            connect(m_window, signal, this, makeGuardedCall(std::move(function)),
+                    Qt::DirectConnection);
+        };
+
         // We want to receive the signals in the render thread
-        connect(m_window, &QQuickWindow::sceneGraphInitialized, this,
-                &QQuickVideoOutput::_q_sceneGraphInitialized, Qt::DirectConnection);
-        connect(m_window, &QQuickWindow::sceneGraphInvalidated, this,
-                &QQuickVideoOutput::_q_invalidateSceneGraph, Qt::DirectConnection);
-        connect(m_window, &QQuickWindow::afterFrameEnd, this, &QQuickVideoOutput::_q_afterFrameEnd,
-                Qt::DirectConnection);
+        connectToWindow(&QQuickWindow::sceneGraphInitialized, [this] {
+            initRhiForSink();
+        });
+
+        connectToWindow(&QQuickWindow::sceneGraphInvalidated, [this] {
+            if (auto texturePool = m_texturePool.lock())
+                texturePool->clearTextures();
+            m_sink->setRhi(nullptr);
+        });
+
+        connectToWindow(&QQuickWindow::afterFrameEnd, [this] {
+            if (auto texturePool = m_texturePool.lock())
+                texturePool->onFrameEndInvoked();
+        });
     }
     initRhiForSink();
 }
@@ -549,6 +566,14 @@ void QQuickVideoOutput::updateHdr(QSGVideoNode *videoNode)
     videoNode->setHdrInfo(swapChain->hdrInfo());
 }
 
+void QQuickVideoOutput::disconnectWindowConnections()
+{
+    if (!m_window)
+        return;
+
+    m_window->disconnect(this);
+}
+
 QRectF QQuickVideoOutput::adjustedViewport() const
 {
     return m_videoFormat.viewport();
@@ -566,6 +591,12 @@ void QQuickVideoOutput::setFrame(const QVideoFrame &frame)
     }
 
     QMetaObject::invokeMethod(this, &QQuickVideoOutput::_q_newFrame, frame.size());
+}
+
+std::optional<std::chrono::nanoseconds> QQuickVideoOutput::g_signalBackoff;
+void QQuickVideoOutput::setSignalBackoff(std::optional<std::chrono::nanoseconds> ns)
+{
+    g_signalBackoff = ns;
 }
 
 QT_END_NAMESPACE

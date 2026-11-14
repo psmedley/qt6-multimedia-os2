@@ -17,15 +17,16 @@
 //
 
 #include <QtCore/qrect.h>
-#include <QtCore/qsharedpointer.h>
-#include <QtQuick/qquickitem.h>
 #include <QtCore/qpointer.h>
 #include <QtCore/qmutex.h>
+#include <QtQuick/qquickitem.h>
 
-#include <private/qtmultimediaquickglobal_p.h>
-#include <qvideoframe.h>
-#include <qvideoframeformat.h>
-#include <qvideosink.h>
+#include <QtMultimedia/qvideoframe.h>
+#include <QtMultimedia/qvideoframeformat.h>
+#include <QtMultimedia/qvideosink.h>
+#include <QtMultimediaQuick/private/qtmultimediaquickglobal_p.h>
+
+#include <thread>
 
 QT_BEGIN_NAMESPACE
 
@@ -74,6 +75,13 @@ public:
     };
     Q_ENUM(FillMode)
 
+    enum EndOfStreamPolicy
+    {
+        ClearOutput,
+        KeepLastFrame
+    };
+    Q_ENUM(EndOfStreamPolicy)
+
     QQuickVideoOutput(QQuickItem *parent = 0);
     ~QQuickVideoOutput() override;
 
@@ -87,6 +95,8 @@ public:
 
     QRectF sourceRect() const;
     QRectF contentRect() const;
+
+    Q_INVOKABLE void clearOutput();
 
 Q_SIGNALS:
     void sourceChanged();
@@ -110,13 +120,11 @@ private:
 
     void initRhiForSink();
     void updateHdr(QSGVideoNode *videoNode);
+    void disconnectWindowConnections();
 
 private Q_SLOTS:
     void _q_newFrame(QSize);
     void _q_updateGeometry();
-    void _q_invalidateSceneGraph();
-    void _q_sceneGraphInitialized();
-    void _q_afterFrameEnd();
 
 private:
     QSize m_nativeSize;
@@ -139,6 +147,43 @@ private:
     QMutex m_frameMutex;
     QRectF m_renderedRect;         // Destination pixel coordinates, clipped
     QRectF m_sourceTextureRect;    // Source texture coordinates
+
+    EndOfStreamPolicy m_endOfStreamPolicy = ClearOutput;
+
+    struct DestructorGuard
+    {
+        QMutex m_mutex;
+        bool m_isAlive{ true };
+
+        template <typename Functor>
+        void runWhileAlive(Functor &&f)
+        {
+            QMutexLocker lock(&m_mutex);
+            if (m_isAlive)
+                f();
+        }
+    };
+
+    std::shared_ptr<DestructorGuard> m_destructorGuard = std::make_shared<DestructorGuard>();
+
+    template <typename Functor>
+    auto makeGuardedCall(Functor &&f)
+    {
+        return [f = std::forward<Functor>(f), guard = m_destructorGuard](auto... params) {
+            if (g_signalBackoff)
+                std::this_thread::sleep_for(*g_signalBackoff);
+
+            guard->runWhileAlive([&] {
+                f(params...);
+            });
+        };
+    }
+
+    // for testing
+    static std::optional<std::chrono::nanoseconds> g_signalBackoff;
+
+public:
+    static void setSignalBackoff(std::optional<std::chrono::nanoseconds>);
 };
 
 QT_END_NAMESPACE

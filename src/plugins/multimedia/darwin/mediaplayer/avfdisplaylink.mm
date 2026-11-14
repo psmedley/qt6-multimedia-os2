@@ -4,6 +4,8 @@
 #include "avfdisplaylink_p.h"
 #include <QtCore/qcoreapplication.h>
 
+#include <mutex>
+
 #ifdef QT_DEBUG_AVF
 #include <QtCore/qdebug.h>
 #endif
@@ -72,18 +74,13 @@ QT_USE_NAMESPACE
 
 @end
 #else
-static CVReturn CVDisplayLinkCallback(CVDisplayLinkRef displayLink,
-                                 const CVTimeStamp *inNow,
-                                 const CVTimeStamp *inOutputTime,
-                                 CVOptionFlags flagsIn,
-                                 CVOptionFlags *flagsOut,
-                                 void *displayLinkContext)
+static CVReturn CVDisplayLinkCallback([[maybe_unused]] CVDisplayLinkRef displayLink,
+                                      [[maybe_unused]] const CVTimeStamp *inNow,
+                                      const CVTimeStamp *inOutputTime,
+                                      [[maybe_unused]] CVOptionFlags flagsIn,
+                                      [[maybe_unused]] CVOptionFlags *flagsOut,
+                                      void *displayLinkContext)
 {
-    Q_UNUSED(displayLink);
-    Q_UNUSED(inNow);
-    Q_UNUSED(flagsIn);
-    Q_UNUSED(flagsOut);
-
     AVFDisplayLink *link = (AVFDisplayLink *)displayLinkContext;
 
     link->displayLinkEvent(inOutputTime);
@@ -93,9 +90,6 @@ static CVReturn CVDisplayLinkCallback(CVDisplayLinkRef displayLink,
 
 AVFDisplayLink::AVFDisplayLink(QObject *parent)
     : QObject(parent)
-    , m_displayLink(nullptr)
-    , m_pendingDisplayLinkEvent(false)
-    , m_isActive(false)
 {
 #if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
     m_displayLink = [[DisplayLinkObserver alloc] initWithAVFDisplayLink:this];
@@ -160,6 +154,10 @@ void AVFDisplayLink::stop()
         CVDisplayLinkStop(m_displayLink);
 #endif
         m_isActive = false;
+
+        // cancel pending events
+        std::lock_guard guard{ m_displayLinkMutex };
+        m_frameTimeStamp = std::nullopt;
     }
 }
 
@@ -169,16 +167,16 @@ void AVFDisplayLink::displayLinkEvent(const CVTimeStamp *ts)
     // thread != gui thread. So we post the event.
     // But we need to make sure that we don't post faster
     // than the event loop can eat:
-    m_displayLinkMutex.lock();
-    bool pending = m_pendingDisplayLinkEvent;
-    m_pendingDisplayLinkEvent = true;
+    std::unique_lock guard{ m_displayLinkMutex };
+
+    bool pending = m_frameTimeStamp.has_value();
 #if defined(Q_OS_IOS) || defined(Q_OS_TVOS)
     Q_UNUSED(ts);
-    memset(&m_frameTimeStamp, 0, sizeof(CVTimeStamp));
+    m_frameTimeStamp = CVTimeStamp{};
 #else
     m_frameTimeStamp = *ts;
 #endif
-    m_displayLinkMutex.unlock();
+    guard.unlock();
 
     if (!pending)
         qApp->postEvent(this, new QEvent(QEvent::User), Qt::HighEventPriority);
@@ -187,19 +185,21 @@ void AVFDisplayLink::displayLinkEvent(const CVTimeStamp *ts)
 bool AVFDisplayLink::event(QEvent *event)
 {
     switch (event->type()){
-        case QEvent::User:  {
-                m_displayLinkMutex.lock();
-                m_pendingDisplayLinkEvent = false;
-                CVTimeStamp ts = m_frameTimeStamp;
-                m_displayLinkMutex.unlock();
+    case QEvent::User: {
+        std::unique_lock guard{ m_displayLinkMutex };
+        if (!m_frameTimeStamp)
+            return false;
 
-                Q_EMIT tick(ts);
+        CVTimeStamp ts = *m_frameTimeStamp;
+        m_frameTimeStamp = std::nullopt;
+        guard.unlock();
 
-                return false;
-            }
-            break;
-        default:
-            break;
+        Q_EMIT tick(ts);
+
+        return false;
+    }
+    default:
+        break;
     }
     return QObject::event(event);
 }

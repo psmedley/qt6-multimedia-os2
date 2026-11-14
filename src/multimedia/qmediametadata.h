@@ -8,16 +8,12 @@
 #pragma qt_class(QMediaMetaData)
 #endif
 
-#include <QtCore/qpair.h>
 #include <QtCore/qvariant.h>
 #include <QtCore/qstring.h>
 #include <QtCore/qhash.h>
 #include <QtMultimedia/qtmultimediaglobal.h>
 
 QT_BEGIN_NAMESPACE
-
-// Class forward declaration required for QDoc bug
-class QString;
 
 class Q_MULTIMEDIA_EXPORT QMediaMetaData
 {

@@ -75,7 +75,6 @@ qt_internal_add_module(FFmpegMediaPluginImplPrivate
         recordingengine/qffmpegvideoframeencoder.cpp
     NO_GENERATE_CPP_EXPORTS
     DEFINES
-        QT_COMPILING_FFMPEG
         QT_NO_CAST_FROM_ASCII
         QT_NO_CAST_TO_ASCII
     PUBLIC_LIBRARIES
@@ -118,9 +117,6 @@ endif()
 
 qt_internal_extend_target(FFmpegMediaPluginImplPrivate CONDITION APPLE
     SOURCES
-        ../darwin/qavfhelpers.mm ../darwin/qavfhelpers_p.h
-        ../darwin/camera/qavfcamerabase_p.h ../darwin/camera/qavfcamerabase.mm
-        ../darwin/camera/avfcamerautility_p.h ../darwin/camera/avfcamerautility.mm
         qffmpeghwaccel_videotoolbox.mm qffmpeghwaccel_videotoolbox_p.h
         qavfcamera.mm qavfcamera_p.h
         qavfsamplebufferdelegate.mm qavfsamplebufferdelegate_p.h
@@ -128,16 +124,12 @@ qt_internal_extend_target(FFmpegMediaPluginImplPrivate CONDITION APPLE
     NO_UNITY_BUILD_SOURCES
         qffmpeghwaccel_videotoolbox.mm # AVMediaType clash between libavformat and AVFoundation
 
-    INCLUDE_DIRECTORIES
-        ../darwin
-        ../darwin/camera
     LIBRARIES
         ${FWAudioToolbox}
+        ${FWAVFoundation}
         ${FWCoreMedia}
         ${FWCoreVideo}
-        ${FWVideoToolbox}
         ${FWSecurity}
-        AVFoundation::AVFoundation
 )
 
 qt_internal_extend_target(FFmpegMediaPluginImplPrivate CONDITION MACOS
@@ -151,30 +143,31 @@ qt_internal_extend_target(FFmpegMediaPluginImplPrivate CONDITION MACOS
 
 qt_internal_extend_target(FFmpegMediaPluginImplPrivate CONDITION WIN32
     SOURCES
-        ../windows/qwindowsvideodevices.cpp ../windows/qwindowsvideodevices_p.h
         qwindowscamera.cpp qwindowscamera_p.h
         qffmpeghwaccel_d3d11.cpp qffmpeghwaccel_d3d11_p.h
         qgdiwindowcapture.cpp qgdiwindowcapture_p.h
         qffmpegscreencapture_dxgi.cpp qffmpegscreencapture_dxgi_p.h
         qwincapturablewindows.cpp qwincapturablewindows_p.h
-    INCLUDE_DIRECTORIES
-        ../windows
     LIBRARIES
         Qt::MultimediaPrivate
-        WMF::WMF
+        mf
+        mfplat
         mfreadwrite
+        mfuuid
 )
 
 qt_internal_extend_target(FFmpegMediaPluginImplPrivate CONDITION QT_FEATURE_cpp_winrt
     SOURCES
         qffmpegwindowcapture_uwp.cpp qffmpegwindowcapture_uwp_p.h
-    INCLUDE_DIRECTORIES
-        ../windows
     LIBRARIES
         Dwmapi
         Dxva2
         windowsapp
 )
+
+if(QT_FEATURE_cpp_winrt)
+    qt_internal_set_exceptions_flags(FFmpegMediaPluginImplPrivate ON)
+endif()
 
 qt_internal_extend_target(FFmpegMediaPluginImplPrivate CONDITION QT_FEATURE_xlib
     SOURCES
@@ -245,9 +238,10 @@ if (QT_DEPLOY_FFMPEG AND FFMPEG_SHARED_LIBRARIES AND (BUILD_SHARED_LIBS OR UIKIT
     qt_internal_multimedia_copy_or_install_ffmpeg()
 endif()
 
-if(BUILD_SHARED_LIBS)
+if( NOT (UIKIT AND FFMPEG_SHARED_LIBRARIES) )
     qt_internal_extend_target(FFmpegMediaPluginImplPrivate PUBLIC_LIBRARIES ${ffmpeg_libs})
 else()
+    # applications need to link against the ffmpeg libs via qt_add_ios_ffmpeg_libraries
     foreach(ffmpeg_lib IN LISTS ffmpeg_libs)
         qt_internal_add_target_include_dirs(FFmpegMediaPluginImplPrivate ${ffmpeg_lib})
         target_include_directories(FFmpegMediaPluginImplPrivate PUBLIC

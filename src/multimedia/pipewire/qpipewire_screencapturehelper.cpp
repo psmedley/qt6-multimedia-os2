@@ -36,6 +36,10 @@
 
 #include <fcntl.h>
 
+// pipewire's macros tend to emit unused value warnings
+QT_WARNING_PUSH
+QT_WARNING_DISABLE_CLANG("-Wunused-value")
+
 QT_BEGIN_NAMESPACE
 
 using namespace Qt::StringLiterals;
@@ -189,7 +193,7 @@ void QPipeWireCaptureHelper::createInterface()
                 u"org.freedesktop.portal.ScreenCast"_s, QDBusConnection::sessionBus());
         bool ok = m_screenCastInterface->connection().connect(
                 u"org.freedesktop.portal.Desktop"_s, u""_s, u"org.freedesktop.portal.Request"_s,
-                u"Response"_s, this, SLOT(gotRequestResponse(uint, QVariantMap)));
+                u"Response"_s, this, SLOT(gotRequestResponse(uint,QVariantMap)));
 
         if (!ok) {
             updateError(
@@ -932,3 +936,5 @@ spa_video_format QPipeWireCaptureHelper::toSpaVideoFormat(QVideoFrameFormat::Pix
 } // namespace QtPipeWire
 
 QT_END_NAMESPACE
+
+QT_WARNING_POP
