@@ -550,19 +550,11 @@ set(VIDEO_SHADERS_UTILS
 set_source_files_properties(${VIDEO_SHADERS_UTILS} PROPERTIES HEADER_FILE_ONLY ON)
 target_sources(Multimedia PRIVATE ${VIDEO_SHADERS_UTILS})
 
-# OS/2: OPTIMIZED makes qsb run spirv-opt from the Vulkan SDK, which is not
-# available there (and SPIR-V is not used on OS/2 anyway).
-if(OS2)
-    set(QT_MULTIMEDIA_SHADER_OPTIMIZED "")
-else()
-    set(QT_MULTIMEDIA_SHADER_OPTIMIZED OPTIMIZED)
-endif()
-
 qt_internal_add_shaders(Multimedia "qtmultimedia_shaders"
     SILENT
     BATCHABLE
     PRECOMPILE
-    ${QT_MULTIMEDIA_SHADER_OPTIMIZED}
+    OPTIMIZED
     PREFIX
         "/qt-project.org/multimedia"
     FILES
@@ -576,7 +568,7 @@ qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_linear"
     SILENT
     BATCHABLE
     PRECOMPILE
-    ${QT_MULTIMEDIA_SHADER_OPTIMIZED}
+    OPTIMIZED
     PREFIX
         "/qt-project.org/multimedia"
     FILES
@@ -591,7 +583,7 @@ qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_gl_macos"
     SILENT
     BATCHABLE
     PRECOMPILE
-    ${QT_MULTIMEDIA_SHADER_OPTIMIZED}
+    OPTIMIZED
     PREFIX
         "/qt-project.org/multimedia"
     GLSL
@@ -607,7 +599,7 @@ qt_internal_add_shaders(Multimedia "qtmultimedia_shaders_gl_macos_linear"
     SILENT
     BATCHABLE
     PRECOMPILE
-    ${QT_MULTIMEDIA_SHADER_OPTIMIZED}
+    OPTIMIZED
     PREFIX
         "/qt-project.org/multimedia"
     GLSL
